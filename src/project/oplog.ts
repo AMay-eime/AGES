@@ -72,7 +72,7 @@ export async function markTouched(root: string, actor: Actor, changes: Change[])
   const t = new Date().toISOString();
   for (const raw of changes) {
     if (raw.auto) continue; // 自動で直した参照は、人が調整した値ではない
-    if (raw.path.startsWith('file:')) continue; // ファイルの移動・追加は、値の調整ではない
+    if (raw.path.startsWith('file:') || raw.path.startsWith('scene:') || raw.path.startsWith('config.')) continue; // ファイル・シーンの出し入れと設定は、値の調整ではない
     // 行列のセルの変更（...formation[2,3]）は行列全体への印に、切り方の変更（sheet:x.png|コマ.rect）はシート全体への印にする
     const sheetPart = raw.path.startsWith('sheet:') && raw.path.includes('|');
     // リストの中の変更はリスト全体への印にする（要素の番号は並べ替えで変わるため）
@@ -107,6 +107,21 @@ export async function moveTouched(root: string, files: { from: string; to: strin
       delete touched[k];
       changed = true;
     }
+  }
+  if (!changed) return;
+  await mkdir(dirOf(root), { recursive: true });
+  await writeFile(join(dirOf(root), 'touched.json'), JSON.stringify(touched, null, 2) + '\n');
+}
+
+/** 住所の頭が変わったとき（シーンの名前の変更など）、★も付け替える。to が null なら消す */
+export async function movePrefixTouched(root: string, from: string, to: string | null): Promise<void> {
+  const touched = await readTouched(root);
+  let changed = false;
+  for (const k of Object.keys(touched)) {
+    if (!k.startsWith(from)) continue;
+    if (to !== null) touched[to + k.slice(from.length)] = touched[k];
+    delete touched[k];
+    changed = true;
   }
   if (!changed) return;
   await mkdir(dirOf(root), { recursive: true });
@@ -203,6 +218,7 @@ export function summarize(entries: LogEntry[]): string {
       else if (b.to === 'added' || b.to === 'removed') lines.push(`  ${path} ${b.to === 'added' ? '追加' : '削除'}${n}`);
       else if (a.op === 'file') lines.push(`  ${path} ファイル編集${n}`);
       else if (path.startsWith('file:') && b.to === 'replaced') lines.push(`  ${path} 差し替え${n}`);
+      else if (path.startsWith('scene:') && typeof b.to === 'string' && b.to.startsWith('renamed:')) lines.push(`  ${path} 名前を ${b.to.slice('renamed:'.length)} に変更`);
       else if (path.startsWith('file:')) lines.push(`  ${path} 場所を ${b.to} に変更（使っている値も直した）`);
       else if (typeof b.to === 'string' && b.to.startsWith('renamed:')) lines.push(`  ${path} ID を ${b.to.slice('renamed:'.length)} に変更`);
       else lines.push(`  ${path} ${short(a.from)}→${short(b.to)}${n}${b.auto ? '（自動）' : ''}`);

@@ -9,7 +9,7 @@ import { renderAssets, renderMap } from '../project/map.ts';
 import { readCursor, readLog, readTouched, summarize, writeCursor, type Actor } from '../project/oplog.ts';
 import { getValue, parseLiteral, splitCell, type Op } from '../core/patch.ts';
 import { brief, defaultOf, matrixSize, suggest, typeOf, type AssetKind } from '../core/schema.ts';
-import { assetRefs, isUnder } from '../core/assets.ts';
+import { assetRefs, codeSceneRefs, isUnder } from '../core/assets.ts';
 import { parseAddress } from '../core/docs.ts';
 import { cellsToRows, formatDelimited, importOps, parseDelimited, tableToCells } from '../core/csv.ts';
 import type { Row, TableDoc } from '../core/table.ts';
@@ -27,12 +27,13 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   get    <dir> <addr> [addr ...]     値を見る（例: main#player / main#player.Player.speed / @enemy / $enemies.basic）
   set    <dir> <addr> <value> [--force]  行列のセルは addr[行,列]（例 main#spawner.Spawner.formation[2,3] 1）
   patch  <dir> <ops.json | -> [--force]   操作の配列（set/setCells/insert/removeItem/moveItem/addEntity/removeEntity/addComponent/removeComponent/rename/
-               addRow/removeRow/moveRow/renameRow/setSheet/setFrame/setClip/moveAsset/removeAsset）
+               addRow/removeRow/moveRow/renameRow/setSheet/setFrame/setClip/moveAsset/removeAsset/addScene/removeScene/renameScene/setScene）
                例 {"op":"moveAsset","from":"assets/a.png","to":"assets/ships/a.png"}（フォルダも可。使っている値と切り方も一緒に動く）
+               シーン: addScene{name,copy?,desc?} / removeScene{name} / renameScene{name,to} / setScene{name,desc?,start?}
   table  <dir> <表> [--cols a,b] [--rows id1,id2]   表を見る（1行1行）
                [--export x.csv] [--import x.csv [--force]]   表計算ソフトとの行き来（読み込みは表をまるごと置き換える）
   run    <dir> [--frames 600] [--scene main] [--seed 1] [--keys "0-120:ArrowLeft+KeyZ;120-200:@move_x=1;30:Mouse0+ptr=240,100"]
-               [--input recordings/x.input.json] [--watch player.Health.hp,...] [--every 60] [--until gameOver] [--twice] [--dump]
+               [--input recordings/x.input.json] [--watch player.Health.hp,...] [--every 60] [--until gameOver | scene:result] [--twice] [--dump]
   log    <dir> [--all] [--peek]      前回からの編集の要約（--peek は既読にしない）
   check  <dir>                       全データの検証とロックの検査
   assets <dir> [フォルダ] [--kind image|sound|font] [--unused] [--refs 場所]   アセットの一覧（使っている所の数）・使っている所
@@ -83,7 +84,7 @@ function compact(obj: Record<string, unknown>): string {
 export async function cmdMap(dir: string): Promise<string> {
   const p = await Project.load(dir);
   const plan = await planWarning(p.dir);
-  return withLockReport(p, (plan ? plan + '\n' : '') + renderMap(p, await readTouched(p.dir), await p.effectiveLocks(), await p.codeRefs(), await p.windows()));
+  return withLockReport(p, (plan ? plan + '\n' : '') + renderMap(p, await readTouched(p.dir), await p.effectiveLocks(), await p.codeRefs(), await p.windows(), codeSceneRefs(await p.codeFiles())));
 }
 
 /** エディタ計画書が未合意なら警告文を返す */
@@ -244,6 +245,7 @@ export async function cmdPatch(dir: string, ops: Op[], force: boolean): Promise<
   if (!r.changes.length) return '変更なし（すでに同じ値です）';
   const show = (v: unknown) => (isMatrix(v) ? `行列${matrixSize(v)}` : fmt(v));
   return [...r.changes.map((c) => (c.to === 'added' || c.to === 'removed' ? `ok ${c.path} ${c.to === 'added' ? '追加' : '削除'}`
+    : typeof c.to === 'string' && c.to.startsWith('renamed:') && c.path.startsWith('scene:') ? `ok ${c.path} → scene:${c.to.slice('renamed:'.length)}（名前の変更）`
     : typeof c.to === 'string' && c.to.startsWith('renamed:') ? `ok ${c.path} → ${c.path.replace(/[^.]+$/, c.to.slice('renamed:'.length))}（ID の変更）`
     : c.path.startsWith('file:') ? `ok ${c.path} → ${c.to}（場所の変更）`
     : `ok ${c.path} ${show(c.from)} → ${show(c.to)}${c.auto ? '（自動）' : ''}`)), ...(r.warnings ?? []).map((w) => `⚠ ${w}`)].join('\n');
@@ -311,7 +313,8 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
     const lines: string[] = [];
     const first = watch.map((w) => readWatch(game, w));
     let stopped = '';
-    if (until) game.listeners.push((ev) => { if (ev.name === until && !stopped) stopped = `${until} @f${ev.frame}`; });
+    if (until.startsWith('scene:')) game.sceneListeners.push((_from, to) => { if (to === until.slice(6) && !stopped) stopped = `${until} @f${game.frame}`; });
+    else if (until) game.listeners.push((ev) => { if (ev.name === until && !stopped) stopped = `${until} @f${ev.frame}`; });
     const t0 = performance.now();
     try {
       for (let i = 0; i < frames && !stopped; i++) {
@@ -337,6 +340,7 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
   out.push(...r.lines);
   const counts = [...g.counts.entries()].map(([k, v]) => `${k}×${v}`).join(' ');
   out.push(`events: ${counts || 'なし'}`);
+  if (g.sceneLog.length > 1) out.push(`scenes: ${g.sceneLog.map((x) => `${x.name}@${x.frame}`).join(' → ')}${g.transition ? `（${g.transition.phase === 'out' ? '消えていく途中' : '出てくる途中'}）` : ''}`);
   if (g.soundCounts.size) out.push(`sounds: ${[...g.soundCounts.entries()].map(([k, v]) => `♪${k}×${v}`).join(' ')}`);
   for (const w of g.warnings) out.push(`⚠ ${w}`);
   const byName = new Map<string, number>();
@@ -364,7 +368,7 @@ export async function cmdLog(dir: string, f: Args['flags']): Promise<string> {
 
 export async function cmdCheck(dir: string): Promise<string> {
   const p = await Project.load(dir);
-  const errs = [...p.validate(), ...(await p.checkWindows())];
+  const errs = [...p.validate(), ...(await p.checkCode()), ...(await p.checkWindows())];
   return withLockReport(p, errs.length ? errs.map((e) => `error: ${e}`).join('\n') : `ok（シーン${p.docs.scenes.size} プレハブ${p.docs.prefabs.size} コンポーネント${p.registry.components.size} システム${p.registry.systems.length}）`);
 }
 

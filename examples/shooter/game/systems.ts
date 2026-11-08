@@ -144,3 +144,31 @@ export const hud = defineSystem({
     }
   },
 });
+
+export const toResult = defineSystem({
+  name: 'toResult',
+  desc: '自機の体力が尽きたら、得点を持って結果のシーンへ（フェードで）',
+  reads: ['Player', 'Health', 'Score'],
+  scenes: ['main'],
+  update({ world, scene }) {
+    const hp = world.query('Player', 'Health')[0]?.c.Health.hp ?? 1;
+    if (hp > 0) return;
+    const score = world.query('Score')[0]?.c.Score.value ?? 0;
+    scene.goto('result', { fade: 0.6, params: { score } }); // 切り替えの途中に何度呼んでも1回だけ
+  },
+});
+
+export const resultScreen = defineSystem({
+  name: 'resultScreen',
+  desc: '結果のシーン: 得点を出し、fire でもう一度（main へ）',
+  writes: ['Text'],
+  scenes: ['result'],
+  start({ world, scene }) {
+    const t = world.get('score')?.c.Text;
+    if (t) t.text = `SCORE ${Number(scene.params.score ?? 0)}`;
+  },
+  update({ input, scene }) {
+    // 入ってすぐの押しっぱなしで飛ばないように、少し待つ
+    if (scene.frame > 30 && !scene.transition && input.pressed('fire')) scene.goto('main', { fade: 0.3 });
+  },
+});

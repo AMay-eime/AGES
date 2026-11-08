@@ -49,12 +49,17 @@ export interface AssetDocs {
  * 画像の切り方（.sheet.json）は画像と一緒に動くので、ここには入れない
  */
 export function assetRefs(docs: AssetDocs, reg: Registry): Map<string, string[]> {
+  return leafRefs(docs, reg, (f) => f.type === 'asset');
+}
+
+/** 値の葉（pick が true の型）の値 → それを持っている住所 */
+export function leafRefs(docs: AssetDocs, reg: Registry, pick: (f: Field) => boolean): Map<string, string[]> {
   const out = new Map<string, string[]>();
   const add = (v: unknown, at: string) => {
     if (typeof v !== 'string' || !v) return;
     out.set(v, [...(out.get(v) ?? []), at]);
   };
-  const leaf = (f: Field, v: unknown, at: string) => { if (f.type === 'asset') add(v, at); };
+  const leaf = (f: Field, v: unknown, at: string) => { if (pick(f)) add(v, at); };
   const holder = (base: string, comps: Record<string, Record<string, unknown>>) => {
     for (const [cname, values] of Object.entries(comps)) {
       const def = reg.components.get(cname);
@@ -68,6 +73,17 @@ export function assetRefs(docs: AssetDocs, reg: Registry): Map<string, string[]>
     const def = reg.tables.get(t.name);
     if (!def) continue;
     for (const r of t.rows) for (const [k, f] of Object.entries(def.columns)) if (k in r) visit(f, r[k], `$${t.name}.${r.id}.${k}`, leaf);
+  }
+  return out;
+}
+
+/** コードの中の ctx.scene.goto('名前') の行き先（名前 → "game/x.ts:12"） */
+export function codeSceneRefs(files: Iterable<[string, string]>): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const [file, text] of files) {
+    text.split('\n').forEach((line, i) => {
+      for (const m of line.matchAll(/\bgoto\(\s*(['"`])([A-Za-z0-9_-]+)\1/g)) out.set(m[2], [...(out.get(m[2]) ?? []), `${file}:${i + 1}`]);
+    });
   }
   return out;
 }
@@ -86,4 +102,17 @@ export function codeRefs(files: Iterable<[string, string]>, assets: Iterable<str
     });
   }
   return out;
+}
+
+/**
+ * シーンに入る前に読み込むアセット。そのシーンに置いた物が使うもの。
+ * first（最初のシーン）なら、プレハブ・表・コードが使うものも（どのシーンからでも出せるので最初に読む）
+ */
+export function preloadSet(refs: Map<string, string[]>, scene: string, first: boolean, code: Iterable<string> = []): string[] {
+  const out = new Set<string>();
+  for (const [asset, at] of refs) {
+    if (at.some((a) => a.startsWith(scene + '#') || (first && (a.startsWith('@') || a.startsWith('$'))))) out.add(asset);
+  }
+  if (first) for (const c of code) out.add(c);
+  return [...out];
 }

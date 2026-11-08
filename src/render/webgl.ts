@@ -21,6 +21,8 @@ interface Tex {
   w: number;
   h: number;
   ready: boolean;
+  /** 読み込みが終わった（読めなかったときも） */
+  loaded?: Promise<void>;
 }
 
 const MAX_QUADS = 4096;
@@ -59,6 +61,8 @@ export interface DrawOptions {
   design?: { width: number; height: number };
   /** カメラを使わず、この視点で全部の層を描く（エディタの自由な視点） */
   view?: CameraView;
+  /** 画面全体を覆う色（シーンの切り替えのフェード。Game.overlay() の値） */
+  overlay?: { color: string; alpha: number } | null;
 }
 
 export class Renderer {
@@ -169,7 +173,16 @@ export class Renderer {
       this.flush();
     });
     gl.disable(gl.SCISSOR_TEST);
+    if (o.overlay && o.overlay.alpha > 0) {
+      this.quad(this.white, 'normal', [0, 0, W, 0, W, H, 0, H], 0, 0, 1, 1, o.overlay.color, Math.min(1, o.overlay.alpha));
+      this.flush();
+    }
     this.gcText();
+  }
+
+  /** 画像を先に読み込む（シーンに入る前に。読み込み終わるか、読めなかったら終わる） */
+  preload(paths: string[]): Promise<void> {
+    return Promise.all(paths.map((p) => this.texture(p).loaded)).then(() => {});
   }
 
   /** 座標（描く先のpx）にあるもののID（手前から奥の順）。カメラの範囲の外で切れている部分は選ばない */
@@ -304,13 +317,16 @@ export class Renderer {
     this.textures.set(path, t);
     const img = new Image();
     const target = t;
-    img.onload = () => {
-      this.upload(target, img, this.opts.filter ?? 'linear');
-      target.w = img.naturalWidth;
-      target.h = img.naturalHeight;
-      target.ready = true;
-    };
-    img.onerror = () => console.warn(`画像を読み込めません: ${path}`);
+    target.loaded = new Promise<void>((done) => {
+      img.onload = () => {
+        this.upload(target, img, this.opts.filter ?? 'linear');
+        target.w = img.naturalWidth;
+        target.h = img.naturalHeight;
+        target.ready = true;
+        done();
+      };
+      img.onerror = () => { console.warn(`画像を読み込めません: ${path}`); done(); };
+    });
     img.src = this.opts.urlOf(path);
     return t;
   }

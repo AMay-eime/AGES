@@ -1,12 +1,12 @@
 // 差分編集。AIも人（エディタ）も、ファイルの変更はすべてここを通る。
 // 返り値は「何がいくつからいくつに変わったか」だけ。
-import { formatSub, getIn, parseAddress, setIn, type Address, type EntityData, type PrefabDoc, type SceneDoc } from './docs.ts';
+import { formatSub, getIn, parseAddress, setIn, type Address, type EntityData, type PrefabDoc, type ProjectConfig, type SceneDoc } from './docs.ts';
 import { checkAt, checkCell, defaultOf, filled, mapLeaves, suggest, type CellValue, type Field } from './schema.ts';
 import { ROW_ID, type Row, type TableDoc } from './table.ts';
 import type { Registry } from './registry.ts';
 import { baseNameOf, checkSheet, findFrame, sheetPathOf, toExplicit, type FrameDef, type FrameRef, type SheetDef } from './sheet.ts';
 import { frameMapper, remapRef } from './slice.ts';
-import { assetRefs, checkAssetPath, extOf, isUnder, kindOf } from './assets.ts';
+import { assetRefs, checkAssetPath, extOf, isUnder, kindOf, leafRefs } from './assets.ts';
 
 export type Op =
   | { op: 'set'; path: string; value: unknown }
@@ -46,7 +46,15 @@ export type Op =
   /** ファイル（かフォルダ）の場所を変える。使っている値も直る。画像の切り方（.sheet.json）も一緒に動く */
   | { op: 'moveAsset'; from: string; to: string }
   /** ファイル（かフォルダ）を消す。使われているものは消せない */
-  | { op: 'removeAsset'; path: string };
+  | { op: 'removeAsset'; path: string }
+  /** シーンを作る（copy で、そのシーンの写し） */
+  | { op: 'addScene'; name: string; copy?: string; desc?: string }
+  /** シーンを消す（開始シーンと、使われているシーンは消せない） */
+  | { op: 'removeScene'; name: string }
+  /** シーンの名前を変える（scene 型の値と開始シーンも直る） */
+  | { op: 'renameScene'; name: string; to: string }
+  /** シーンの説明・開始シーンにする */
+  | { op: 'setScene'; name: string; desc?: string; start?: boolean };
 
 /** シートの値の住所。sheet:<画像>（全体）、sheet:<画像>|<コマ>.rect、sheet:<画像>|clip:<動き>.fps */
 export const sheetAddress = (image: string, rest = '') => `sheet:${image}${rest ? '|' + rest : ''}`;
@@ -76,6 +84,8 @@ export interface Docs {
   tables: Map<string, TableDoc>;
   /** プロジェクトの中のファイルの場所（アセットの移動・削除で使う。ないときはその操作ができない） */
   files?: Set<string>;
+  /** プロジェクトの設定（開始シーンの変更で使う。dirty は "config"） */
+  config?: ProjectConfig;
 }
 
 /** 文書の変更に合わせて行うファイルの操作（to が null なら消す） */
@@ -234,13 +244,14 @@ export function setValue(docs: Docs, reg: Registry, path: string, value: unknown
 
 /** 操作をまとめて適用する。1つでも失敗したら何も変えない。 */
 export function applyOps(docs: Docs, reg: Registry, ops: Op[]): PatchResult {
-  const work: Docs = { scenes: structuredClone(docs.scenes), prefabs: structuredClone(docs.prefabs), sheets: structuredClone(docs.sheets), tables: structuredClone(docs.tables), files: docs.files && new Set(docs.files) };
+  const work: Docs = { scenes: structuredClone(docs.scenes), prefabs: structuredClone(docs.prefabs), sheets: structuredClone(docs.sheets), tables: structuredClone(docs.tables), files: docs.files && new Set(docs.files), config: docs.config && structuredClone(docs.config) };
   const changes: Change[] = [];
   const dirty = new Set<string>();
   const files: FileOp[] = [];
   ops.forEach((op, i) => {
     try {
       if (op.op === 'moveAsset' || op.op === 'removeAsset') assetOp(work, reg, op, changes, dirty, files);
+      else if (op.op === 'addScene' || op.op === 'removeScene' || op.op === 'renameScene' || op.op === 'setScene') sceneOp(work, reg, op, changes, dirty);
       else applyOne(work, reg, op, changes, dirty);
     } catch (err) {
       throw new PatchError(i, err instanceof Error ? err.message : String(err));
@@ -248,9 +259,10 @@ export function applyOps(docs: Docs, reg: Registry, ops: Op[]): PatchResult {
   });
   // 成功したら本物に反映
   for (const k of dirty) {
+    if (k === 'config') { if (docs.config && work.config) Object.assign(docs.config, work.config); continue; }
     const i = k.indexOf(':');
     const kind = k.slice(0, i), name = k.slice(i + 1);
-    if (kind === 'scene') docs.scenes.set(name, work.scenes.get(name)!);
+    if (kind === 'scene') { if (work.scenes.has(name)) docs.scenes.set(name, work.scenes.get(name)!); else docs.scenes.delete(name); }
     else if (kind === 'prefab') docs.prefabs.set(name, work.prefabs.get(name)!);
     else if (kind === 'table') docs.tables.set(name, work.tables.get(name)!);
     else if (work.sheets.has(name)) docs.sheets.set(name, work.sheets.get(name)!);
@@ -577,6 +589,82 @@ function fixLeaves(docs: Docs, reg: Registry, fix: (f: Field, v: unknown) => unk
         r[k] = next;
         dirty.add(`table:${t.name}`);
       }
+    }
+  }
+}
+
+const SCENE_NAME = /^[A-Za-z0-9_-]+$/;
+
+/** シーンを作る・消す・名前を変える・説明と開始シーン */
+function sceneOp(docs: Docs, reg: Registry, op: Extract<Op, { op: 'addScene' | 'removeScene' | 'renameScene' | 'setScene' }>, changes: Change[], dirty: Set<string>): void {
+  const need = (name: string) => {
+    const s = docs.scenes.get(name);
+    if (!s) throw new Error(`シーン ${name} はありません${suggest(String(name), [...docs.scenes.keys()])}`);
+    return s;
+  };
+  const fresh = (name: string) => {
+    if (typeof name !== 'string' || !SCENE_NAME.test(name)) throw new Error(`シーンの名前 "${name}" には英数字・_・- だけが使えます`);
+    if (docs.scenes.has(name)) throw new Error(`シーン ${name} はすでにあります`);
+  };
+  const usedBy = (name: string) => leafRefs(docs, reg, (f) => f.type === 'scene').get(name) ?? [];
+  switch (op.op) {
+    case 'addScene': {
+      fresh(op.name);
+      const entities = op.copy ? structuredClone(need(op.copy).entities) : [];
+      docs.scenes.set(op.name, { name: op.name, ...(op.desc ? { desc: op.desc } : {}), entities });
+      dirty.add(`scene:${op.name}`);
+      changes.push({ path: `scene:${op.name}`, to: 'added' });
+      return;
+    }
+    case 'removeScene': {
+      need(op.name);
+      if (docs.config?.startScene === op.name) throw new Error(`${op.name} は開始シーンなので消せません。先に別のシーンを開始にしてください（setScene の start）`);
+      const used = usedBy(op.name);
+      if (used.length) throw new Error(`シーン ${op.name} は使われているので消せません: ${used.slice(0, 5).join(', ')}。先にその指定を変えてください`);
+      docs.scenes.delete(op.name);
+      dirty.add(`scene:${op.name}`);
+      changes.push({ path: `scene:${op.name}`, to: 'removed' });
+      return;
+    }
+    case 'renameScene': {
+      const s = need(op.name);
+      if (op.to === op.name) return;
+      fresh(op.to);
+      docs.scenes.delete(op.name);
+      s.name = op.to;
+      docs.scenes.set(op.to, s);
+      dirty.add(`scene:${op.name}`);
+      dirty.add(`scene:${op.to}`);
+      changes.push({ path: `scene:${op.name}`, from: op.name, to: `renamed:${op.to}` });
+      if (docs.config?.startScene === op.name) {
+        docs.config.startScene = op.to;
+        dirty.add('config');
+        changes.push({ path: 'config.startScene', from: op.name, to: op.to, auto: true });
+      }
+      fixLeaves(docs, reg, (f, v) => (f.type === 'scene' && v === op.name ? op.to : undefined), changes, dirty);
+      return;
+    }
+    case 'setScene': {
+      const s = need(op.name);
+      if (op.desc !== undefined) {
+        if (typeof op.desc !== 'string') throw new Error('setScene の desc は文字列です');
+        const from = s.desc ?? '';
+        if (from !== op.desc) {
+          // 名前・説明・物の順に並べる（ファイルが読みやすいように）
+          docs.scenes.set(op.name, { name: s.name, ...(op.desc ? { desc: op.desc } : {}), entities: s.entities });
+          dirty.add(`scene:${op.name}`);
+          changes.push({ path: `scene:${op.name}.desc`, from, to: op.desc });
+        }
+      }
+      if (op.start) {
+        if (!docs.config) throw new Error('開始シーンを変えるにはプロジェクトの設定が必要です');
+        if (docs.config.startScene !== op.name) {
+          changes.push({ path: 'config.startScene', from: docs.config.startScene, to: op.name });
+          docs.config.startScene = op.name;
+          dirty.add('config');
+        }
+      }
+      return;
     }
   }
 }

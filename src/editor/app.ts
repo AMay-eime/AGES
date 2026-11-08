@@ -8,6 +8,7 @@ import type { Op, Change } from '../core/patch.ts';
 import { modal, toast, h } from './ui/dom.ts';
 import { AudioPlayer } from '../audio/player.ts';
 import { DEFAULT_SOUND, playCmd, type SoundSettings } from '../core/audio.ts';
+import { assetRefs, preloadSet } from '../core/assets.ts';
 
 export interface LockMark { who: string; t: string; value: unknown; note?: string }
 export interface TouchMark { who: string; t: string }
@@ -41,6 +42,10 @@ export interface PlayState {
   /** 実行中にインスペクタで変えた値（停止時に保存するか選ぶ） */
   edits: Map<string, unknown>;
   recorder?: InputRecorder;
+  /** 再生を始めたシーン（止めたらここに戻る） */
+  from: string;
+  /** 読み込み中（終わるまでフレームを進めない。結果は変わらない） */
+  loading?: { done: number; total: number };
 }
 
 type Listener = (detail?: unknown) => void;
@@ -105,6 +110,7 @@ export class App {
     }
     if (this.registry) {
       this.registry.prefabs = new Map(Object.entries(s.prefabs));
+      this.registry.scenes = new Map(Object.entries(s.scenes));
       this.registry.sheets = new Map(Object.entries(s.sheets ?? {}));
       this.registry.tableData = new Map(Object.entries(s.tables ?? {}));
       this.registry.images = new Map(s.assets.filter((a) => a.w && a.h).map((a) => [a.path, { w: a.w!, h: a.h! }]));
@@ -206,19 +212,41 @@ export class App {
     try {
       const game = new Game(this.registry, this.state.config, this.state.scenes[this.scene]);
       game.listeners.push((ev) => this.emit('gameEvent', ev));
-      // 音: 再生ボタンのクリックの中で準備する（ブラウザの決まり）。音のファイルは先に読み込んでおく
+      // 音: 再生ボタンのクリックの中で準備する（ブラウザの決まり）。画像・音のファイルは hold で先に読み込む
       this.audio.ensure();
       const l = this.localAudio;
       this.audio.setLocal(l.volume, l.muted);
-      this.audio.preload(this.state.assets.filter((a) => a.kind === 'sound').map((a) => a.path));
       this.audio.resume();
       this.audio.setBuses(game.audioBuses());
       game.audioListeners.push((cmd) => this.audio.handle(cmd));
-      this.play = { game, paused: false, edits: new Map(), recorder: record ? new InputRecorder() : undefined };
+      const play: PlayState = { game, paused: false, edits: new Map(), recorder: record ? new InputRecorder() : undefined, from: this.scene };
+      this.play = play;
+      // シーンが切り替わったら、エディタもそのシーンを見せ、次のシーンの画像・音を読み込む
+      game.sceneListeners.push((_from, to) => {
+        this.scene = to;
+        this.hold(play, to, false);
+        this.emit('change');
+      });
+      this.hold(play, this.scene, true);
       this.emit('play');
     } catch (e) {
       toast((e as Error).message, 'bad');
     }
+  }
+
+  /** 画像と音を読み込む人（ゲームの画面が描く側を登録する） */
+  readonly preloaders: ((paths: string[]) => Promise<void>)[] = [(paths) => this.audio.preload(paths.filter((p) => /\.(wav|mp3|ogg|m4a)$/i.test(p)))];
+
+  /** シーンに入る前に、そのシーンで使う画像・音を読み込む。終わるまでフレームを進めない */
+  private hold(play: PlayState, scene: string, first: boolean): void {
+    const s = this.state;
+    const docs = { scenes: new Map(Object.entries(s.scenes)), prefabs: new Map(Object.entries(s.prefabs)), tables: new Map(Object.entries(s.tables)) };
+    const paths = preloadSet(assetRefs(docs, this.registry), scene, first, Object.keys(s.codeRefs ?? {}));
+    if (!paths.length) return;
+    const loading = { done: 0, total: paths.length };
+    play.loading = loading;
+    const each = (p: string) => Promise.all(this.preloaders.map((f) => f([p]).catch(() => {}))).then(() => { loading.done++; });
+    void Promise.all(paths.map(each)).then(() => { if (play.loading === loading) play.loading = undefined; this.emit('frame'); });
   }
 
   togglePause(): void {
@@ -242,6 +270,7 @@ export class App {
 
   tick(): void {
     const p = this.play!;
+    if (p.loading) return; // 読み込みが終わってから進める
     try {
       const input = this.devices.frame();
       p.recorder?.record(p.game.frame, input);
@@ -261,6 +290,8 @@ export class App {
     this.audio.stopAll();
     this.audio.resume();
     this.devices.clear();
+    // 再生中にシーンが切り替わっていたら、始めたシーンに戻る
+    if (this.scene !== p.from && this.state.scenes[p.from]) { this.scene = p.from; this.rebuildPreview(); this.emit('change'); }
     this.emit('play');
     if (p.recorder) await this.saveRecording(p.recorder.events, p.game.frame);
     if (p.edits.size) await this.askKeepEdits(p.edits);

@@ -46,6 +46,8 @@ export class Devices {
   /** 押されているキー（KeyboardEvent.code） */
   readonly keys = new Set<string>();
   private mouse = new Set<string>();
+  /** 前のフレームから今までに押されたもの（フレームの間に押して離した短い押しも、1フレームは押したことにする） */
+  private tapped = new Set<string>();
   private ptr: Point | null = null;
   private wheelAcc = 0;
   private touch = new Map<number, Point>();
@@ -59,6 +61,7 @@ export class Devices {
       const k = e as KeyboardEvent;
       if (!this.enabled() || ignore(k)) return;
       this.keys.add(k.code);
+      this.tapped.add(k.code);
       // 矢印・スペースでページが動かないように
       if (k.code.startsWith('Arrow') || k.code === 'Space') k.preventDefault();
     };
@@ -83,6 +86,7 @@ export class Devices {
     on(target, 'mousedown', (e: MouseEvent) => {
       if (!this.enabled() || !accept()) return;
       this.mouse.add(`Mouse${e.button}`);
+      this.tapped.add(`Mouse${e.button}`);
       this.ptr = at(e.clientX, e.clientY);
     });
     on(window, 'mouseup', (e: MouseEvent) => { this.mouse.delete(`Mouse${e.button}`); });
@@ -112,7 +116,8 @@ export class Devices {
 
   /** このフレームの入力を作る（フレームの頭で1回。ホイールはここで 0 に戻る） */
   frame(): FrameInput {
-    const buttons = new Set<string>([...this.keys, ...this.mouse]);
+    const buttons = new Set<string>([...this.keys, ...this.mouse, ...this.tapped]);
+    this.tapped.clear();
     const axes: Record<string, number> = {};
     if (this.enabled()) readGamepads(getPads(), buttons, axes);
     if (this.touch.size) buttons.add('Touch');
@@ -125,6 +130,7 @@ export class Devices {
   clear(): void {
     this.keys.clear();
     this.mouse.clear();
+    this.tapped.clear();
     this.touch.clear();
     this.wheelAcc = 0;
   }

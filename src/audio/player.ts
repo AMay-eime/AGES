@@ -66,9 +66,10 @@ export class AudioPlayer {
   get ready(): boolean { return !!this.ac; }
 
   /** 先に読み込んでおく（鳴らすときの遅れをなくし、重ねる曲をそろえて鳴らせるように） */
-  preload(paths: string[]): void {
-    if (!this.ac) return;
-    for (const p of paths) void this.load(p);
+  /** 音のファイルを先に読み込む（読み込み終わるか、読めなかったら終わる） */
+  preload(paths: string[]): Promise<void> {
+    if (!this.ac) return Promise.resolve();
+    return Promise.all(paths.map((p) => this.load(p))).then(() => {});
   }
 
   /** ファイルが変わったら読み直す */

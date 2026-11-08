@@ -1,0 +1,54 @@
+{
+  "name": "result",
+  "desc": "ゲームオーバーの後の結果（得点を出し、fire でもう一度）",
+  "entities": [
+    {
+      "id": "title",
+      "name": "GAME OVER",
+      "components": {
+        "Transform": {
+          "x": 240,
+          "y": 260
+        },
+        "Text": {
+          "text": "GAME OVER",
+          "size": 40,
+          "color": "#ff7a8a",
+          "align": "center"
+        }
+      }
+    },
+    {
+      "id": "score",
+      "name": "Score",
+      "components": {
+        "Transform": {
+          "x": 240,
+          "y": 320
+        },
+        "Text": {
+          "text": "SCORE 0",
+          "size": 20,
+          "color": "#e8ecff",
+          "align": "center"
+        }
+      }
+    },
+    {
+      "id": "prompt",
+      "name": "Prompt",
+      "components": {
+        "Transform": {
+          "x": 240,
+          "y": 400
+        },
+        "Text": {
+          "text": "fire でもう一度",
+          "size": 14,
+          "color": "#8a91a3",
+          "align": "center"
+        }
+      }
+    }
+  ]
+}
