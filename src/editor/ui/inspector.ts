@@ -94,9 +94,9 @@ export function inspectorPanel(app: App): Panel {
         if (lock) { w.el.setAttribute('inert', ''); w.el.classList.add('locked-value'); }
         const lockBtn = h('button', {
           class: `icon lockbtn ${lock ? 'on' : ''}`,
-          title: lock ? `🔒 ロック中（${lock.who} ${time(lock.t)}）${lock.note ? '\n' + lock.note : ''}\nAI もエディタも変えられません。クリックでロックマネージャーを開く（外す・値を変える）` : 'ロックする（ロックマネージャーが開きます）',
-          disabled: !savable,
-          onclick: () => app.openLocks(path),
+          title: lock ? `🔒 ロック中（${lock.who} ${time(lock.t)}）${lock.note ? '\n' + lock.note : ''}\nAI もエディタも変えられません。クリックでロックマネージャーを開く（外す・値を変える）` : 'ロックする（AI もエディタも変えられなくなります。外すのはロックマネージャーで）',
+          disabled: !savable || (playing && !lock),
+          onclick: () => (lock ? app.openLocks(path) : app.lock([path])),
         }, lock ? '🔒' : '🔓');
         const row = h('div', {
           class: `field ${isNested(f) ? 'wide' : ''} ${has ? '' : 'default'} ${touched ? 'touched' : ''} ${lock ? 'locked' : ''}`,
@@ -108,6 +108,7 @@ export function inspectorPanel(app: App): Panel {
       return h('div', { class: 'comp' },
         h('div', { class: 'head' }, cname, h('span', { class: 'desc', title: def.desc }, allLocked ? '（すべて🔒）' : def.desc),
           cname === 'Sound' ? h('button', { class: 'icon', title: '今の設定で試しに鳴らす', onclick: () => app.previewSound(holder!.components.Sound as never) }, '▶') : null,
+          !playing && savable && !entries.every(([fname]) => app.state.locks[`${base}.${cname}.${fname}`]) ? h('button', { class: 'icon', title: `${cname} の値をまとめてロックする（外すのはロックマネージャーで）`, onclick: () => app.lock(entries.map(([fname]) => `${base}.${cname}.${fname}`).filter((p2) => !app.state.locks[p2])) }, '🔓') : null,
           !playing && h('button', { class: 'icon', title: `${cname} を外す`, onclick: () => app.patch([{ op: 'removeComponent', target: base, component: cname }]) }, '×')),
         rows);
     });

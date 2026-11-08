@@ -99,7 +99,7 @@ export class App {
 
   /** 元に戻す（redo ならやり直す）。tx を渡すと、その編集（操作ログから選んだもの。AI の編集も） */
   async undo(redo = false, tx?: string): Promise<void> {
-    if (this.play) return toast('再生中は元に戻せません（止めてから）', 'bad');
+    if (this.play) { toast('再生中は元に戻せません（止めてから）', 'bad'); return; }
     try {
       const r = await this.api<{ label: string; changes: Change[]; warnings?: string[] }>(redo ? '/api/redo' : '/api/undo', { body: { tx } });
       toast(`${redo ? 'やり直しました' : '元に戻しました'}: ${r.label}`);
@@ -173,6 +173,20 @@ export class App {
     window.open(url, 'ages-locks');
   }
 
+  /** ロックをかける（エディタから。外すのはロックマネージャーで）。押し間違えたときのために、外す場所へのリンクを出す */
+  async lock(paths: string[], win = 'inspector'): Promise<void> {
+    if (!paths.length) return;
+    try {
+      await this.api('/api/lock', { body: { paths, win } });
+      const label = paths.length === 1 ? paths[0] : `${paths.length}件`;
+      const t = toast(`🔒 ロックしました: ${label}（外すならロックマネージャーで）`, 'lock', 6000);
+      t?.addEventListener('click', () => this.openLocks(paths[0]));
+    } catch (e) {
+      toast((e as Error).message, 'bad');
+    }
+    await this.refresh();
+  }
+
   /** ロックされた値を表示するか（人ごとにブラウザに記憶する設定。既定は表示する） */
   get showLocked(): boolean {
     return localStorage.getItem('ages.showLocked') !== '0';
@@ -225,7 +239,7 @@ export class App {
   /** 試しに鳴らす（インスペクタの ▶） */
   previewSound(values: Partial<SoundSettings>, cue = 'preview'): void {
     const s = { ...DEFAULT_SOUND, ...values } as SoundSettings;
-    if (!s.clip) return toast('音のファイルが決まっていません', 'bad');
+    if (!s.clip) { toast('音のファイルが決まっていません', 'bad'); return; }
     this.audio.ensure();
     const l = this.localAudio;
     this.audio.setLocal(l.volume, l.muted);

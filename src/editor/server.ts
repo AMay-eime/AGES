@@ -248,8 +248,16 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
     broadcast({ type: 'docs', by: human(req, '').who, changes: r.changes });
     return json(res, r);
   }
+  if (m === 'POST' && p === '/api/lock') {
+    // ロックを「かける」のはエディタからもできる（外す・値を変えるのはロックマネージャーで）
+    const { paths, note, win } = JSON.parse((await body(req)).toString('utf8'));
+    if (typeof win === 'string' && (win.startsWith('window:') || win === 'lock-manager')) return json(res, { error: 'ロックをかけるのは、エディタの 🔓 かロックマネージャーからだけです' }, 403);
+    await call('lock', paths, human(req, win ?? 'inspector'), note);
+    broadcast({ type: 'locks' });
+    return json(res, { ok: true });
+  }
   if (p === '/api/lock' || p === '/api/unlock' || p.startsWith('/api/locks/')) {
-    return json(res, { error: `ロックの操作は、ロックマネージャー（http://localhost:${lockPort}）でだけできます` }, 403);
+    return json(res, { error: `ロックを外す・ロックの記録を確かめるのは、ロックマネージャー（http://localhost:${lockPort}）でだけできます` }, 403);
   }
   if (p === '/api/file') {
     const rel = url.searchParams.get('path') ?? '';

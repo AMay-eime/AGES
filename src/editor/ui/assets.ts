@@ -171,7 +171,7 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
       ['名前を変える（F2）', () => rename(a.path, false)],
       ['別のフォルダへ', () => moveTo(a.path, false)],
       ['場所をコピー', () => { navigator.clipboard?.writeText(a.path); toast(`コピーしました: ${a.path}`); }],
-      [app.state.locks[`file:${a.path}`] ? '🔒 ロック中（ロックマネージャーで）' : '🔒 ロックする…', () => app.openLocks(`file:${a.path}`)],
+      [app.state.locks[`file:${a.path}`] ? '🔒 ロック中（ロックマネージャーで外す）' : '🔒 ロックする', () => (app.state.locks[`file:${a.path}`] ? app.openLocks(`file:${a.path}`) : app.lock([`file:${a.path}`], 'assets'))],
       ['消す（Delete）', () => remove(a.path, false)],
     ]);
   };
@@ -339,7 +339,9 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
         h('button', { onclick: () => rename(a.path, false) }, '名前'),
         h('button', { onclick: () => moveTo(a.path, false) }, '移動'),
         h('button', { onclick: () => remove(a.path, false), title: refs.length ? '使われているので消せません' : '' }, '消す'),
-        h('button', { onclick: () => app.openLocks(`file:${a.path}`), title: 'このファイルそのものをロックする・外す（ロックマネージャーで）' }, '🔒')),
+        app.state.locks[`file:${a.path}`]
+          ? h('button', { onclick: () => app.openLocks(`file:${a.path}`), title: 'ロックを見る・外す（ロックマネージャーで）' }, '🔒')
+          : h('button', { onclick: () => app.lock([`file:${a.path}`], 'assets'), title: 'このファイルそのものをロックする（差し替え・移動・削除ができなくなります。外すのはロックマネージャーで）' }, '🔓')),
       h('div', { class: 'muted' }, refs.length ? `使っている所 ${refs.length}` : '使っている所はありません'),
       h('ul', { class: 'refs' }, refs.map((r) => h('li', {}, r.endsWith('（コード）') ? h('span', {}, r) : h('a', { onclick: () => go(r) }, r)))));
   };

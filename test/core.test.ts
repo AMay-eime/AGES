@@ -64,10 +64,13 @@ test('ロックした値は、AIからは --force でも変えられない', asy
   await assert.rejects(p.apply([{ op: 'removeEntity', scene: 'main', id: 'player' }], ai, { force: true }), /ロックされた値/);
 });
 
-test('ロックの設定はAIにはできない', async () => {
+test('ロックをかけるのは人だけ（エディタからもかけられる）。外すのはロックマネージャーからだけ', async () => {
   const p = await Project.load(await fresh());
-  await assert.rejects(p.lock(['main#player.Player.speed'], ai), /ロックマネージャーでだけできます/);
-  await assert.rejects(p.lock(['main#player.Player.speed'], human), /ロックマネージャーでだけできます/, '人でも、エディタからは付けられない');
+  await assert.rejects(p.lock(['main#player.Player.speed'], ai), /ロックをかけるのは人だけ/);
+  await assert.rejects(p.lock(['main#player.Player.speed'], { ...human, win: 'window:wave-tuner' }), /独自のウインドウからはできません/);
+  await p.lock(['main#player.Player.speed'], human);
+  await assert.rejects(p.unlock(['main#player.Player.speed'], human), /ロックマネージャーでだけできます/, '人でも、エディタからは外せない');
+  await p.unlock(['main#player.Player.speed'], keeper);
 });
 
 test('ファイルを直接書き換えられても、ロックした値は次の読み込みで元に戻る', async () => {
