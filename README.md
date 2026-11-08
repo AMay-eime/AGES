@@ -6,6 +6,7 @@
 - 画面なしで高速に実行し、結果の要約だけを返す（`ages run`）
 - 固定更新・シード付き乱数・入力の記録と再生で、毎回同じ結果になる
 - 人とAIのすべての編集を操作ログに残し、人が調整した値はAIが勝手に上書きしない
+- ゲームより先にエディタを決める: AIは企画を受けたら、まず必要なエディタを使用者と確認する（`ages init` が計画書のひな形を作る）
 - 実行時の外部依存ゼロ。コンパイル待ちなし
 
 - 開発理念: [docs/VISION.md](docs/VISION.md)
@@ -32,6 +33,7 @@ npm test
 npm run check                                  # 事前に npm install が必要
 
 # AI向けCLI
+node bin/ages.js init ../my-game --name my-game  # 新しいプロジェクト（エディタ計画書つき）
 node bin/ages.js map examples/shooter            # プロジェクトの地図
 node bin/ages.js get examples/shooter main#player # 値を見る
 node bin/ages.js set examples/shooter main#player.Mover.speed 5
