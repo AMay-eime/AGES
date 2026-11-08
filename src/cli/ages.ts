@@ -259,6 +259,8 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
   out.push(...r.lines);
   const counts = [...g.counts.entries()].map(([k, v]) => `${k}×${v}`).join(' ');
   out.push(`events: ${counts || 'なし'}`);
+  if (g.soundCounts.size) out.push(`sounds: ${[...g.soundCounts.entries()].map(([k, v]) => `♪${k}×${v}`).join(' ')}`);
+  for (const w of g.warnings) out.push(`⚠ ${w}`);
   const byName = new Map<string, number>();
   for (const e of g.world.entities.values()) byName.set(e.prefab ? '@' + e.prefab : e.id, (byName.get(e.prefab ? '@' + e.prefab : e.id) ?? 0) + 1);
   out.push(`entities: ${g.world.entities.size} (${[...byName.entries()].map(([k, v]) => (v > 1 ? `${k}×${v}` : k)).join(' ')})`);

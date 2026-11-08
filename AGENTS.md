@@ -55,6 +55,8 @@ AGESに足りない機能（画像・音・物理など。docs/PLAN.md の段階
 - コマを指定するときは名前を使う（切り直してもずれない）。切り方の🔒・★はシーンの値と同じ扱い
 - カメラは標準の Camera（`ages schema <dir> Camera`）。追いかけ・範囲の制限・揺れは自分で書かない。揺らすのは `ctx.shake(0〜1)`
 - 画面の大きさへの合わせ方は `ages.project.json` の `view.fit`。ゲームのロジックは `ctx.view`（設計の大きさ）だけを使う
+- 音は Sound の付いたプレハブ（例 `@se_shot`）を作り、`ctx.sound.play('se_shot')` で鳴らす。音量などの調整値はプレハブに置き、コードに書かない。BGM・環境音は物に Sound（autoplay）を付ける
+- 鳴ったかどうかは `ages run` の `sounds:` と ⚠ で確かめる（音を聞かなくてよい）
 
 ## エディタウインドウ
 

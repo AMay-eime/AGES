@@ -150,6 +150,30 @@
         },
         "Camera": {}
       }
+    },
+    {
+      "id": "bgm",
+      "name": "BGM",
+      "components": {
+        "Sound": {
+          "clip": "assets/sounds/bgm.wav",
+          "bus": "bgm",
+          "volume": 0.6,
+          "loop": true,
+          "autoplay": true,
+          "fadeIn": 0.5,
+          "fadeOut": 1
+        }
+      }
+    },
+    {
+      "id": "mixer",
+      "name": "Mixer",
+      "components": {
+        "Mixer": {
+          "bgm": 0.8
+        }
+      }
     }
   ]
 }

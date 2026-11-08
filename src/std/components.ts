@@ -104,4 +104,36 @@ export const Camera = defineComponent({
   },
 });
 
-export const STD_COMPONENTS = [Transform, Sprite, Animator, Shape, Text, Camera];
+export const Sound = defineComponent({
+  name: 'Sound',
+  desc: '音（標準）。プレハブに付けると ctx.sound.play("プレハブ名") で鳴らせる。物に付けて autoplay にすると、その物がいる間鳴る（BGM・環境音）',
+  fields: {
+    clip: { type: 'asset', kind: 'sound', default: '', desc: '音のファイル（例: assets/se/shot.wav）' },
+    bus: { type: 'enum', options: ['se', 'bgm', 'voice', 'ui'], default: 'se', desc: '音量の区分。bgm は同時に1曲だけ（新しい曲に切り替わる）' },
+    volume: { type: 'number', default: 1, min: 0, max: 2, step: 0.01, desc: '音量' },
+    pitch: { type: 'number', default: 1, min: 0.25, max: 4, step: 0.01, desc: '高さと速さ（2 = 1オクターブ上で2倍の速さ）' },
+    pitchJitter: { type: 'number', default: 0, min: 0, max: 1, step: 0.01, desc: '鳴らすたびに高さを ± この割合だけばらつかせる（同じ音の繰り返しを自然に）' },
+    pan: { type: 'number', default: 0, min: -1, max: 1, step: 0.05, desc: '左右（-1 = 左、1 = 右）' },
+    loop: { type: 'bool', default: false, desc: '繰り返す（止めるまで鳴り続ける）' },
+    autoplay: { type: 'bool', default: false, desc: '物に付いているとき、現れたら鳴らす（消えたら止める）' },
+    fadeIn: { type: 'number', default: 0, min: 0, max: 10, step: 0.1, desc: '鳴り始めのフェード(秒)' },
+    fadeOut: { type: 'number', default: 0, min: 0, max: 10, step: 0.1, desc: '止めるときのフェード(秒。BGMの切り替えにも使う)' },
+    maxVoices: { type: 'int', default: 4, min: 1, max: 64, desc: 'この音を同時に鳴らす数の上限（超えたら古いものから止める）' },
+    cooldown: { type: 'number', default: 0, min: 0, max: 5, step: 0.01, desc: 'この秒数より短い間隔では鳴らさない（連射の音が重なりすぎないように）' },
+  },
+});
+
+export const Mixer = defineComponent({
+  name: 'Mixer',
+  desc: '音量の区分ごとの音量（標準）。シーンに1つ置く。なければすべて 1',
+  fields: {
+    master: { type: 'number', default: 1, min: 0, max: 1, step: 0.01, desc: '全体の音量' },
+    bgm: { type: 'number', default: 1, min: 0, max: 1, step: 0.01, desc: 'BGM の音量' },
+    se: { type: 'number', default: 1, min: 0, max: 1, step: 0.01, desc: '効果音の音量' },
+    voice: { type: 'number', default: 1, min: 0, max: 1, step: 0.01, desc: '声の音量' },
+    ui: { type: 'number', default: 1, min: 0, max: 1, step: 0.01, desc: '画面の操作音の音量' },
+    maxVoices: { type: 'int', default: 32, min: 1, max: 128, desc: '全体で同時に鳴らす数の上限（超えたら古いものから止める）' },
+  },
+});
+
+export const STD_COMPONENTS = [Transform, Sprite, Animator, Shape, Text, Camera, Sound, Mixer];

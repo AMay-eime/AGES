@@ -248,6 +248,8 @@ export class Project {
         ids.add(e.id);
         check(`${s.name}#${e.id}`, e.components);
       }
+      const mixers = s.entities.filter((e) => e.components.Mixer).map((e) => e.id);
+      if (mixers.length > 1) errs.push(`シーン ${s.name} に Mixer が ${mixers.length} 個あります（${mixers.join(', ')}）。音量の区分はシーンに1つだけ置きます`);
       // 同じシーンの中のIDを指す値（例: Camera.follow）は、その相手がいること
       const all = s.entities.map((e) => e.id);
       for (const e of s.entities) {

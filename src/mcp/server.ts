@@ -21,6 +21,7 @@ const INSTRUCTIONS = `AGES は、AIと人が一緒に速くゲームを作るた
 - 値は ages_set / ages_patch で変える。JSONを直接書き換えない。行列はセル単位（住所[行,列]）
 - 🔒ロックされた値は絶対に変えない（変えられない）。変えるべき理由があれば人に提案する。★人が調整した値は、人に確認してから force
 - 変更後は ages_run で確かめる（keys で入力を指定、twice で再現性）
+- 音は Sound の付いたプレハブを作り ctx.sound.play('名前') で鳴らす。鳴ったかは ages_run の sounds: と ⚠ で確かめる（音を聞かなくてよい）
 - 画像の切り方（スプライトシート）は ages_sheet で見て、ages_slice（格子・数・自動）か ages_patch の setFrame / setClip で変える。画像を開いて確かめない
 - 面白さの核・手触り・個性は人が決める。AIが出すものは「案」と明記する
 詳しくはプロジェクトの AGENTS.md。`;

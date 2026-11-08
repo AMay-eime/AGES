@@ -5,6 +5,8 @@ import { InputRecorder, InputPlayback, type InputEvent } from '../core/input.ts'
 import type { PrefabDoc, ProjectConfig, SceneDoc } from '../core/docs.ts';
 import type { Op, Change } from '../core/patch.ts';
 import { modal, toast, h } from './ui/dom.ts';
+import { AudioPlayer } from '../audio/player.ts';
+import { DEFAULT_SOUND, playCmd, type SoundSettings } from '../core/audio.ts';
 
 export interface LockMark { who: string; t: string; value: unknown; note?: string }
 export interface TouchMark { who: string; t: string }
@@ -21,7 +23,7 @@ export interface EditorState {
   version: number;
   files: { path: string; size: number; mtime: number }[];
   sheets: Record<string, import('../core/sheet.ts').SheetDef>;
-  assets: { path: string; kind: 'image' | 'sound' | 'font'; bytes: number; w?: number; h?: number }[];
+  assets: { path: string; kind: 'image' | 'sound' | 'font'; bytes: number; w?: number; h?: number; sec?: number }[];
   error?: string;
 }
 
@@ -157,11 +159,51 @@ export class App {
   }
 
   // ---------- 再生 ----------
+  /** 音を鳴らす側（再生中の音と、インスペクタの試し聞き） */
+  readonly audio = new AudioPlayer((p) => this.assetUrl(p));
+
+  /** 手元の音量とミュート（このブラウザだけ。プロジェクトには保存しない） */
+  setLocalAudio(volume: number, muted: boolean): void {
+    localStorage.setItem('ages.audio', JSON.stringify({ volume, muted }));
+    this.audio.setLocal(volume, muted);
+    this.emit('audio');
+  }
+  get localAudio(): { volume: number; muted: boolean } {
+    try { return { volume: 1, muted: false, ...JSON.parse(localStorage.getItem('ages.audio') ?? '{}') }; } catch { return { volume: 1, muted: false }; }
+  }
+
+  /** シーンの Mixer（音量の区分）を、鳴らす側に伝える */
+  syncMix(): void {
+    const m = this.world?.query('Mixer')[0]?.c.Mixer;
+    this.audio.setMix(m ?? { master: 1, bgm: 1, se: 1, voice: 1, ui: 1, maxVoices: 32 });
+  }
+
+  /** 試しに鳴らす（インスペクタの ▶） */
+  previewSound(values: Partial<SoundSettings>, cue = 'preview'): void {
+    const s = { ...DEFAULT_SOUND, ...values } as SoundSettings;
+    if (!s.clip) return toast('音のファイルが決まっていません', 'bad');
+    this.audio.ensure();
+    const l = this.localAudio;
+    this.audio.setLocal(l.volume, l.muted);
+    this.syncMix();
+    this.audio.stop({ t: 'stop', frame: 0, cue: 'preview' });
+    // 繰り返す音・BGM も、試し聞きは1回だけ
+    this.audio.handle({ ...playCmd(0, cue, s), loop: false, bus: s.bus === 'bgm' ? 'se' : s.bus });
+    if (l.muted) toast('ミュート中です（上のバーの 🔇 で解除）');
+  }
+
   startPlay(record = false): void {
     if (this.play || !this.registry) return;
     try {
       const game = new Game(this.registry, this.state.config, this.state.scenes[this.scene]);
       game.listeners.push((ev) => this.emit('gameEvent', ev));
+      // 音: 再生ボタンのクリックの中で準備する（ブラウザの決まり）。音のファイルは先に読み込んでおく
+      this.audio.ensure();
+      const l = this.localAudio;
+      this.audio.setLocal(l.volume, l.muted);
+      this.audio.preload(this.state.assets.filter((a) => a.kind === 'sound').map((a) => a.path));
+      this.audio.resume();
+      game.audioListeners.push((cmd) => this.audio.handle(cmd));
       this.play = { game, paused: false, edits: new Map(), recorder: record ? new InputRecorder() : undefined };
       this.emit('play');
     } catch (e) {
@@ -172,6 +214,7 @@ export class App {
   togglePause(): void {
     if (!this.play) return;
     this.play.paused = !this.play.paused;
+    if (this.play.paused) this.audio.suspend(); else this.audio.resume();
     this.emit('play');
   }
 
@@ -192,6 +235,7 @@ export class App {
     try {
       p.recorder?.record(p.game.frame, this.keys);
       p.game.step(this.keys);
+      this.syncMix();
     } catch (e) {
       p.paused = true;
       toast((e as Error).message, 'bad', 10000);
@@ -203,6 +247,8 @@ export class App {
     const p = this.play;
     if (!p) return;
     this.play = null;
+    this.audio.stopAll();
+    this.audio.resume();
     this.keys.clear();
     this.emit('play');
     if (p.recorder) await this.saveRecording(p.recorder.events, p.game.frame);

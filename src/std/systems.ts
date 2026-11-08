@@ -67,4 +67,24 @@ export const camera = defineSystem({
   },
 });
 
-export const STD_SYSTEMS = [animator, camera];
+/** 物に付いた音: autoplay の物が現れたら鳴らし、消えたら止める（BGM・環境音・エンジン音など） */
+const playingByWorld = new WeakMap<object, Map<string, number>>();
+export const audio = defineSystem({
+  name: 'std.audio',
+  desc: 'autoplay の Sound を、物が現れたら鳴らし、消えたら止める（標準）',
+  reads: ['Sound'],
+  update({ world, sound }) {
+    const playing = playingByWorld.get(world) ?? new Map<string, number>();
+    const now = new Map<string, number>();
+    for (const e of world.query('Sound')) {
+      const s = e.c.Sound;
+      if (!s.autoplay || !s.clip) continue;
+      now.set(e.id, s.fadeOut ?? 0);
+      if (!playing.has(e.id)) sound.playFrom(e.id);
+    }
+    for (const [id, fade] of playing) if (!now.has(id)) sound.stopFrom(id, fade);
+    playingByWorld.set(world, now);
+  },
+});
+
+export const STD_SYSTEMS = [animator, camera, audio];
