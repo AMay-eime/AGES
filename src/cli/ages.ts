@@ -96,7 +96,7 @@ export async function cmdInit(dir: string, name?: string): Promise<string> {
   const copy = async (from: string, to: string) => {
     for (const entry of await readdir(from)) {
       const src = join(from, entry);
-      const outName = entry === 'gitignore' ? '.gitignore' : entry;
+      const outName = entry === 'gitignore' ? '.gitignore' : entry === 'gitattributes' ? '.gitattributes' : entry;
       const dst = join(to, outName);
       if ((await stat(src)).isDirectory()) {
         await mkdir(dst, { recursive: true });

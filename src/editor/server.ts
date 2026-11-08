@@ -87,7 +87,10 @@ watch(projectDir, { recursive: true }, (_ev, name) => {
 
 let lockTimer: NodeJS.Timeout | undefined;
 let lastLockOk = true;
+/** Gitパネルからのプル中は、ロックの記録の変化を「外部の書き換え」として扱わない（プルの後でまとめて処理する） */
+let pulling = false;
 async function recheckLocks(): Promise<void> {
+  if (pulling) return;
   const r = await call<{ ok: boolean; lockReport: string[] }>('recheckLocks').catch(() => null);
   if (!r) return;
   // 状態が変わったとき、または問題があるときだけ知らせる（エディタ自身の書き込みでは何も起きない）
@@ -282,7 +285,36 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
       const add = await git(['add', '-A', '--', '.']);
       return json(res, { out: add + '\n' + (await git(['commit', '-m', message || (await gitDraft())])) });
     }
-    if (m === 'POST' && op === 'pull') return json(res, { out: await git(['pull', '--no-edit']) });
+    if (m === 'POST' && op === 'pull') {
+      // 人が自分で取り込んだロックの変更は、一覧で知らせて自動で承認する。
+      // ただし、プルの前からロックの記録が確認待ちだったとき（AIの書き換えなど）は承認しない
+      const lockFile = join(projectDir, '.ages', 'locks.json');
+      const okBefore = (await call<{ integrity?: { ok: boolean } }>('state')).integrity?.ok !== false;
+      const before = await readFile(lockFile, 'utf8').catch(() => null);
+      pulling = true;
+      let out: string;
+      let locks: unknown = null;
+      try {
+        out = await git(['pull', '--no-edit']);
+        const after = await readFile(lockFile, 'utf8').catch(() => null);
+        if (before !== after) {
+          await call('recheckLocks');
+          const st = await call<{ integrity?: { ok: boolean; diff: unknown } }>('state');
+          if (okBefore && st.integrity && !st.integrity.ok) {
+            await call('approveLocks', human(req, 'git-pull'));
+            locks = { approved: true, diff: st.integrity.diff };
+            lastLockOk = true;
+          } else if (st.integrity && !st.integrity.ok) {
+            locks = { approved: false, diff: st.integrity.diff };
+            lastLockOk = false;
+          }
+        }
+      } finally {
+        pulling = false;
+      }
+      broadcast({ type: 'locks', integrity: lastLockOk, pulled: locks });
+      return json(res, { out, locks });
+    }
     if (m === 'POST' && op === 'push') return json(res, { out: await git(['push']) });
   }
   json(res, { error: `見つかりません: ${m} ${p}` }, 404);

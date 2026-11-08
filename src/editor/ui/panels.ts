@@ -260,8 +260,13 @@ export function gitPanel(app: App): Panel {
   };
   const run = (op: string) => async () => {
     out.textContent = `${op}…`;
-    const r = await app.api<{ out: string }>(`/api/git/${op}`, { body: op === 'commit' ? { message: msg.value } : {} });
+    const r = await app.api<{ out: string; locks?: { approved: boolean; diff: { added: string[]; removed: string[]; changed: string[] } } | null }>(`/api/git/${op}`, { body: op === 'commit' ? { message: msg.value } : {} });
     out.textContent = r.out;
+    if (r.locks) {
+      const d = r.locks.diff;
+      const n = `増えたロック ${d.added.length}件・消えたロック ${d.removed.length}件・値が変わったロック ${d.changed.length}件`;
+      toast(r.locks.approved ? `チームのロックの変更を取り込み、自動で承認しました（${n}）` : `ロックの記録は、取り込む前から確認待ちでした。「🔒⚠ ロックの記録を確認」から確認してください（${n}）`, 'lock', 8000);
+    }
     if (op === 'commit') edited = false;
     await app.refresh();
     render();
