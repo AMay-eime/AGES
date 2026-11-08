@@ -4,12 +4,12 @@
 // - 描いたものの形を shapes に残す（クリックでの選択に使う）
 import type { World, Entity } from '../core/world.ts';
 import type { SheetDef } from '../core/sheet.ts';
+import { camerasOf, worldToScreen, type CameraView } from '../core/camera.ts';
 import { collectDrawables, cornersOf, pointInCorners, spriteGeometry, type Corners } from './geom.ts';
 
 export interface RendererOptions {
   /** アセットの場所（assets/ship.png）から読み込むURLを作る */
   urlOf(path: string): string;
-  /** スプライトシート（定義ファイルの場所 → 中身） */
   /** 画像の場所 → 切り方 */
   sheets: Map<string, SheetDef>;
   /** nearest=ドット絵向け、linear=なめらか */
@@ -47,7 +47,18 @@ type TransformLike = { x: number; y: number; rot: number; sx: number; sy: number
 
 export interface DrawnShape {
   id: string;
+  /** 描く先（キャンバス）の座標での4つの角 */
   corners: Corners;
+  /** どのカメラで描いたか（cams の番号） */
+  cam: number;
+}
+
+export interface DrawOptions {
+  background: string;
+  /** ゲームの設計の大きさ（既定のカメラの中心に使う）。省くとキャンバスの大きさ */
+  design?: { width: number; height: number };
+  /** カメラを使わず、この視点で全部の層を描く（エディタの自由な視点） */
+  view?: CameraView;
 }
 
 export class Renderer {
@@ -56,6 +67,10 @@ export class Renderer {
   opts: RendererOptions;
   /** 直前に描いたものの形（奥から手前の順） */
   shapes: DrawnShape[] = [];
+  /** 直前に使ったカメラ（描いた順） */
+  cams: CameraView[] = [];
+  private cam!: CameraView;
+  private camIndex = 0;
   private prog: WebGLProgram;
   private vbo: WebGLBuffer;
   private verts = new Float32Array(MAX_QUADS * 4 * FLOATS);
@@ -115,32 +130,72 @@ export class Renderer {
     for (const [k, t] of this.textures) if (!path || k === path) { this.gl.deleteTexture(t.tex); this.textures.delete(k); }
   }
 
-  draw(world: World, background: string): void {
+  /**
+   * 描く。カメラ（Camera）があればカメラごとに、その範囲・層だけを描く。なければ画面全体をそのまま映す。
+   * 第2引数に色だけを渡す古い書き方も使える
+   */
+  draw(world: World, opts: DrawOptions | string): void {
+    const o: DrawOptions = typeof opts === 'string' ? { background: opts } : opts;
     const gl = this.gl;
+    const W = this.canvas.width, H = this.canvas.height;
     this.frameNo++;
-    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-    const [r, g, b] = this.rgb(background);
+    gl.viewport(0, 0, W, H);
+    const [r, g, b] = this.rgb(o.background);
+    gl.disable(gl.SCISSOR_TEST);
     gl.clearColor(r, g, b, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.useProgram(this.prog);
-    gl.uniform2f(gl.getUniformLocation(this.prog, 'u_res'), this.canvas.width, this.canvas.height);
+    gl.uniform2f(gl.getUniformLocation(this.prog, 'u_res'), W, H);
     this.shapes = [];
-    for (const d of collectDrawables(world)) {
-      if (d.kind === 'sprite') this.sprite(d.e);
-      else if (d.kind === 'shape') this.shape(d.e);
-      else this.text(d.e);
-    }
-    this.flush();
+    this.cams = o.view ? [o.view] : camerasOf(world, W, H, o.design?.width ?? W, o.design?.height ?? H);
+    const all = collectDrawables(world);
+    gl.enable(gl.SCISSOR_TEST);
+    this.cams.forEach((cam, i) => {
+      this.cam = cam;
+      this.camIndex = i;
+      // 描く範囲を切り取る（WebGL の y は下から）
+      gl.scissor(Math.floor(cam.vx), Math.floor(H - cam.vy - cam.vh), Math.ceil(cam.vw), Math.ceil(cam.vh));
+      if (cam.clear) {
+        const [cr, cg, cb] = this.rgb(cam.clear);
+        gl.clearColor(cr, cg, cb, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+      }
+      for (const d of all) {
+        if (d.layer < cam.layerMin || d.layer > cam.layerMax) continue;
+        if (d.kind === 'sprite') this.sprite(d.e);
+        else if (d.kind === 'shape') this.shape(d.e);
+        else this.text(d.e);
+      }
+      this.flush();
+    });
+    gl.disable(gl.SCISSOR_TEST);
     this.gcText();
   }
 
-  /** 座標にあるもののID（手前から奥の順） */
+  /** 座標（描く先のpx）にあるもののID（手前から奥の順）。カメラの範囲の外で切れている部分は選ばない */
   pickAll(x: number, y: number): string[] {
     const out: string[] = [];
     for (let i = this.shapes.length - 1; i >= 0; i--) {
       const s = this.shapes[i];
+      const c = this.cams[s.cam];
+      if (c && (x < c.vx || y < c.vy || x > c.vx + c.vw || y > c.vy + c.vh)) continue;
       if (pointInCorners(x, y, s.corners) && !out.includes(s.id)) out.push(s.id);
     }
+    return out;
+  }
+
+  /** ワールドの4つの角を、いまのカメラで描く先の座標にする。範囲の外なら null（描かない） */
+  private place(id: string, q: Corners): Corners | null {
+    const c = this.cam;
+    const out = [0, 0, 0, 0, 0, 0, 0, 0] as Corners;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (let i = 0; i < 4; i++) {
+      const [sx, sy] = worldToScreen(c, q[i * 2], q[i * 2 + 1]);
+      out[i * 2] = sx; out[i * 2 + 1] = sy;
+      x0 = Math.min(x0, sx); y0 = Math.min(y0, sy); x1 = Math.max(x1, sx); y1 = Math.max(y1, sy);
+    }
+    if (x1 < c.vx || y1 < c.vy || x0 > c.vx + c.vw || y0 > c.vy + c.vh) return null;
+    this.shapes.push({ id, corners: out, cam: this.camIndex });
     return out;
   }
 
@@ -170,16 +225,14 @@ export class Renderer {
     }
     if (s.flipX) [u0, u1] = [u1, u0];
     if (s.flipY) [v0, v1] = [v1, v0];
-    const q = cornersOf(t, w, h, ax, ay);
-    this.shapes.push({ id: e.id, corners: q });
-    this.quad(tex, s.blend ?? 'normal', q, u0, v0, u1, v1, s.tint ?? '#ffffff', s.alpha ?? 1);
+    const q = this.place(e.id, cornersOf(t, w, h, ax, ay));
+    if (q) this.quad(tex, s.blend ?? 'normal', q, u0, v0, u1, v1, s.tint ?? '#ffffff', s.alpha ?? 1);
   }
 
   private shape(e: Entity): void {
     const s = e.c.Shape, t = e.c.Transform as TransformLike;
-    const q = cornersOf(t, s.w, s.h, 0.5, 0.5);
-    this.shapes.push({ id: e.id, corners: q });
-    this.quad(s.kind === 'circle' ? this.circle : this.white, 'normal', q, 0, 0, 1, 1, s.color, s.alpha ?? 1);
+    const q = this.place(e.id, cornersOf(t, s.w, s.h, 0.5, 0.5));
+    if (q) this.quad(s.kind === 'circle' ? this.circle : this.white, 'normal', q, 0, 0, 1, 1, s.color, s.alpha ?? 1);
   }
 
   private text(e: Entity): void {
@@ -204,9 +257,8 @@ export class Renderer {
     }
     tex.used = this.frameNo;
     const ax = tx.align === 'center' ? 0.5 : tx.align === 'right' ? 1 : 0;
-    const q = cornersOf(t, tex.w, tex.h, ax, 0.5);
-    this.shapes.push({ id: e.id, corners: q });
-    this.quad(tex, 'normal', q, 0, 0, 1, 1, tx.color, 1);
+    const q = this.place(e.id, cornersOf(t, tex.w, tex.h, ax, 0.5));
+    if (q) this.quad(tex, 'normal', q, 0, 0, 1, 1, tx.color, 1);
   }
 
   // ---------- まとめて描く ----------

@@ -76,4 +76,32 @@ export const Text = defineComponent({
   },
 });
 
-export const STD_COMPONENTS = [Transform, Sprite, Animator, Shape, Text];
+export const Camera = defineComponent({
+  name: 'Camera',
+  desc: 'カメラ（標準）。見る位置と回転は Transform。1つも置かなければ、画面全体をそのまま映す',
+  fields: {
+    enabled: { type: 'bool', default: true, desc: '使うか' },
+    zoom: { type: 'number', default: 1, min: 0.05, max: 20, step: 0.05, desc: '拡大率（2 = 2倍に大きく見える）' },
+    follow: { type: 'ref', default: null, desc: '追いかける相手のID（null なら動かない）' },
+    offset: { type: 'vec2', default: [0, 0], desc: '追いかけるとき、相手からずらす量(px)' },
+    lag: { type: 'number', default: 0, min: 0, max: 0.99, step: 0.01, desc: '追いかける遅れ（0 = ぴったり、0.9 = ゆっくり）' },
+    deadzone: { type: 'vec2', default: [0, 0], desc: '相手が中心からこの範囲（幅・高さの半分, px）にいる間は動かない' },
+    limit: { type: 'bool', default: false, desc: '見せる範囲を limitMin〜limitMax の四角の中に収める（ワールドの端を見せない）' },
+    limitMin: { type: 'vec2', default: [0, 0], desc: '見せてよい範囲の左上（ワールドの座標）' },
+    limitMax: { type: 'vec2', default: [0, 0], desc: '見せてよい範囲の右下（ワールドの座標）' },
+    shakeMax: { type: 'number', default: 12, min: 0, max: 200, desc: '揺れの最大(px)。ctx.shake(強さ) で揺らす' },
+    shakeRecover: { type: 'number', default: 1.5, min: 0, max: 20, step: 0.1, desc: '揺れが収まる速さ（1秒あたりに減る強さ）' },
+    trauma: { type: 'number', default: 0, min: 0, max: 1, step: 0.01, desc: '揺れの強さ 0〜1（自動で変化。ctx.shake で増える）' },
+    shakeX: { type: 'number', default: 0, desc: '揺れによる横のずれ(px。自動で変化)' },
+    shakeY: { type: 'number', default: 0, desc: '揺れによる縦のずれ(px。自動で変化)' },
+    viewPos: { type: 'vec2', default: [0, 0], desc: '画面の中で映す位置（0〜1の割合。分割画面や小窓に）' },
+    viewSize: { type: 'vec2', default: [1, 1], desc: '画面の中で映す大きさ（0〜1の割合）' },
+    depth: { type: 'int', default: 0, min: -100, max: 100, desc: 'カメラが複数あるときの描く順番（小さい順。大きいほど手前）' },
+    layerMin: { type: 'int', default: -100, min: -100, max: 100, desc: '映す層の下限（UI用のカメラを分けるとき）' },
+    layerMax: { type: 'int', default: 100, min: -100, max: 100, desc: '映す層の上限' },
+    clear: { type: 'bool', default: false, desc: '映す範囲を background の色で塗ってから描く（分割画面・小窓に）' },
+    background: { type: 'color', default: '#000000', desc: 'clear のときの色' },
+  },
+});
+
+export const STD_COMPONENTS = [Transform, Sprite, Animator, Shape, Text, Camera];

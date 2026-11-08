@@ -19,6 +19,8 @@ export interface Ctx {
   destroy(id: string): void;
   /** 出来事を記録する（例: emit('enemyKilled')）。ages run の要約に回数が載る */
   emit(event: string, data?: unknown): void;
+  /** カメラを揺らす（強さ 0〜1 を足す。重ねると強くなる）。camera を省くと、使っているカメラすべて */
+  shake(amount: number, camera?: string): void;
 }
 
 export interface GameEvent {
@@ -53,7 +55,7 @@ export class Game {
   recent: GameEvent[] = [];
   /** 出来事のリスナー（エディタの効果音などに使う） */
   listeners: ((ev: GameEvent) => void)[] = [];
-  private ctx: Ctx;
+  readonly ctx: Ctx;
   private started = false;
 
   constructor(registry: Registry, config: ProjectConfig, scene: SceneDoc, seed = config.seed) {
@@ -74,6 +76,12 @@ export class Game {
       view: { width: config.view.width, height: config.view.height },
       spawn: (p, o) => this.world.spawn(p, o),
       destroy: (id) => this.world.destroy(id),
+      shake: (amount, id) => {
+        for (const e of this.world.query('Camera')) {
+          if ((id && e.id !== id) || e.c.Camera.enabled === false) continue;
+          e.c.Camera.trauma = Math.min(1, Math.max(0, (e.c.Camera.trauma ?? 0) + amount));
+        }
+      },
       emit: (name, data) => {
         this.counts.set(name, (this.counts.get(name) ?? 0) + 1);
         const ev: GameEvent = { frame: this.frame, name, data };

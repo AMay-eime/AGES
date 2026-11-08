@@ -70,8 +70,11 @@
   .field:hover .lockbtn, .lockbtn.on { opacity: 1; }
   .lockbtn.on { color: var(--lock); }
   .game-wrap { flex: 1; display: flex; align-items: center; justify-content: center; background: #0e0f13; min-height: 0; position: relative; }
-  .game-wrap canvas { image-rendering: pixelated; box-shadow: 0 0 0 1px var(--line); max-width: 100%; max-height: 100%; }
-  .game-hud { padding: 3px 8px; font: var(--mono); color: var(--dim); border-bottom: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
+  .game-screen { position: relative; overflow: hidden; background: #000; flex: none; box-shadow: 0 0 0 1px var(--line); }
+  .game-screen canvas { position: absolute; image-rendering: pixelated; }
+  .game-hud { display: flex; align-items: center; gap: 6px; padding: 2px 8px; border-bottom: 1px solid var(--line); flex: none; min-height: 26px; }
+  .game-hud-text { font: var(--mono); color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+  .game-hud select, .game-hud button { font-size: 12px; padding: 1px 4px; }
   .toolbar { display: flex; gap: 6px; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--line); }
   textarea.code { flex: 1; width: 100%; resize: none; border: 0; border-radius: 0; font: var(--mono); padding: 8px; tab-size: 2; }
   pre { font: var(--mono); margin: 0; white-space: pre-wrap; }

@@ -83,8 +83,8 @@ export const combat = defineSystem({
   name: 'combat',
   desc: '弾と敵、敵と自機の当たりを処理する',
   reads: ['Bullet', 'Enemy', 'Player', 'Hitbox'],
-  writes: ['Health', 'Score'],
-  update({ world, destroy, emit, spawn }) {
+  writes: ['Health', 'Score', 'Camera'],
+  update({ world, destroy, emit, spawn, shake }) {
     const isAlive = (id: string) => world.isAlive(id);
     const boom = (e: Entity) => spawn('explosion', { Transform: { x: e.c.Transform.x, y: e.c.Transform.y } });
     const enemies = world.query('Enemy', 'Health', 'Transform', 'Hitbox');
@@ -115,6 +115,7 @@ export const combat = defineSystem({
         h.hp--;
         h.invincible = h.invincibleOnHit;
         emit('playerHit', { hp: h.hp });
+        shake(0.6); // 被弾したら画面を揺らす（標準の Camera）
         if (h.hp <= 0) emit('gameOver');
         break;
       }

@@ -23,8 +23,11 @@ export interface ProjectConfig {
   name: string;
   fps: number;
   seed: number;
-  /** filter: 画像の拡大の仕方。nearest=ドット絵向け（くっきり）、linear=なめらか（既定） */
-  view: { width: number; height: number; background: string; filter?: 'nearest' | 'linear' };
+  /**
+   * width/height: ゲームの設計の大きさ。filter: 画像の拡大の仕方（nearest=ドット絵向け、linear=なめらか。既定）。
+   * fit: 画面の大きさへの合わせ方（contain=全体を入れて余りは帯（既定）/ cover=はみ出しを切る / stretch=伸ばす / expand=広い分だけ周りも見せる / pixel=整数倍だけ）
+   */
+  view: { width: number; height: number; background: string; filter?: 'nearest' | 'linear'; fit?: import('./camera.ts').FitMode };
   startScene: string;
   game: string;
   editorWindows?: string[];
