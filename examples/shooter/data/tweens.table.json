@@ -1,7 +1,7 @@
 {
   "name": "tweens",
   "rows": [
-    {"id":"hitFlash","time":0.12,"ease":"outQuad","desc":"敵に弾が当たって、まだ倒れないときの点滅（仮）"},
+    {"id":"hitFlash","time":0.15,"ease":"outQuad","desc":"敵に弾が当たって、まだ倒れないときに白く光って戻る（仮）"},
     {"id":"scorePop","time":0.3,"ease":"outBack","desc":"得点が増えたとき、得点の文字が大きくなって戻る（仮）"}
   ]
 }

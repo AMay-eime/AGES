@@ -24,6 +24,8 @@ export type Field =
   | { type: 'ease'; default: string; desc?: string }
   /** 入力のボタンの名前（KeyZ, Pad.A, Mouse0 …）。analog なら軸の名前（Pad.LX …）。エディタでは押して決められる */
   | { type: 'input'; default: string; analog?: boolean; desc?: string }
+  /** シェーダーの調整できる値（同じコンポーネントの of の欄で選んだシェーダーの uniform）。中は 住所.params.名前 で指す */
+  | { type: 'params'; of: string; default?: Record<string, unknown>; desc?: string }
   | MatrixField
   | ListField
   | StructField
@@ -68,6 +70,7 @@ export function defaultOf(f: Field): unknown {
       const [kind, v] = Object.entries(f.variants)[0] ?? ['', { fields: {} }];
       return variantDefault(kind, v.fields);
     }
+    case 'params': return {};
     default: return undefined;
   }
 }
@@ -96,14 +99,18 @@ export function fieldAt(f: Field, sub: (string | number)[], value: unknown): Fie
   return cur;
 }
 
-export type AssetKind = 'image' | 'sound' | 'font';
+export type AssetKind = 'image' | 'sound' | 'font' | 'shader';
 
 /** 種類ごとの拡張子 */
 export const ASSET_EXT: Record<AssetKind, string[]> = {
   image: ['.png', '.jpg', '.jpeg', '.webp', '.gif'],
   sound: ['.wav', '.mp3', '.ogg', '.m4a'],
   font: ['.ttf', '.otf', '.woff', '.woff2'],
+  shader: ['.frag', '.glsl'],
 };
+
+/** 種類の名前（人に見せる） */
+export const ASSET_LABEL: Record<AssetKind, string> = { image: '画像', sound: '音', font: 'フォント', shader: 'シェーダー' };
 
 /** 2次元行列（例: 敵の出現パターン、地形、ダメージ表）。インスペクタでは「開く」から専用の行列エディタで編集する。 */
 export interface MatrixField {
@@ -180,9 +187,10 @@ export function checkAt(at: string, f: Field, v: unknown): string | null {
     case 'asset': {
       if (typeof v !== 'string') return `${at} はファイルの場所（文字列。例: assets/ship.png）が必要です`;
       if (v === '') return null;
+      if (f.kind === 'shader' && v.startsWith('std:')) return null; // 標準のシェーダー（あるかどうかはプロジェクトの検証で見る）
       if (v.startsWith('/') || v.includes('..')) return `${at} はプロジェクトの中の場所で書いてください（例: assets/ship.png）。受け取った値: ${v}`;
       const ok = ASSET_EXT[f.kind].some((e) => v.toLowerCase().endsWith(e));
-      return ok ? null : `${at} は${f.kind === 'image' ? '画像' : f.kind === 'sound' ? '音' : 'フォント'}のファイル（${ASSET_EXT[f.kind].join(' ')}）が必要です。受け取った値: ${v}`;
+      return ok ? null : `${at} は${ASSET_LABEL[f.kind]}のファイル（${ASSET_EXT[f.kind].join(' ')}${f.kind === 'shader' ? '、または標準の std:名前' : ''}）が必要です。受け取った値: ${v}`;
     }
     case 'frame':
       if (typeof v === 'number') return Number.isInteger(v) && v >= 0 ? null : `${at} はコマの番号（0以上の整数）か名前が必要です。受け取った値: ${v}`;
@@ -208,6 +216,15 @@ export function checkAt(at: string, f: Field, v: unknown): string | null {
       return null;
     }
     case 'struct': return checkFields(at, f.fields, v);
+    case 'params': {
+      // 名前と型は、選んだシェーダーと照らしてプロジェクトの検証で見る。ここでは形だけ
+      if (!v || typeof v !== 'object' || Array.isArray(v)) return `${at} は { 名前: 値 } の形が必要です（${f.of} で選んだシェーダーの uniform）。受け取った値: ${short(v)}`;
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+        const ok = typeof x === 'number' || typeof x === 'boolean' || typeof x === 'string' || (Array.isArray(x) && x.every((n) => typeof n === 'number'));
+        if (!ok) return `${at}.${k} は数・true/false・色・[x, y] のどれかです。受け取った値: ${short(x)}`;
+      }
+      return null;
+    }
     case 'oneOf': {
       if (!v || typeof v !== 'object' || Array.isArray(v)) return `${at} は { kind: 種類, ... } が必要です（種類: ${Object.keys(f.variants).join(' | ')}）`;
       const kind = (v as { kind?: unknown }).kind;
@@ -296,6 +313,7 @@ export function typeOf(f: Field): string {
     case 'row': return `row<${f.table}>`;
     case 'scene': return 'scene';
     case 'ease': return 'ease';
+    case 'params': return `params<${f.of}>`;
     case 'input': return f.analog ? 'axis' : 'button';
     case 'matrix': return `matrix<${f.cell ?? 'number'}${r(f.min, f.max)}>`;
     case 'list': return `list<${typeOf(f.of)}>${f.min !== undefined || f.max !== undefined ? `(${f.min ?? 0}..${f.max ?? ''}個)` : ''}`;
@@ -316,6 +334,7 @@ export function brief(f: Field): string {
     }
     case 'list': return `${typeOf(f)}=${JSON.stringify(defaultOf(f))}`;
     case 'struct': case 'oneOf': return typeOf(f);
+    case 'params': return `params（${f.of} のシェーダーの値）`;
     case 'number': case 'int': case 'enum': case 'asset': case 'row': case 'scene': case 'ease': return `${typeOf(f)}=${typeof f.default === 'string' ? JSON.stringify(f.default) : f.default}`;
     default: return `${f.type}=${JSON.stringify(f.default)}`;
   }

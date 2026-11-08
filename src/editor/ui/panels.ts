@@ -93,7 +93,7 @@ export function hierarchyPanel(app: App): Panel {
 }
 
 // ---------- プロジェクト（ファイル） ----------
-const TEXT_EXT = /\.(json|ts|js|md|txt|css|html)$/;
+const TEXT_EXT = /\.(json|ts|js|md|txt|css|html|frag|glsl)$/;
 
 export function projectPanel(app: App, openText: (path: string) => void): Panel {
   const el = h('div', {});

@@ -7,6 +7,7 @@ import type { SheetDef } from '../core/sheet.ts';
 import { camerasOf, worldToScreen, type CameraView } from '../core/camera.ts';
 import { collectDrawables, cornersOf, pointInCorners, spriteGeometry, type Corners } from './geom.ts';
 import { ParticleSim } from './particles.ts';
+import { STD_SHADERS, codeHash, wrapShader, type ShaderDef } from '../core/shader.ts';
 
 export interface RendererOptions {
   /** アセットの場所（assets/ship.png）から読み込むURLを作る */
@@ -15,6 +16,25 @@ export interface RendererOptions {
   sheets: Map<string, SheetDef>;
   /** nearest=ドット絵向け、linear=なめらか */
   filter?: 'nearest' | 'linear';
+  /** シェーダー（場所 → 宣言と中身）。省くと標準のものだけ */
+  shaders?: Map<string, ShaderDef>;
+  /** シェーダーをコンパイルした結果（error が null なら通った）。中身が変わるたびに1回 */
+  onShaderResult?(path: string, hash: string, error: string | null): void;
+}
+
+/** コンパイルしたシェーダー */
+interface Prog {
+  prog: WebGLProgram;
+  def: ShaderDef;
+  loc: Map<string, WebGLUniformLocation | null>;
+}
+
+/** 効果つきで描くときの設定（同じものが続く間はまとめて描く） */
+interface Mat {
+  prog: Prog;
+  params: Record<string, unknown>;
+  /** コマの範囲 (u0, v0, u1, v1) */
+  rect: [number, number, number, number];
 }
 
 interface Tex {
@@ -64,6 +84,8 @@ export interface DrawOptions {
   view?: CameraView;
   /** 画面全体を覆う色（シーンの切り替えのフェード。Game.overlay() の値） */
   overlay?: { color: string; alpha: number } | null;
+  /** 画面全体の後処理（PostEffect）をかけるか（既定 true。エディタの自由な視点ではかけない） */
+  post?: boolean;
   /**
    * パーティクルを動かす。dt は進める秒数（一時停止中は 0）。
    * preview は編集中（ゲームを動かしていない）に試しに粒を出す物（エディタで選んだ物）。渡さなければ再生中として rate の分も出す。
@@ -88,6 +110,14 @@ export class Renderer {
   private count = 0;
   private curTex: WebGLTexture | null = null;
   private curBlend = '';
+  private curMat: Mat | null = null;
+  private curSize: [number, number] = [1, 1];
+  /** 描く先の大きさ（u_res） */
+  private resW = 1;
+  private resH = 1;
+  private readonly t0 = performance.now();
+  private progs = new Map<string, { hash: string; prog: Prog | null; error: string | null }>();
+  private fbo: { w: number; h: number; tex: WebGLTexture[]; fb: WebGLFramebuffer[] } | null = null;
   private textures = new Map<string, Tex>();
   private white: Tex;
   private circle: Tex;
@@ -115,14 +145,14 @@ export class Renderer {
     const vao = gl.createVertexArray();
     gl.bindVertexArray(vao);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
-    const attr = (name: string, size: number, offset: number) => {
-      const loc = gl.getAttribLocation(this.prog, name);
+    // 頂点の並びはどのシェーダーでも同じ場所に結びつける（効果のシェーダーも同じ頂点で描く）
+    const attr = (loc: number, size: number, offset: number) => {
       gl.enableVertexAttribArray(loc);
       gl.vertexAttribPointer(loc, size, gl.FLOAT, false, FLOATS * 4, offset * 4);
     };
-    attr('a_pos', 2, 0);
-    attr('a_uv', 2, 2);
-    attr('a_color', 4, 4);
+    attr(0, 2, 0);
+    attr(1, 2, 2);
+    attr(2, 4, 4);
     gl.enable(gl.BLEND);
     this.white = this.fromCanvas(this.makeCanvas(1, 1, (g) => { g.fillStyle = '#fff'; g.fillRect(0, 0, 1, 1); }), 'nearest');
     this.circle = this.fromCanvas(this.makeCanvas(128, 128, (g) => { g.fillStyle = '#fff'; g.beginPath(); g.arc(64, 64, 63, 0, Math.PI * 2); g.fill(); }), 'linear');
@@ -151,14 +181,18 @@ export class Renderer {
     const W = this.canvas.width, H = this.canvas.height;
     this.frameNo++;
     gl.viewport(0, 0, W, H);
+    this.resW = W; this.resH = H;
+    this.shapes = [];
+    this.cams = o.view ? [o.view] : camerasOf(world, W, H, o.design?.width ?? W, o.design?.height ?? H);
+    // 画面全体の後処理があれば、いったん画面の外（テクスチャ）に描く
+    const passes = o.view || o.post === false ? [] : this.postPasses(world, W, H);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, passes.length ? this.target(W, H, 0) : null);
     const [r, g, b] = this.rgb(o.background);
     gl.disable(gl.SCISSOR_TEST);
     gl.clearColor(r, g, b, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.useProgram(this.prog);
     gl.uniform2f(gl.getUniformLocation(this.prog, 'u_res'), W, H);
-    this.shapes = [];
-    this.cams = o.view ? [o.view] : camerasOf(world, W, H, o.design?.width ?? W, o.design?.height ?? H);
     if (o.particles) this.particles.update(world, o.particles.dt, o.particles.preview);
     const all = collectDrawables(world, this.particles.orphans());
     gl.enable(gl.SCISSOR_TEST);
@@ -182,6 +216,7 @@ export class Renderer {
       this.flush();
     });
     gl.disable(gl.SCISSOR_TEST);
+    if (passes.length) this.applyPost(passes, W, H);
     if (o.overlay && o.overlay.alpha > 0) {
       this.quad(this.white, 'normal', [0, 0, W, 0, W, H, 0, H], 0, 0, 1, 1, o.overlay.color, Math.min(1, o.overlay.alpha));
       this.flush();
@@ -248,7 +283,7 @@ export class Renderer {
     if (s.flipX) [u0, u1] = [u1, u0];
     if (s.flipY) [v0, v1] = [v1, v0];
     const q = this.place(e.id, cornersOf(t, w, h, ax, ay));
-    if (q) this.quad(tex, s.blend ?? 'normal', q, u0, v0, u1, v1, s.tint ?? '#ffffff', s.alpha ?? 1);
+    if (q) this.quad(tex, s.blend ?? 'normal', q, u0, v0, u1, v1, s.tint ?? '#ffffff', s.alpha ?? 1, this.material(e, [u0, v0, u1, v1]));
   }
 
   /** パーティクル（描く側で動かす）。粒は選べない */
@@ -269,19 +304,20 @@ export class Renderer {
       u0 = g.src.x / tx.w; v0 = g.src.y / tx.h; u1 = (g.src.x + g.src.w) / tx.w; v1 = (g.src.y + g.src.h) / tx.h;
       aspect = g.h / g.w;
     }
+    const mat = this.material(em.ghost, [u0, v0, u1, v1]);
     for (const q of em.parts) {
       const look = ParticleSim.look(p, q);
       if (look.size <= 0 || look.alpha <= 0) continue;
       const x = p.world ? q.x : tr.x + q.x, y = p.world ? q.y : tr.y + q.y;
       const corners = this.place(e.id, cornersOf({ x, y, rot: q.rot }, look.size, look.size * aspect, 0.5, 0.5), false);
-      if (corners) this.quad(tex, p.blend ?? 'add', corners, u0, v0, u1, v1, look.color, look.alpha);
+      if (corners) this.quad(tex, p.blend ?? 'add', corners, u0, v0, u1, v1, look.color, look.alpha, mat);
     }
   }
 
   private shape(e: Entity): void {
     const s = e.c.Shape, t = e.c.Transform as TransformLike;
     const q = this.place(e.id, cornersOf(t, s.w, s.h, 0.5, 0.5));
-    if (q) this.quad(s.kind === 'circle' ? this.circle : this.white, 'normal', q, 0, 0, 1, 1, s.color, s.alpha ?? 1);
+    if (q) this.quad(s.kind === 'circle' ? this.circle : this.white, 'normal', q, 0, 0, 1, 1, s.color, s.alpha ?? 1, this.material(e));
   }
 
   private text(e: Entity): void {
@@ -307,16 +343,18 @@ export class Renderer {
     tex.used = this.frameNo;
     const ax = tx.align === 'center' ? 0.5 : tx.align === 'right' ? 1 : 0;
     const q = this.place(e.id, cornersOf(t, tex.w, tex.h, ax, 0.5));
-    if (q) this.quad(tex, 'normal', q, 0, 0, 1, 1, tx.color, 1);
+    if (q) this.quad(tex, 'normal', q, 0, 0, 1, 1, tx.color, 1, this.material(e));
   }
 
   // ---------- まとめて描く ----------
 
-  private quad(tex: Tex, blend: string, q: Corners, u0: number, v0: number, u1: number, v1: number, color: string, alpha: number): void {
-    if (tex.tex !== this.curTex || blend !== this.curBlend || this.count >= MAX_QUADS) {
+  private quad(tex: Tex, blend: string, q: Corners, u0: number, v0: number, u1: number, v1: number, color: string, alpha: number, mat: Mat | null = null): void {
+    if (tex.tex !== this.curTex || blend !== this.curBlend || mat !== this.curMat || this.count >= MAX_QUADS) {
       this.flush();
       this.curTex = tex.tex;
       this.curBlend = blend;
+      this.curMat = mat;
+      this.curSize = [tex.w, tex.h];
     }
     const [r, g, b] = this.rgb(color);
     const o = this.count * 4 * FLOATS;
@@ -331,17 +369,155 @@ export class Renderer {
     if (!this.count || !this.curTex) { this.count = 0; return; }
     const gl = this.gl;
     switch (this.curBlend) {
+      case 'none': gl.blendFunc(gl.ONE, gl.ZERO); break;
       case 'add': gl.blendFunc(gl.SRC_ALPHA, gl.ONE); break;
       case 'multiply': gl.blendFunc(gl.DST_COLOR, gl.ONE_MINUS_SRC_ALPHA); break;
       case 'screen': gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_COLOR); break;
       default: gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     }
+    if (this.curMat) this.useMaterial(this.curMat);
+    gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.curTex);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.verts.subarray(0, this.count * 4 * FLOATS));
     gl.drawElements(gl.TRIANGLES, this.count * 6, gl.UNSIGNED_SHORT, 0);
+    if (this.curMat) gl.useProgram(this.prog);
     this.count = 0;
   }
+
+  // ---------- シェーダー（効果と後処理） ----------
+
+  /** 物の Effect から、効果つきで描く設定を作る（効果がなければ null） */
+  private material(e: Entity, rect: [number, number, number, number] = [0, 0, 1, 1]): Mat | null {
+    const ef = e.c.Effect;
+    if (!ef?.shader) return null;
+    const prog = this.shaderProg(ef.shader);
+    return prog ? { prog, params: ef.params ?? {}, rect } : null;
+  }
+
+  private useMaterial(m: Mat): void {
+    const gl = this.gl, p = m.prog;
+    gl.useProgram(p.prog);
+    const u = (name: string) => {
+      if (!p.loc.has(name)) p.loc.set(name, gl.getUniformLocation(p.prog, name));
+      return p.loc.get(name)!;
+    };
+    gl.uniform2f(u('u_res'), this.resW, this.resH);
+    gl.uniform1i(u('u_tex'), 0);
+    gl.uniform2f(u('u_texel'), 1 / this.curSize[0], 1 / this.curSize[1]);
+    gl.uniform4f(u('u_rect'), ...m.rect);
+    gl.uniform1f(u('u_time'), (performance.now() - this.t0) / 1000);
+    let unit = 1;
+    for (const [name, type] of Object.entries(p.def.glsl)) {
+      const v = m.params[name] ?? p.def.uniforms[name].default;
+      const loc = u(name);
+      switch (type) {
+        case 'float': gl.uniform1f(loc, Number(v)); break;
+        case 'int': case 'bool': gl.uniform1i(loc, Number(v)); break;
+        case 'vec2': { const [x, y] = v as number[]; gl.uniform2f(loc, x, y); break; }
+        case 'vec3': gl.uniform3f(loc, ...this.rgb(String(v))); break;
+        case 'vec4': gl.uniform4f(loc, ...this.rgb(String(v)), 1); break;
+        case 'sampler2D': {
+          const tx = v ? this.texture(String(v)) : this.white;
+          gl.activeTexture(gl.TEXTURE0 + unit);
+          gl.bindTexture(gl.TEXTURE_2D, (tx.ready ? tx : this.white).tex);
+          gl.uniform1i(loc, unit++);
+          break;
+        }
+      }
+    }
+    gl.activeTexture(gl.TEXTURE0);
+  }
+
+  /** シェーダーをコンパイルする（中身が変わったときだけ）。使えなければ null */
+  private shaderProg(path: string): Prog | null {
+    const def = (this.opts.shaders ?? STD_SHADERS).get(path);
+    if (!def || def.errors.length) return null;
+    const hash = codeHash(def.code);
+    const got = this.progs.get(path);
+    if (got?.hash === hash) return got.prog;
+    if (got?.prog) this.gl.deleteProgram(got.prog.prog);
+    let prog: Prog | null = null, error: string | null = null;
+    try {
+      prog = { prog: this.program(VS, wrapShader(def)), def, loc: new Map() };
+    } catch (e) {
+      error = shaderError(path, (e as Error).message);
+      console.warn(error);
+    }
+    this.progs.set(path, { hash, prog, error });
+    this.opts.onShaderResult?.(path, hash, error);
+    return prog;
+  }
+
+  /** シェーダーを全部コンパイルして、結果を知らせる（使っていないものも。AI が書いたらすぐ確かめられるように） */
+  compileAll(): void {
+    for (const path of (this.opts.shaders ?? STD_SHADERS).keys()) this.shaderProg(path);
+  }
+
+  /** コンパイルの結果（場所 → エラー。通ったものは null） */
+  shaderErrors(): Map<string, string | null> {
+    return new Map([...this.progs].map(([k, v]) => [k, v.error]));
+  }
+
+  /** 画面全体の後処理（順番どおり。かけられるものだけ） */
+  private postPasses(world: World, W: number, H: number): Mat[] {
+    const list = [...world.entities.values()]
+      .filter((e) => e.c.PostEffect && e.c.PostEffect.enabled !== false && e.c.PostEffect.shader)
+      .sort((a, b) => (a.c.PostEffect.order ?? 0) - (b.c.PostEffect.order ?? 0));
+    if (!list.length) return [];
+    // frameUV はゲームの画面（カメラが映す範囲を合わせた四角）の中で 0〜1。画面の外のテクスチャは上下が逆
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const c of this.cams) { x0 = Math.min(x0, c.vx); y0 = Math.min(y0, c.vy); x1 = Math.max(x1, c.vx + c.vw); y1 = Math.max(y1, c.vy + c.vh); }
+    const rect: Mat['rect'] = this.cams.length ? [x0 / W, 1 - y0 / H, x1 / W, 1 - y1 / H] : [0, 1, 1, 0];
+    const out: Mat[] = [];
+    for (const e of list) {
+      const prog = this.shaderProg(e.c.PostEffect.shader);
+      if (prog) out.push({ prog, params: e.c.PostEffect.params ?? {}, rect });
+    }
+    return out;
+  }
+
+  /** 画面の外に描く先（後処理の行き来に2つ使う） */
+  private target(w: number, h: number, i: number): WebGLFramebuffer {
+    const gl = this.gl;
+    if (!this.fbo || this.fbo.w !== w || this.fbo.h !== h) {
+      if (this.fbo) { this.fbo.tex.forEach((t) => gl.deleteTexture(t)); this.fbo.fb.forEach((f) => gl.deleteFramebuffer(f)); }
+      const tex: WebGLTexture[] = [], fb: WebGLFramebuffer[] = [];
+      for (let k = 0; k < 2; k++) {
+        const t = gl.createTexture()!;
+        gl.bindTexture(gl.TEXTURE_2D, t);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        const f = gl.createFramebuffer()!;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, f);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+        tex.push(t); fb.push(f);
+      }
+      this.fbo = { w, h, tex, fb };
+      this.curTex = null;
+    }
+    return this.fbo.fb[i];
+  }
+
+  /** 後処理を順にかけて、最後は画面へ */
+  private applyPost(passes: Mat[], W: number, H: number): void {
+    const gl = this.gl;
+    let src = 0;
+    passes.forEach((m, i) => {
+      const last = i === passes.length - 1;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, last ? null : this.target(W, H, 1 - src));
+      const tex: Tex = { tex: this.fbo!.tex[src], w: W, h: H, ready: true };
+      // 画面の外のテクスチャは上下が逆なので、左上の頂点に v=1 を当てる
+      this.quad(tex, 'none', [0, 0, W, 0, W, H, 0, H], 0, 1, 1, 0, '#ffffff', 1, m);
+      this.flush();
+      src = 1 - src;
+    });
+    this.curTex = null;
+  }
+
 
   // ---------- テクスチャ ----------
 
@@ -437,8 +613,17 @@ export class Renderer {
     const p = gl.createProgram()!;
     gl.attachShader(p, sh(gl.VERTEX_SHADER, vs));
     gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs));
+    gl.bindAttribLocation(p, 0, 'a_pos');
+    gl.bindAttribLocation(p, 1, 'a_uv');
+    gl.bindAttribLocation(p, 2, 'a_color');
     gl.linkProgram(p);
     if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(`シェーダーのエラー: ${gl.getProgramInfoLog(p)}`);
     return p;
   }
+}
+
+/** コンパイルのエラーを「ファイル:行: 内容」に（#line 1 でファイルの行と合わせてある） */
+function shaderError(path: string, message: string): string {
+  const lines = [...message.matchAll(/ERROR:\s*\d+:(\d+):\s*([^\n]*)/g)].map((m) => `${path}:${m[1]}: ${m[2].trim()}`);
+  return lines.length ? lines.join('\n') : `${path}: ${message.replace(/^シェーダーのエラー:\s*/, '')}`;
 }

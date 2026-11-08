@@ -1,5 +1,6 @@
 // コンポーネント・システム・プレハブの登録簿。
-import { checkComponent, defaultOf, defaultsOf, suggest, type ComponentDef } from './schema.ts';
+import { checkAt, checkComponent, defaultOf, defaultsOf, suggest, type ComponentDef, type StructField } from './schema.ts';
+import { paramDefaults, paramsField, shaderMap, type ShaderDef } from './shader.ts';
 import type { Row, TableDef, TableDoc, TableView } from './table.ts';
 import type { PrefabDoc, SceneDoc } from './docs.ts';
 import type { SheetDef } from './sheet.ts';
@@ -51,6 +52,8 @@ export class Registry {
   /** 表の中身（名前 → 行の並び） */
   tableData = new Map<string, TableDoc>();
   private views = new WeakMap<TableDoc, TableView>();
+  /** シェーダー（場所 → 宣言）。標準の std:名前 も入っている */
+  shaders: Map<string, ShaderDef> = shaderMap();
   /** 画像の大きさ（場所 → 幅・高さ）。格子のシートのコマを求めるのに使う */
   images = new Map<string, { w: number; h: number }>();
   /** 標準のコンポーネントの名前 */
@@ -136,8 +139,24 @@ export class Registry {
   build(name: string, data: Record<string, unknown> = {}, where = ''): Record<string, unknown> {
     const def = this.component(name);
     const errs = checkComponent(def, data);
+    const out = { ...defaultsOf(def), ...structuredClone(data) };
+    // シェーダーの値: 選んだシェーダーの uniform と照らし、省いたものは既定値で埋める
+    for (const [k, f] of Object.entries(def.fields)) {
+      if (f.type !== 'params') continue;
+      const sh = this.shaders.get(String(out[f.of] ?? ''));
+      if (!sh) continue;
+      const e = checkAt(`${name}.${k}`, paramsField(sh), out[k] ?? {});
+      if (e) errs.push(e);
+      out[k] = { ...paramDefaults(sh), ...(out[k] as object) };
+    }
     if (errs.length) throw new Error(`${where ? where + ': ' : ''}${errs.join(' / ')}`);
-    return { ...defaultsOf(def), ...structuredClone(data) };
+    return out;
+  }
+
+  /** シェーダーの調整できる値の型（シェーダーが見つからなければ null） */
+  shaderParams(path: unknown): StructField | null {
+    const sh = typeof path === 'string' ? this.shaders.get(path) : undefined;
+    return sh ? paramsField(sh) : null;
   }
 }
 

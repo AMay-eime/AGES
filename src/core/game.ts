@@ -199,7 +199,7 @@ export class Game {
       sound: this.makeSoundApi(),
       tween: (target, to, how) => this.addTween(target, to, how),
       stopTween: (target, field) => {
-        this.tweens = this.tweens.filter((t) => !(t.id === target && (!field || `${t.comp}.${t.field}` === field)));
+        this.tweens = this.tweens.filter((t) => !(t.id === target && (!field || `${t.comp}.${t.field}${t.sub ? '.' + t.sub : ''}` === field)));
       },
       particles: {
         burst: (id, count) => {
@@ -312,17 +312,28 @@ export class Game {
     if (!e) throw new Error(`ctx.tween: 物 ${target} はありません${suggest(target, [...this.world.entities.keys()].filter((k) => !k.includes('~')))}`);
     const fps = this.config.fps;
     for (const [path, dest] of Object.entries(to)) {
-      const [comp, field] = path.split('.');
+      const [comp, field, sub, ...more] = path.split('.');
       const def = this.registry.components.get(comp);
       if (!def || !e.c[comp]) throw new Error(`ctx.tween: ${target} に ${comp} は付いていません${suggest(comp, Object.keys(e.c))}（行き先は 'コンポーネント.フィールド' で書きます）`);
-      const f = def.fields[field];
-      if (!f) throw new Error(`ctx.tween: ${comp} に ${field} はありません${suggest(String(field), Object.keys(def.fields))}`);
+      const top = def.fields[field];
+      if (!top) throw new Error(`ctx.tween: ${comp} に ${field} はありません${suggest(String(field), Object.keys(def.fields))}`);
+      // シェーダーの値は 'Effect.params.amount' のように中の名前まで書く
+      let f = top;
+      if (top.type === 'params') {
+        const st = this.registry.shaderParams(e.c[comp][top.of]);
+        if (!st) throw new Error(`ctx.tween: ${target} の ${comp}.${top.of} でシェーダーを選んでいません`);
+        if (!sub || more.length) throw new Error(`ctx.tween: シェーダーの値は '${comp}.${field}.名前' で書きます（ある名前: ${Object.keys(st.fields).join(', ')}）`);
+        if (!st.fields[sub]) throw new Error(`ctx.tween: ${comp}.${field} に ${sub} はありません${suggest(sub, Object.keys(st.fields))}（ある名前: ${Object.keys(st.fields).join(', ')}）`);
+        f = st.fields[sub];
+      } else if (sub !== undefined) throw new Error(`ctx.tween: 行き先は 'コンポーネント.フィールド' で書きます（受け取った値: ${path}）`);
+      const holder = top.type === 'params' ? (e.c[comp][field] ??= {}) as Record<string, unknown> : e.c[comp];
+      const key = top.type === 'params' ? sub : field;
       const at = `${target}.${path}`;
-      const from = opts.from?.[path] !== undefined ? targetValue(at, f, e.c[comp][field], opts.from[path]) : structuredClone(e.c[comp][field]) as TweenValue;
+      const from = opts.from?.[path] !== undefined ? targetValue(at, f, holder[key], opts.from[path]) : structuredClone(holder[key] ?? (f as { default?: unknown }).default) as TweenValue;
       const value = targetValue(at, f, from, dest);
-      this.tweens = this.tweens.filter((t) => !(t.id === target && t.comp === comp && t.field === field));
+      this.tweens = this.tweens.filter((t) => !(t.id === target && t.comp === comp && t.field === field && t.sub === (top.type === 'params' ? sub : undefined)));
       this.tweens.push({
-        id: target, comp, field, from, to: value, start: this.frame + Math.round(delay * fps), frames: Math.max(1, Math.round(time * fps)),
+        id: target, comp, field, ...(top.type === 'params' ? { sub } : {}), from, to: value, start: this.frame + Math.round(delay * fps), frames: Math.max(1, Math.round(time * fps)),
         ease, repeat: Math.round(opts.repeat ?? base.repeat), yoyo: opts.yoyo ?? base.yoyo, cycle: 0, round: f.type === 'int',
         ...(opts.destroy ? { destroy: true } : {}), ...(opts.emit ? { emit: opts.emit } : {}),
       });
@@ -334,10 +345,11 @@ export class Game {
     if (!this.tweens.length) return;
     const keep: TweenState[] = [];
     for (const t of this.tweens) {
-      const c = this.world.isAlive(t.id) ? this.world.get(t.id)?.c[t.comp] : undefined;
-      if (!c) continue; // 物が消えたら、トゥイーンも終わり
+      const comp = this.world.isAlive(t.id) ? this.world.get(t.id)?.c[t.comp] : undefined;
+      if (!comp) continue; // 物が消えたら、トゥイーンも終わり
+      const c = t.sub ? ((comp[t.field] ??= {}) as Record<string, unknown>) : comp;
       const r = tweenAt(t, this.frame);
-      if (r.value !== undefined) c[t.field] = r.value;
+      if (r.value !== undefined) c[t.sub ?? t.field] = r.value;
       if (!r.done) { keep.push(t); continue; }
       if (t.emit) this.ctx.emit(t.emit, { id: t.id });
       if (t.destroy) this.world.destroy(t.id);

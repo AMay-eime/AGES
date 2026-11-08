@@ -169,4 +169,24 @@ export const Particles = defineComponent({
   },
 });
 
-export const STD_COMPONENTS = [Transform, Sprite, Animator, Shape, Text, Camera, Sound, AudioBus, Particles];
+export const Effect = defineComponent({
+  name: 'Effect',
+  desc: 'シェーダーの効果（標準）。同じ物の Sprite・Shape・Text・Particles の描き方を変える（光らせる・縁取り・溶かすなど）',
+  fields: {
+    shader: { type: 'asset', kind: 'shader', default: '', desc: 'シェーダー（.frag のファイルか、標準の std:flash std:outline std:dissolve std:desaturate）。空なら効果なし' },
+    params: { type: 'params', of: 'shader', desc: 'シェーダーの調整できる値（uniform）。トゥイーンは "Effect.params.amount" のように' },
+  },
+});
+
+export const PostEffect = defineComponent({
+  name: 'PostEffect',
+  desc: '画面全体の後処理（標準）。カメラで描き終えた画面に順にかける（端を暗く・ブラウン管ふう・色を抜くなど）',
+  fields: {
+    shader: { type: 'asset', kind: 'shader', default: '', desc: 'シェーダー（.frag のファイルか、標準の std:vignette std:crt std:desaturate std:flash）' },
+    params: { type: 'params', of: 'shader', desc: 'シェーダーの調整できる値（uniform）' },
+    enabled: { type: 'bool', default: true, desc: 'かけるかどうか' },
+    order: { type: 'int', default: 0, min: -1000, max: 1000, desc: 'かける順番（小さい順）' },
+  },
+});
+
+export const STD_COMPONENTS = [Transform, Sprite, Animator, Shape, Text, Camera, Sound, AudioBus, Particles, Effect, PostEffect];

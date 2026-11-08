@@ -29,6 +29,8 @@ export interface TweenState {
   id: string;
   comp: string;
   field: string;
+  /** シェーダーの値（Effect.params.amount）のときの中の名前 */
+  sub?: string;
   from: TweenValue;
   to: TweenValue;
   /** 動き始めるフレーム（delay の後） */

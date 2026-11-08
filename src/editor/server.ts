@@ -13,6 +13,7 @@ import { resolve, join, relative, extname, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { summarize, readLog } from '../project/oplog.ts';
 import { checkAssetPath, freeName } from '../core/assets.ts';
+import { writeShaderResult } from '../project/shader-status.ts';
 import type { Op } from '../core/patch.ts';
 
 process.removeAllListeners('warning');
@@ -124,7 +125,7 @@ async function handleChanges(paths: string[]): Promise<void> {
   const code = fresh.some((p) => p.endsWith('.ts') || p === 'ages.project.json');
   // 画像の切り方（.sheet.json）もシーン・プレハブと同じ扱い（外からの編集を記録し、ロックを戻す）
   const docs = fresh.some((p) => /^(scenes|prefabs)\/.+\.json$/.test(p) || /^data\/.+\.table\.json$/.test(p) || p.endsWith('.sheet.json'));
-  const assets = fresh.some((p) => /\.(png|jpe?g|webp|gif|wav|mp3|ogg|m4a|ttf|otf|woff2?)$/i.test(p));
+  const assets = fresh.some((p) => /\.(png|jpe?g|webp|gif|wav|mp3|ogg|m4a|ttf|otf|woff2?|frag|glsl)$/i.test(p));
   if (code) {
     version++;
     await startWorker();
@@ -146,7 +147,7 @@ const MIME: Record<string, string> = {
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.wav': 'audio/wav',
   '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8',
-  '.ttf': 'font/ttf', '.otf': 'font/otf', '.woff': 'font/woff', '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf', '.otf': 'font/otf', '.woff': 'font/woff', '.woff2': 'font/woff2', '.frag': 'text/plain; charset=utf-8', '.glsl': 'text/plain; charset=utf-8',
 };
 
 function inside(dir: string, rel: string): string {
@@ -276,7 +277,10 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
         version++;
         await startWorker();
         broadcast({ type: 'code', version, paths: [rel] });
-      } else broadcast({ type: 'files', paths: [rel] });
+      } else {
+        if (/\.(frag|glsl)$/i.test(rel)) await call('recheckLocks'); // シェーダーの宣言を読み直す（エディタがコンパイルして確かめる）
+        broadcast({ type: 'files', paths: [rel] });
+      }
       return json(res, { ok: true });
     }
   }
@@ -304,6 +308,12 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
     return json(res, r);
   }
   if (m === 'GET' && p === '/api/undo') return json(res, await call('undoState', human(req, '')));
+  if (m === 'POST' && p === '/api/shader-result') {
+    // エディタがシェーダーをコンパイルした結果（ages check で AI が読む）
+    const b = JSON.parse((await body(req)).toString('utf8') || '{}');
+    if (typeof b.path === 'string' && !b.path.startsWith('std:') && typeof b.hash === 'string') await writeShaderResult(projectDir, b.path, b.hash, typeof b.error === 'string' ? b.error : null);
+    return json(res, { ok: true });
+  }
   if (m === 'POST' && p === '/api/mkdir') {
     const rel = (url.searchParams.get('path') ?? '').replace(/\\/g, '/').replace(/\/+$/, '');
     const bad = checkAssetPath(rel);

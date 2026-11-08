@@ -2,7 +2,7 @@
 // 各フィールドに 🔒（AIが変更できないロック）を付けられる。人が触った値には ★ が付く。
 import type { App } from '../app.ts';
 import type { Field } from '../../core/schema.ts';
-import { brief, defaultOf, matrixSize, typeOf, variantDefault, type ListField, type OneOfField, type StructField } from '../../core/schema.ts';
+import { ASSET_LABEL, brief, defaultOf, matrixSize, typeOf, variantDefault, type ListField, type OneOfField, type StructField } from '../../core/schema.ts';
 import { formatSub, getIn, setIn } from '../../core/docs.ts';
 import type { Op } from '../../core/patch.ts';
 import { h, clear, time, modal, toast } from './dom.ts';
@@ -87,8 +87,11 @@ export function inspectorPanel(app: App): Panel {
             render();
           } else app.patch([toOp(path, op)]);
         };
+        // シェーダーの値: 選んだシェーダーの uniform を並べる
+        const pf = f.type === 'params' ? app.registry.shaderParams(values[f.of]) : null;
         const w = f.type === 'matrix'
           ? matrixWidget(app, path, value, f.cell ?? 'number')
+          : f.type === 'params' ? { el: pf ? nestedWidget(app, pf, value, path, [], nestedEmit, wctx) : h('span', { class: 'muted' }, values[f.of] ? `シェーダー ${values[f.of]} が見つかりません` : `${f.of} でシェーダーを選ぶと、ここに値が並びます`), set: () => {} }
           : isNested(f) ? { el: nestedWidget(app, f, value, path, [], nestedEmit, wctx), set: () => {} }
           : widget(app, f, value, commit, wctx);
         // ロックされた値は、ここでは見るだけ（変えるのはロックマネージャーで）
@@ -100,7 +103,7 @@ export function inspectorPanel(app: App): Panel {
           onclick: () => (lock ? app.openLocks(path) : app.lock([path])),
         }, lock ? '🔒' : '🔓');
         const row = h('div', {
-          class: `field ${isNested(f) ? 'wide' : ''} ${has ? '' : 'default'} ${touched ? 'touched' : ''} ${lock ? 'locked' : ''}`,
+          class: `field ${isNested(f) || f.type === 'params' ? 'wide' : ''} ${has ? '' : 'default'} ${touched ? 'touched' : ''} ${lock ? 'locked' : ''}`,
         }, h('label', { title: `${fname}: ${brief(f)}${f.desc ? '\n' + f.desc : ''}${touched ? `\n★ ${touched.who} が ${time(touched.t)} に調整` : ''}${has ? '' : '\n（省略中: 既定値）'}` }, fname), w.el, lockBtn);
         live.push({ path, comp: cname, field: fname, set: w.set, el: row });
         return row;
@@ -265,7 +268,8 @@ export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, 
     }
     case 'asset': {
       // そのプロジェクトにある、種類の合うファイルから選ぶ。画像なら小さく表示する
-      const files = app.state.assets.filter((a) => a.kind === f.kind).map((a) => a.path);
+      // シェーダーは標準のもの（std:名前）も選べる
+      const files = [...app.state.assets.filter((a) => a.kind === f.kind).map((a) => a.path), ...(f.kind === 'shader' ? [...app.registry.shaders.keys()].filter((k) => k.startsWith('std:')) : [])];
       const cur = String(value ?? '');
       const options = ['', ...files];
       if (cur && !files.includes(cur)) options.splice(1, 0, cur);
@@ -293,7 +297,7 @@ export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, 
         const path = e.dataTransfer?.getData(ASSET_MIME);
         if (!path) return;
         e.preventDefault();
-        if (kindOf(path) !== f.kind) return toast(`${path} は${({ image: '画像', sound: '音', font: 'フォント' })[f.kind]}ではありません`, 'bad');
+        if (kindOf(path) !== f.kind) return toast(`${path} は${ASSET_LABEL[f.kind]}ではありません`, 'bad');
         sel.value = path;
         show(path);
         commit(path, true);

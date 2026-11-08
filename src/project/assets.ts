@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { AssetKind } from '../core/schema.ts';
 import { sheetPathOf, type SheetDef } from '../core/sheet.ts';
 import { kindOf } from '../core/assets.ts';
+import { parseShader, type ShaderDef } from '../core/shader.ts';
 
 export { kindOf };
 
@@ -16,6 +17,8 @@ export interface AssetInfo {
   h?: number;
   /** 音の長さ(秒)。WAV・OGG・MP3・M4A のファイルの情報から求める */
   sec?: number;
+  /** シェーダーの宣言（説明・調整できる値・中身） */
+  shader?: ShaderDef;
 }
 
 const SKIP = new Set(['.git', '.ages', 'node_modules']);
@@ -191,6 +194,7 @@ export async function scanAssets(dir: string): Promise<AssetScan> {
       const sec = await soundSeconds(abs, info.bytes).catch(() => null);
       if (sec !== null && Number.isFinite(sec)) info.sec = Math.round(sec * 100) / 100;
     }
+    if (kind === 'shader') info.shader = parseShader(rel, await readFile(abs, 'utf8'));
     assets.push(info);
   }
   // 定義ファイルを、隣にある同じ名前の画像に結びつける
