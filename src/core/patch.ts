@@ -138,7 +138,7 @@ function applyOne(docs: Docs, reg: Registry, op: Op, changes: Change[], dirty: S
       if (!f) throw new Error(`${a.component} に ${a.field} はありません${suggest(a.field, Object.keys(def.fields))}`);
       const err = checkValue(a.component, a.field, f, op.value);
       if (err) throw new Error(err);
-      if (f.type === 'prefab' && !docs.prefabs.has(op.value as string)) {
+      if (f.type === 'prefab' && op.value !== '' && !docs.prefabs.has(op.value as string)) {
         throw new Error(`プレハブ ${op.value} はありません${suggest(String(op.value), [...docs.prefabs.keys()])}`);
       }
       const from = a.field in comp ? comp[a.field] : f.default;

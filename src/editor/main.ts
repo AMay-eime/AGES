@@ -69,12 +69,32 @@ const renderTop = () => {
     h('button', { title: '停止（実行中の変更を保存するか選べます）', onclick: () => app.stopPlay(), disabled: !p }, '⏹ 停止'),
     h('button', { title: '入力を記録しながら再生（停止時に recordings/ に保存）', onclick: () => app.startPlay(true), disabled: !!p }, '● 記録して再生'),
     h('span', { class: 'spacer' }),
+    audioControls(),
     broken ? h('button', { style: 'border-color:var(--bad);color:var(--bad)', onclick: checkLocks, title: s.integrity.reason }, '🔒⚠ ロックの記録を確認') : null,
     h('span', { class: 'status' }, s?.error ? `⚠ ${s.error}` : `${s.issues.length ? `⚠${s.issues.length} ` : ''}🔒${locks}  v${s.version}`),
     h('span', { class: 'muted' }, '名前'), userInput);
 };
 app.on('change', renderTop);
 app.on('play', renderTop);
+app.on('audio', renderTop);
+
+/** 手元の音量とミュート（このブラウザだけ。ゲームの音量は音量の区分 AudioBus で決める） */
+function audioControls(): HTMLElement {
+  const l = app.localAudio;
+  const range = h('input', { type: 'range', min: '0', max: '1', step: '0.05', value: String(l.volume), style: 'width:70px', title: `手元の音量 ${Math.round(l.volume * 100)}%（このブラウザだけ。ゲームの音量は音量の区分 AudioBus で決めます）` }) as HTMLInputElement;
+  range.addEventListener('input', () => app.setLocalAudio(Number(range.value), false));
+  return h('span', { class: 'row', style: 'gap:2px' },
+    h('button', { class: 'icon', title: l.muted ? 'ミュート中（クリックで解除）' : '音を消す', onclick: () => app.setLocalAudio(l.volume, !l.muted) }, l.muted ? '🔇' : '🔊'),
+    range);
+}
+
+// 音のファイルが書き換わったら読み直す
+let soundTimes = new Map<string, number>();
+app.on('change', () => {
+  const next = new Map((app.state?.files ?? []).filter((f) => /\.(wav|mp3|ogg|m4a)$/i.test(f.path)).map((f) => [f.path, f.mtime]));
+  for (const [p, m] of next) if (soundTimes.has(p) && soundTimes.get(p) !== m) app.audio.invalidate(p);
+  soundTimes = next;
+});
 
 /** ロックの記録が人の封印と一致しないときの確認画面 */
 function checkLocks(): void {

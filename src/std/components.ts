@@ -104,4 +104,34 @@ export const Camera = defineComponent({
   },
 });
 
-export const STD_COMPONENTS = [Transform, Sprite, Animator, Shape, Text, Camera];
+export const Sound = defineComponent({
+  name: 'Sound',
+  desc: '音（標準）。プレハブに付けると ctx.sound.play("プレハブ名") で鳴らせる。物に付けて playOnStart にすると、その物がいる間鳴る（BGM・環境音）',
+  fields: {
+    clip: { type: 'asset', kind: 'sound', default: '', desc: '音のファイル（例: assets/se/shot.wav）' },
+    bus: { type: 'prefab', default: '', desc: '音量の区分（AudioBus の付いたプレハブの名前）。空なら全体の直下' },
+    volume: { type: 'number', default: 1, min: 0, max: 2, step: 0.01, desc: '音量' },
+    pitch: { type: 'number', default: 1, min: 0.25, max: 4, step: 0.01, desc: '高さと速さ（2 = 1オクターブ上で2倍の速さ）' },
+    pitchJitter: { type: 'number', default: 0, min: 0, max: 1, step: 0.01, desc: '鳴らすたびに高さを ± この割合だけばらつかせる（同じ音の繰り返しを自然に）' },
+    pan: { type: 'number', default: 0, min: -1, max: 1, step: 0.05, desc: '左右（-1 = 左、1 = 右）' },
+    loop: { type: 'bool', default: false, desc: '繰り返す（止めるまで鳴り続ける）' },
+    playOnStart: { type: 'bool', default: false, desc: '物が現れたとき（シーンが始まったとき・spawn されたとき）に鳴らし、物が消えたら止める（Unity の Play On Awake と同じ）' },
+    fadeIn: { type: 'number', default: 0, min: 0, max: 10, step: 0.1, desc: '鳴り始めのフェード(秒)' },
+    fadeOut: { type: 'number', default: 0, min: 0, max: 10, step: 0.1, desc: '止めるときのフェード(秒。「同時に1つだけ」の区分での切り替えにも使う)' },
+    maxVoices: { type: 'int', default: 4, min: 1, max: 64, desc: 'この音を同時に鳴らす数の上限（超えたら古いものから止める）' },
+    cooldown: { type: 'number', default: 0, min: 0, max: 5, step: 0.01, desc: 'この秒数より短い間隔では鳴らさない（連射の音が重なりすぎないように）' },
+  },
+});
+
+export const AudioBus = defineComponent({
+  name: 'AudioBus',
+  desc: '音量の区分（標準）。プレハブに付けると、そのプレハブの名前が区分の名前になる（例 @bgm, @se）。どんな区分を作るかはプロジェクトで決める',
+  fields: {
+    volume: { type: 'number', default: 1, min: 0, max: 1, step: 0.01, desc: 'この区分の音量' },
+    parent: { type: 'prefab', default: '', desc: '親の区分（AudioBus のプレハブ）。親の音量も掛かる。空なら全体の直下' },
+    exclusive: { type: 'bool', default: false, desc: '同時に1つだけ鳴らす。新しい音を鳴らすと、今の音がその音の fadeOut で消えながら切り替わる（普通のBGMに。重ねるBGMなら外す）' },
+    maxVoices: { type: 'int', default: 0, min: 0, max: 128, desc: 'この区分で同時に鳴らす数の上限（0 = 制限なし。超えたら古いものから止める）' },
+  },
+});
+
+export const STD_COMPONENTS = [Transform, Sprite, Animator, Shape, Text, Camera, Sound, AudioBus];

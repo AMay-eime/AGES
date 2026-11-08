@@ -1,0 +1,14 @@
+{
+  "name": "se_shot",
+  "desc": "弾を撃つ音（仮）",
+  "components": {
+    "Sound": {
+      "clip": "assets/sounds/shot.wav",
+      "bus": "se",
+      "volume": 0.35,
+      "pitchJitter": 0.06,
+      "maxVoices": 6,
+      "cooldown": 0.05
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "se",
+  "desc": "音量の区分: 効果音",
+  "components": {
+    "AudioBus": {
+      "maxVoices": 24
+    }
+  }
+}

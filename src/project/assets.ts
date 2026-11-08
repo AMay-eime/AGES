@@ -11,6 +11,8 @@ export interface AssetInfo {
   /** 画像の大きさ(px)。読めなかったときは undefined */
   w?: number;
   h?: number;
+  /** 音の長さ(秒)。WAV だけ読む */
+  sec?: number;
 }
 
 const SKIP = new Set(['.git', '.ages', 'node_modules']);
@@ -58,6 +60,19 @@ export function imageSize(b: Buffer): { w: number; h: number } | null {
   return null;
 }
 
+/** WAV の長さ(秒)。ファイルの先頭の情報から求める */
+export function wavSeconds(b: Buffer): number | null {
+  if (b.length < 12 || b.toString('ascii', 0, 4) !== 'RIFF' || b.toString('ascii', 8, 12) !== 'WAVE') return null;
+  let byteRate = 0;
+  for (let p = 12; p + 8 <= b.length;) {
+    const id = b.toString('ascii', p, p + 4), size = b.readUInt32LE(p + 4);
+    if (id === 'fmt ' && p + 16 <= b.length) byteRate = b.readUInt32LE(p + 16);
+    if (id === 'data') return byteRate ? size / byteRate : null;
+    p += 8 + size + (size & 1);
+  }
+  return null;
+}
+
 async function head(path: string, n: number): Promise<Buffer> {
   const f = await open(path, 'r');
   try {
@@ -99,6 +114,10 @@ export async function scanAssets(dir: string): Promise<AssetScan> {
       // JPEG は大きさの情報が後ろの方にあることがあるので、少し多めに読む
       const size = imageSize(await head(abs, 64 * 1024));
       if (size) { info.w = size.w; info.h = size.h; }
+    }
+    if (kind === 'sound' && rel.toLowerCase().endsWith('.wav')) {
+      const sec = wavSeconds(await head(abs, 4096));
+      if (sec !== null) info.sec = Math.round(sec * 100) / 100;
     }
     assets.push(info);
   }

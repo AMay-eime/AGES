@@ -1,0 +1,13 @@
+{
+  "name": "se_explosion",
+  "desc": "敵が爆発する音（仮）",
+  "components": {
+    "Sound": {
+      "clip": "assets/sounds/explosion.wav",
+      "bus": "se",
+      "volume": 0.7,
+      "pitchJitter": 0.12,
+      "maxVoices": 8
+    }
+  }
+}

@@ -88,6 +88,7 @@ export function inspectorPanel(app: App): Panel {
       const allLocked = entries.length > 0 && visible.length === 0;
       return h('div', { class: 'comp' },
         h('div', { class: 'head' }, cname, h('span', { class: 'desc', title: def.desc }, allLocked ? '（すべて🔒）' : def.desc),
+          cname === 'Sound' ? h('button', { class: 'icon', title: '今の設定で試しに鳴らす', onclick: () => app.previewSound(holder!.components.Sound as never) }, '▶') : null,
           !playing && h('button', { class: 'icon', title: `${cname} を外す`, onclick: () => app.patch([{ op: 'removeComponent', target: base, component: cname }]) }, '×')),
         rows);
     });
@@ -182,8 +183,13 @@ function widget(app: App, f: Field, value: unknown, commit: (v: unknown, final: 
     }
     case 'enum':
     case 'prefab': {
-      const options = f.type === 'enum' ? f.options : Object.keys(app.state.prefabs);
-      const sel = h('select', {}, options.map((o) => h('option', { value: o, selected: o === value }, o))) as HTMLSelectElement;
+      // 音量の区分を選ぶ欄は、AudioBus の付いたプレハブだけを出す
+      const busOnly = (ctx.comp === 'Sound' && ctx.field === 'bus') || (ctx.comp === 'AudioBus' && ctx.field === 'parent');
+      const prefabs = Object.values(app.state.prefabs).filter((p) => !busOnly || p.components.AudioBus).map((p) => p.name);
+      const options = f.type === 'enum' ? f.options : [...(f.default === '' ? [''] : []), ...prefabs];
+      if (f.type === 'prefab' && typeof value === 'string' && !options.includes(value)) options.push(value);
+      const label = (o: string) => (o === '' ? (busOnly ? '（なし: 全体の直下）' : '（なし）') : o);
+      const sel = h('select', {}, options.map((o) => h('option', { value: o, selected: o === value }, label(o)))) as HTMLSelectElement;
       sel.addEventListener('change', () => commit(sel.value, true));
       wrap.append(sel);
       return { el: wrap, set: (v) => { sel.value = String(v); } };
@@ -224,6 +230,12 @@ function widget(app: App, f: Field, value: unknown, commit: (v: unknown, final: 
       thumb.addEventListener('click', () => { if (sel.value) app.emit('openSprite', sel.value); });
       wrap.append(thumb, sel);
       if (f.kind === 'image') wrap.append(h('button', { class: 'icon', title: 'この画像の切り方（コマ・基準点・動き）を開く', onclick: () => { if (sel.value) app.emit('openSprite', sel.value); } }, '✂'));
+      if (f.kind === 'sound') {
+        thumb.remove();
+        const info = () => app.state.assets.find((a) => a.path === sel.value);
+        wrap.append(h('button', { class: 'icon', title: 'このファイルを試しに鳴らす', onclick: () => { if (sel.value) app.previewSound({ ...(ctx.comp === 'Sound' ? ctx.holder.Sound : {}), clip: sel.value } as never); } }, '▶'),
+          h('span', { class: 'muted', style: 'font-size:11px' }, info()?.sec !== undefined ? `${info()!.sec}s` : ''));
+      }
       return { el: wrap, set: (v) => { sel.value = String(v ?? ''); show(String(v ?? '')); } };
     }
     case 'frame': {

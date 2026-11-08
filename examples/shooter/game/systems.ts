@@ -10,7 +10,7 @@ export const playerControl = defineSystem({
   desc: '矢印キーで自機を動かし、Z/スペースで弾を撃つ',
   reads: ['Player'],
   writes: ['Transform', 'Player'],
-  update({ world, input, view, spawn }) {
+  update({ world, input, view, spawn, sound }) {
     for (const e of world.query('Player', 'Transform')) {
       const p = e.c.Player, t = e.c.Transform;
       t.x = Math.min(view.width, Math.max(0, t.x + input.axis('ArrowLeft', 'ArrowRight') * p.speed));
@@ -18,6 +18,7 @@ export const playerControl = defineSystem({
       if (p.cooldown > 0) p.cooldown--;
       if ((input.isDown('KeyZ') || input.isDown('Space')) && p.cooldown === 0) {
         spawn(p.bullet, { Transform: { x: t.x, y: t.y - 16 } });
+        sound.play('se_shot');
         p.cooldown = p.fireInterval;
       }
     }
@@ -84,7 +85,7 @@ export const combat = defineSystem({
   desc: '弾と敵、敵と自機の当たりを処理する',
   reads: ['Bullet', 'Enemy', 'Player', 'Hitbox'],
   writes: ['Health', 'Score', 'Camera'],
-  update({ world, destroy, emit, spawn, shake }) {
+  update({ world, destroy, emit, spawn, shake, sound }) {
     const isAlive = (id: string) => world.isAlive(id);
     const boom = (e: Entity) => spawn('explosion', { Transform: { x: e.c.Transform.x, y: e.c.Transform.y } });
     const enemies = world.query('Enemy', 'Health', 'Transform', 'Hitbox');
@@ -100,6 +101,7 @@ export const combat = defineSystem({
           boom(en);
           if (score) score.value += en.c.Enemy.score;
           emit('enemyKilled');
+          sound.play('se_explosion');
         }
         break;
       }
@@ -116,6 +118,7 @@ export const combat = defineSystem({
         h.invincible = h.invincibleOnHit;
         emit('playerHit', { hp: h.hp });
         shake(0.6); // 被弾したら画面を揺らす（標準の Camera）
+        sound.play('se_hit');
         if (h.hp <= 0) emit('gameOver');
         break;
       }

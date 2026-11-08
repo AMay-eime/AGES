@@ -1,0 +1,11 @@
+{
+  "name": "se_hit",
+  "desc": "自機が被弾した音（仮）",
+  "components": {
+    "Sound": {
+      "clip": "assets/sounds/hit.wav",
+      "bus": "se",
+      "volume": 0.9
+    }
+  }
+}

@@ -41,7 +41,7 @@ export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, l
   if (p.assets.length) {
     out.push('## assets（画像は 幅x高さ。シートは 格子なら コマの大きさ×コマ数、自由なら コマ数と名前。コマの位置は ages sheet <dir> <画像>）');
     for (const a of p.assets) {
-      if (a.kind !== 'image') { out.push(`${a.path} ${a.kind} ${Math.ceil(a.bytes / 1024)}KB`); continue; }
+      if (a.kind !== 'image') { out.push(`${a.path} ${a.kind} ${Math.ceil(a.bytes / 1024)}KB${a.sec !== undefined ? ` ${a.sec}s` : ''}`); continue; }
       const sheet = p.registry.sheets.get(a.path);
       let line = `${a.path} ${a.w ?? '?'}x${a.h ?? '?'}`;
       if (sheet) {
