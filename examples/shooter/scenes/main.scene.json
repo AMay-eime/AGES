@@ -10,13 +10,18 @@
       "components": {
         "Transform": {
           "x": 240,
-          "y": 560
+          "y": 560,
+          "sx": 1.5,
+          "sy": 1.5
         },
-        "Shape": {
-          "kind": "rect",
-          "w": 26,
-          "h": 26,
-          "color": "#5ee6ff"
+        "Sprite": {
+          "image": "assets/kenney-pixel-shmup/ships.png",
+          "frame": 0,
+          "layer": 2
+        },
+        "Hitbox": {
+          "w": 20,
+          "h": 20
         },
         "Player": {
           "speed": 4.5,
@@ -129,7 +134,8 @@
         "Text": {
           "text": "",
           "size": 16,
-          "color": "#e8ecff"
+          "color": "#e8ecff",
+          "layer": 10
         },
         "Score": {}
       }

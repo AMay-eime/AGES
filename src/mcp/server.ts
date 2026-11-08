@@ -5,7 +5,7 @@
 import { createInterface } from 'node:readline';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { cmdCheck, cmdGet, cmdInit, cmdLog, cmdMap, cmdPatch, cmdRun, cmdSchema } from '../cli/ages.ts';
+import { cmdCheck, cmdGet, cmdInit, cmdLog, cmdMap, cmdPatch, cmdRun, cmdSchema, cmdSheet, cmdSlice } from '../cli/ages.ts';
 import { parseLiteral, splitCell, type Op } from '../core/patch.ts';
 
 process.removeAllListeners('warning');
@@ -21,6 +21,7 @@ const INSTRUCTIONS = `AGES は、AIと人が一緒に速くゲームを作るた
 - 値は ages_set / ages_patch で変える。JSONを直接書き換えない。行列はセル単位（住所[行,列]）
 - 🔒ロックされた値は絶対に変えない（変えられない）。変えるべき理由があれば人に提案する。★人が調整した値は、人に確認してから force
 - 変更後は ages_run で確かめる（keys で入力を指定、twice で再現性）
+- 画像の切り方（スプライトシート）は ages_sheet で見て、ages_slice（格子・数・自動）か ages_patch の setFrame / setClip で変える。画像を開いて確かめない
 - 面白さの核・手触り・個性は人が決める。AIが出すものは「案」と明記する
 詳しくはプロジェクトの AGENTS.md。`;
 
@@ -71,7 +72,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'ages_patch',
-    description: '複数の操作をまとめて行う（すべて成功するか、何も変えないか）。op: set{path,value} / setCells{path,cells:[[行,列,値]]} / addEntity{scene,entity:{id,name?,tags?,components?}} / removeEntity{scene,id} / addComponent{target,component,values?} / removeComponent{target,component} / rename{target,name}',
+    description: '複数の操作をまとめて行う（すべて成功するか、何も変えないか）。op: set{path,value} / setCells{path,cells:[[行,列,値]]} / addEntity{scene,entity:{id,name?,tags?,components?}} / removeEntity{scene,id} / addComponent{target,component,values?} / removeComponent{target,component} / rename{target,name} / setFrame{image,frame(番号か名前),name?,rect?:[x,y,w,h],pivot?:[x,y]|null,remove?}（ない名前に rect で追加。名前を変えると参照も直る） / setClip{image,clip,frames?,fps?,loop?,remove?} / setSheet{image,sheet|null}',
     inputSchema: { type: 'object', properties: { ...dirProp, ops: { type: 'array', items: { type: 'object' } }, force: { type: 'boolean' } }, required: ['ops'] },
     run: (a, dir) => cmdPatch(dir, a.ops as Op[], !!a.force),
   },
@@ -100,6 +101,40 @@ const TOOLS: Tool[] = [
     description: '全データの検証とロックの検査',
     inputSchema: { type: 'object', properties: { ...dirProp } },
     run: (_a, dir) => cmdCheck(dir),
+  },
+  {
+    name: 'ages_sheet',
+    description: '画像の切り方（コマの名前・位置・基準点・動き）を見る',
+    inputSchema: { type: 'object', properties: { ...dirProp, image: { type: 'string', description: '画像の場所（例 assets/hero.png）' } }, required: ['image'] },
+    run: (a, dir) => cmdSheet(dir, a.image),
+  },
+  {
+    name: 'ages_slice',
+    description: '画像を切ってコマにする。grid（1コマの大きさ）か count（列x行）か auto（描かれた部分ごと）。前と同じ場所のコマは名前を引き継ぎ、番号の指定がずれたら直す。dry で保存せずに結果だけ見る',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...dirProp,
+        image: { type: 'string', description: '画像の場所' },
+        grid: { type: 'string', description: '1コマの大きさ 幅x高さ（例 32x32）' },
+        count: { type: 'string', description: 'コマの数 列x行（例 4x6）' },
+        auto: { type: 'boolean', description: '描かれた部分のかたまりごとに切る（PNGのみ）' },
+        spacing: { type: 'number' }, margin: { type: 'number' },
+        skipEmpty: { type: 'boolean', description: '格子で、何も描かれていないコマを除く' },
+        gap: { type: 'number', description: 'auto: この距離(px)以内の部分は1コマにまとめる' },
+        min: { type: 'number', description: 'auto: これより小さいものは捨てる(px)' },
+        pad: { type: 'number', description: 'auto: 矩形を外へ広げる(px)' },
+        pivot: { type: 'string', description: '新しいコマの基準点 横,縦（例 0.5,1 = 下の中央）' },
+        dry: { type: 'boolean' }, force: { type: 'boolean', description: '人が調整した切り方を、人に確認したうえで変える' },
+      },
+      required: ['image'],
+    },
+    run: (a, dir) => {
+      const flags: Record<string, string | true> = {};
+      for (const k of ['grid', 'count', 'spacing', 'margin', 'gap', 'min', 'pad', 'pivot']) if (a[k] !== undefined) flags[k] = String(a[k]);
+      for (const [k, f] of [['auto', 'auto'], ['skipEmpty', 'skip-empty'], ['dry', 'dry'], ['force', 'force']]) if (a[k]) flags[f] = true;
+      return cmdSlice(dir, a.image, flags);
+    },
   },
   {
     name: 'ages_init',

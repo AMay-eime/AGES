@@ -1,12 +1,29 @@
 {
   "name": "bullet",
   "desc": "自機の弾",
-  "tags": ["bullet"],
+  "tags": [
+    "bullet"
+  ],
   "components": {
     "Transform": {},
-    "Shape": { "kind": "rect", "w": 4, "h": 14, "color": "#ffe066" },
-    "Velocity": { "vy": -10 },
-    "Lifetime": { "frames": 90 },
-    "Bullet": { "team": "player", "damage": 1 }
+    "Sprite": {
+      "image": "assets/kenney-pixel-shmup/tiles.png",
+      "frame": 0,
+      "layer": 1
+    },
+    "Hitbox": {
+      "w": 4,
+      "h": 12
+    },
+    "Velocity": {
+      "vy": -10
+    },
+    "Lifetime": {
+      "frames": 90
+    },
+    "Bullet": {
+      "team": "player",
+      "damage": 1
+    }
   }
 }

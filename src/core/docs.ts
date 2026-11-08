@@ -23,7 +23,8 @@ export interface ProjectConfig {
   name: string;
   fps: number;
   seed: number;
-  view: { width: number; height: number; background: string };
+  /** filter: 画像の拡大の仕方。nearest=ドット絵向け（くっきり）、linear=なめらか（既定） */
+  view: { width: number; height: number; background: string; filter?: 'nearest' | 'linear' };
   startScene: string;
   game: string;
   editorWindows?: string[];

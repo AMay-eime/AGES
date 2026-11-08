@@ -22,6 +22,8 @@ export interface LogEntry {
   path: string;
   from?: unknown;
   to?: unknown;
+  /** 別の変更に合わせて自動で直したもの */
+  auto?: boolean;
 }
 
 export interface TouchMark {
@@ -40,6 +42,7 @@ export async function appendLog(root: string, actor: Actor, op: string, changes:
     if (actor.win) e.win = actor.win;
     if (c.from !== undefined) e.from = c.from;
     if (c.to !== undefined) e.to = c.to;
+    if (c.auto) e.auto = true;
     return e;
   });
   await appendFile(join(dirOf(root), 'oplog.jsonl'), entries.map((e) => JSON.stringify(e)).join('\n') + '\n');
@@ -68,8 +71,12 @@ export async function markTouched(root: string, actor: Actor, changes: Change[])
   const touched = await readTouched(root);
   const t = new Date().toISOString();
   for (const raw of changes) {
-    // 行列のセルの変更（...formation[2,3]）は行列全体への印にする
-    const c = { ...raw, path: raw.path.replace(/\[\d+,\s*\d+\]$/, '') };
+    if (raw.auto) continue; // 自動で直した参照は、人が調整した値ではない
+    // 行列のセルの変更（...formation[2,3]）は行列全体への印に、切り方の変更（sheet:x.png|コマ.rect）はシート全体への印にする
+    const sheetPart = raw.path.startsWith('sheet:') && raw.path.includes('|');
+    const base = sheetPart ? raw.path.split('|')[0] : raw.path.replace(/\[\d+,\s*\d+\]$/, '');
+    // コマを1つ消しても、シートの印は消さない
+    const c = { ...raw, path: base, to: sheetPart ? 'changed' : raw.to };
     if (c.to === 'removed') {
       for (const k of Object.keys(touched)) if (k === c.path || k.startsWith(c.path + '.')) delete touched[k];
     } else {
@@ -123,9 +130,12 @@ export function summarize(entries: LogEntry[]): string {
     // 値の変更とロック操作は別々にまとめる
     const byPath = new Map<string, LogEntry[]>();
     for (const e of list) {
-      // 行列のセルの変更は行列ごとにまとめる
+      // 行列のセルの変更は行列ごとに、画像の切り方の変更は画像ごとにまとめる
       const cell = /\[\d+,\s*\d+\]$/.test(e.path);
-      const k = cell ? `${e.path.replace(/\[\d+,\s*\d+\]$/, '')}\u0000cells` : `${e.path}\u0000${e.op === 'lock' || e.op === 'unlock' ? 'lock' : 'value'}`;
+      const sheet = e.path.startsWith('sheet:') && e.path.includes('|');
+      const k = cell ? `${e.path.replace(/\[\d+,\s*\d+\]$/, '')}\u0000cells`
+        : sheet ? `${e.path.split('|')[0]}\u0000sheet`
+        : `${e.path}\u0000${e.op === 'lock' || e.op === 'unlock' ? 'lock' : 'value'}`;
       byPath.set(k, [...(byPath.get(k) ?? []), e]);
     }
     const first = localTime(list[0].t);
@@ -139,13 +149,20 @@ export function summarize(entries: LogEntry[]): string {
         lines.push(`  ${path} 行列 ${cells.size}セル変更（${sample}${es.length > 3 ? ' …' : ''}）。全体は ages get で確認`);
         continue;
       }
+      if (kind === 'sheet') {
+        const parts = es.map((e) => e.path.split('|')[1]);
+        const added = es.filter((e) => e.to === 'added').length, removed = es.filter((e) => e.to === 'removed').length;
+        const sample = [...new Set(parts)].slice(0, 4).join(', ');
+        lines.push(`  ${path} 切り方 ${es.length}件変更（追加${added}・削除${removed}・変更${es.length - added - removed}: ${sample}${parts.length > 4 ? ' …' : ''}）。全体は ages sheet で確認`);
+        continue;
+      }
       const a = es[0];
       const b = es[es.length - 1];
       const n = es.length > 1 ? ` ×${es.length}` : '';
       if (b.op === 'lock' || b.op === 'unlock') lines.push(`  ${path} ${b.op === 'lock' ? '🔒ロック' : 'ロック解除'}`);
       else if (b.to === 'added' || b.to === 'removed') lines.push(`  ${path} ${b.to === 'added' ? '追加' : '削除'}${n}`);
       else if (a.op === 'file') lines.push(`  ${path} ファイル編集${n}`);
-      else lines.push(`  ${path} ${short(a.from)}→${short(b.to)}${n}`);
+      else lines.push(`  ${path} ${short(a.from)}→${short(b.to)}${n}${b.auto ? '（切り方に合わせて自動）' : ''}`);
     }
   }
   return lines.join('\n');

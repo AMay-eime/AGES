@@ -3,6 +3,8 @@
 import { parseAddress, type Address, type EntityData, type PrefabDoc, type SceneDoc } from './docs.ts';
 import { checkCell, checkValue, suggest, type CellValue } from './schema.ts';
 import type { Registry } from './registry.ts';
+import { baseNameOf, checkSheet, findFrame, sheetPathOf, toExplicit, type FrameDef, type FrameRef, type SheetDef } from './sheet.ts';
+import { frameMapper, remapRef } from './slice.ts';
 
 export type Op =
   | { op: 'set'; path: string; value: unknown }
@@ -12,7 +14,24 @@ export type Op =
   | { op: 'removeComponent'; target: string; component: string }
   | { op: 'rename'; target: string; name: string }
   /** 行列の一部のセルだけを変える（行列全体を送らずに済む）。cells は [行, 列, 値] の並び */
-  | { op: 'setCells'; path: string; cells: [number, number, CellValue][] };
+  | { op: 'setCells'; path: string; cells: [number, number, CellValue][] }
+  /**
+   * 画像の切り方（スプライトシート）をまるごと決める。null で消す。
+   * renames に { 古い名前: 新しい名前 } を渡すと、シーン・プレハブ・動きの中のコマの指定も書き換える
+   */
+  | { op: 'setSheet'; image: string; sheet: SheetDef | null; renames?: Record<string, string> }
+  /**
+   * コマを1つ変える・足す・消す。frame は番号か名前。ない名前に rect を付けると追加。
+   * name で名前を変える（参照も書き換える）。pivot: null で基準点を外す。remove: true で消す
+   */
+  | { op: 'setFrame'; image: string; frame: FrameRef; name?: string; rect?: FrameDef['rect']; pivot?: [number, number] | null; remove?: boolean }
+  /** 動きを1つ変える・足す・消す。ない名前は追加（frames と fps が必要） */
+  | { op: 'setClip'; image: string; clip: string; frames?: FrameRef[]; fps?: number; loop?: boolean; remove?: boolean };
+
+/** シートの値の住所。sheet:<画像>（全体）、sheet:<画像>|<コマ>.rect、sheet:<画像>|clip:<動き>.fps */
+export const sheetAddress = (image: string, rest = '') => `sheet:${image}${rest ? '|' + rest : ''}`;
+/** シートの住所から、シート全体の住所（ロック・★の単位）を取り出す */
+export const sheetRoot = (path: string) => (path.startsWith('sheet:') ? path.split('|')[0] : path);
 
 /** "main#spawner.Spawner.formation[2,3]" → { path: "...formation", cell: [2,3] } */
 export function splitCell(path: string): { path: string; cell?: [number, number] } {
@@ -24,16 +43,20 @@ export interface Change {
   path: string;
   from?: unknown;
   to?: unknown;
+  /** 別の変更に合わせて自動で直したもの（コマの名前の変更や番号のずれに合わせた参照など）。人が調整した印（★）は付けない */
+  auto?: boolean;
 }
 
 export interface Docs {
   scenes: Map<string, SceneDoc>;
   prefabs: Map<string, PrefabDoc>;
+  /** スプライトシート（画像の場所 → 切り方）。ファイルは画像の隣の <画像名>.sheet.json */
+  sheets: Map<string, SheetDef>;
 }
 
 export interface PatchResult {
   changes: Change[];
-  /** 変更があった文書（"scene:main" / "prefab:enemy"） */
+  /** 変更があった文書（"scene:main" / "prefab:enemy" / "sheet:assets/x.png"） */
   dirty: Set<string>;
 }
 
@@ -62,6 +85,10 @@ function holderOf(docs: Docs, a: Address): { holder: Holder; key: string } {
 
 /** 値を読む。フィールドが省略されていれば既定値を返す（isDefault=true）。 */
 export function getValue(docs: Docs, reg: Registry, path: string): { value: unknown; isDefault: boolean } {
+  if (path.startsWith('sheet:')) {
+    const image = path.slice('sheet:'.length).split('|')[0];
+    return { value: docs.sheets.get(image) ?? null, isDefault: false };
+  }
   const a = parseAddress(path);
   const { holder } = holderOf(docs, a);
   if (!a.component) return { value: holder, isDefault: false };
@@ -76,7 +103,7 @@ export function getValue(docs: Docs, reg: Registry, path: string): { value: unkn
 
 /** 操作をまとめて適用する。1つでも失敗したら何も変えない。 */
 export function applyOps(docs: Docs, reg: Registry, ops: Op[]): PatchResult {
-  const work: Docs = { scenes: structuredClone(docs.scenes), prefabs: structuredClone(docs.prefabs) };
+  const work: Docs = { scenes: structuredClone(docs.scenes), prefabs: structuredClone(docs.prefabs), sheets: structuredClone(docs.sheets) };
   const changes: Change[] = [];
   const dirty = new Set<string>();
   ops.forEach((op, i) => {
@@ -88,9 +115,12 @@ export function applyOps(docs: Docs, reg: Registry, ops: Op[]): PatchResult {
   });
   // 成功したら本物に反映
   for (const k of dirty) {
-    const [kind, name] = k.split(':');
+    const i = k.indexOf(':');
+    const kind = k.slice(0, i), name = k.slice(i + 1);
     if (kind === 'scene') docs.scenes.set(name, work.scenes.get(name)!);
-    else docs.prefabs.set(name, work.prefabs.get(name)!);
+    else if (kind === 'prefab') docs.prefabs.set(name, work.prefabs.get(name)!);
+    else if (work.sheets.has(name)) docs.sheets.set(name, work.sheets.get(name)!);
+    else docs.sheets.delete(name);
   }
   return { changes, dirty };
 }
@@ -194,9 +224,173 @@ function applyOne(docs: Docs, reg: Registry, op: Op, changes: Change[], dirty: S
       dirty.add(key);
       return;
     }
+    case 'setSheet': {
+      if (op.sheet !== null) {
+        const errs = checkSheet(sheetPathOf(op.image), op.sheet);
+        if (!reg.images.has(op.image)) throw new Error(`画像 ${op.image} がありません${suggest(op.image, [...reg.images.keys()])}`);
+        if (errs.length) throw new Error(errs.join(' / '));
+      }
+      const key = op.image;
+      const before = docs.sheets.get(key);
+      if (op.sheet === null) docs.sheets.delete(key);
+      else docs.sheets.set(key, structuredClone(op.sheet));
+      const diff = diffSheet(op.image, before, op.sheet ?? undefined);
+      if (diff.length) { changes.push(...diff); dirty.add(`sheet:${key}`); }
+      for (const [from, to] of Object.entries(op.renames ?? {})) if (from !== to) renameRefs(docs, op.image, from, to, changes, dirty, false);
+      // 番号で指定しているシーン・プレハブのコマを、新しい切り方に合わせる（op.sheet の動きは新しい切り方で書かれている前提）
+      const size = reg.images.get(op.image);
+      if (before && op.sheet && size) remapSprites(docs, op.image, frameMapper(before, op.sheet, size.w, size.h, op.renames), op.sheet, changes, dirty);
+      return;
+    }
+    case 'setFrame': {
+      const key = op.image;
+      const before = docs.sheets.get(key);
+      const size = reg.images.get(op.image);
+      if (!size) throw new Error(`画像 ${op.image} がありません${suggest(op.image, [...reg.images.keys()])}`);
+      // シートがなければ空から作る。格子のシートは、同じ並びの自由な矩形にしてから変える（番号での指定はそのまま使える）
+      const sheet = before ? toExplicit(before, size.w, size.h, baseNameOf(op.image)) : { frames: [] };
+      const frames = sheet.frames!;
+      const found = findFrame(sheet, 0, 0, op.frame);
+      if (!found) {
+        if (op.remove || !op.rect || typeof op.frame !== 'string') {
+          const names = frames.map((f) => f.name);
+          throw new Error(`${op.image} に コマ ${JSON.stringify(op.frame)} はありません（${frames.length}コマ）${typeof op.frame === 'string' ? suggest(op.frame, names) : ''}。追加するなら名前と rect を指定してください`);
+        }
+        const f: FrameDef = { name: op.frame, rect: op.rect };
+        if (op.pivot) f.pivot = op.pivot;
+        frames.push(f);
+      } else if (op.remove) {
+        frames.splice(found.index, 1);
+      } else {
+        const f = frames[found.index];
+        if (op.rect) f.rect = op.rect;
+        if (op.pivot === null) delete f.pivot;
+        else if (op.pivot) f.pivot = op.pivot;
+        if (op.name !== undefined && op.name !== f.name) {
+          const old = f.name;
+          f.name = op.name;
+          renameInClips(sheet, old, op.name);
+          renameRefs(docs, op.image, old, op.name, changes, dirty, true);
+        }
+      }
+      if (before) {
+        // 消したコマより後ろの番号がずれるので、番号での指定を合わせる
+        const map = frameMapper(before, sheet, size.w, size.h, op.name !== undefined && found ? { [found.name ?? '']: op.name } : {});
+        for (const [cn, c] of Object.entries(sheet.clips ?? {})) {
+          c.frames = c.frames.map((r) => {
+            const n = remapRef(r, map, sheet);
+            if (n === null) throw new Error(`動き ${cn} が コマ #${r} を使っています。先に動きから外してください（setClip）`);
+            return n;
+          });
+        }
+        remapSprites(docs, op.image, map, sheet, changes, dirty);
+      }
+      const errs = checkSheet(sheetPathOf(key), sheet);
+      if (errs.length) throw new Error(errs.join(' / '));
+      docs.sheets.set(key, sheet);
+      const diff = diffSheet(op.image, before, sheet);
+      if (diff.length) { changes.push(...diff); dirty.add(`sheet:${key}`); }
+      return;
+    }
+    case 'setClip': {
+      const key = op.image;
+      const before = docs.sheets.get(key);
+      if (!before) throw new Error(`${op.image} にはスプライトシートがありません`);
+      const sheet = structuredClone(before);
+      const clips = (sheet.clips ??= {});
+      if (op.remove) {
+        if (!clips[op.clip]) throw new Error(`${op.image} に動き ${op.clip} はありません${suggest(op.clip, Object.keys(clips))}`);
+        delete clips[op.clip];
+      } else {
+        const c = clips[op.clip] ?? (op.frames && op.fps ? { frames: op.frames, fps: op.fps } : null);
+        if (!c) throw new Error(`動き ${op.clip} を追加するには frames と fps が必要です`);
+        if (op.frames) c.frames = op.frames;
+        if (op.fps !== undefined) c.fps = op.fps;
+        if (op.loop !== undefined) { if (op.loop) delete c.loop; else c.loop = false; }
+        clips[op.clip] = c;
+      }
+      if (!Object.keys(clips).length) delete sheet.clips;
+      const errs = checkSheet(sheetPathOf(key), sheet);
+      if (errs.length) throw new Error(errs.join(' / '));
+      docs.sheets.set(key, sheet);
+      const diff = diffSheet(op.image, before, sheet);
+      if (diff.length) { changes.push(...diff); dirty.add(`sheet:${key}`); }
+      return;
+    }
     default:
-      throw new Error(`未知の操作 ${(op as { op: string }).op}。使えるのは set / setCells / addEntity / removeEntity / addComponent / removeComponent / rename`);
+      throw new Error(`未知の操作 ${(op as { op: string }).op}。使えるのは set / setCells / addEntity / removeEntity / addComponent / removeComponent / rename / setSheet / setFrame / setClip`);
   }
+}
+
+/** 切り方の変更で番号がずれたシーン・プレハブの Sprite.frame を直す。無くなったコマを使っていたら止める */
+function remapSprites(docs: Docs, image: string, map: (i: number) => number, after: SheetDef, changes: Change[], dirty: Set<string>): void {
+  const fix = (base: string, comps: Record<string, Record<string, unknown>>, dirtyKey: string) => {
+    const sp = comps.Sprite;
+    if (sp?.image !== image || typeof sp.frame !== 'number') return;
+    const n = remapRef(sp.frame, map, after);
+    if (n === null) throw new Error(`${base}.Sprite.frame=${sp.frame} のコマが、この切り方では無くなります。先にその指定を変えてください（名前で指定すると切り直してもずれません）`);
+    if (n === sp.frame) return;
+    changes.push({ path: `${base}.Sprite.frame`, from: sp.frame, to: n, auto: true });
+    sp.frame = n;
+    dirty.add(dirtyKey);
+  };
+  for (const s of docs.scenes.values()) for (const e of s.entities) fix(`${s.name}#${e.id}`, e.components, `scene:${s.name}`);
+  for (const p of docs.prefabs.values()) fix(`@${p.name}`, p.components, `prefab:${p.name}`);
+}
+
+function renameInClips(sheet: SheetDef, from: string, to: string): void {
+  for (const c of Object.values(sheet.clips ?? {})) c.frames = c.frames.map((r) => (r === from ? to : r));
+}
+
+/** コマの名前を変えたとき、その画像を使うシーン・プレハブの Sprite.frame（と、clipsOnly=false ならシートの動き）も書き換える */
+function renameRefs(docs: Docs, image: string, from: string, to: string, changes: Change[], dirty: Set<string>, clipsDone: boolean): void {
+  if (!clipsDone) {
+    const sheet = docs.sheets.get(image);
+    if (sheet) renameInClips(sheet, from, to);
+  }
+  const fix = (base: string, comps: Record<string, Record<string, unknown>>, dirtyKey: string) => {
+    const sp = comps.Sprite;
+    if (sp?.image === image && sp.frame === from) {
+      sp.frame = to;
+      changes.push({ path: `${base}.Sprite.frame`, from, to, auto: true });
+      dirty.add(dirtyKey);
+    }
+  };
+  for (const s of docs.scenes.values()) for (const e of s.entities) fix(`${s.name}#${e.id}`, e.components, `scene:${s.name}`);
+  for (const p of docs.prefabs.values()) fix(`@${p.name}`, p.components, `prefab:${p.name}`);
+}
+
+const short = (v: unknown) => (Array.isArray(v) ? v.join(',') : v);
+
+/** 2つのシートの違いを、コマ・動きの単位で求める */
+export function diffSheet(image: string, a: SheetDef | undefined, b: SheetDef | undefined): Change[] {
+  const out: Change[] = [];
+  const at = (rest: string) => sheetAddress(image, rest);
+  if (!a && !b) return out;
+  if (!a) out.push({ path: sheetAddress(image), to: 'added' });
+  if (!b) { out.push({ path: sheetAddress(image), from: a, to: 'removed' }); return out; }
+  const grid = (s?: SheetDef) => (s?.frame ? `${s.frame.join('x')}${s.spacing ? ` 隙間${s.spacing}` : ''}${s.margin ? ` 余白${s.margin}` : ''}` : undefined);
+  if (grid(a) !== grid(b)) out.push({ path: at('grid'), from: grid(a), to: grid(b) ?? 'removed' });
+  const fa = new Map((a?.frames ?? []).map((f, i) => [f.name, { f, i }]));
+  const fb = new Map((b.frames ?? []).map((f, i) => [f.name, { f, i }]));
+  for (const [name, { f }] of fb) {
+    const old = fa.get(name)?.f;
+    if (!old) { out.push({ path: at(name), to: 'added' }); continue; }
+    if (JSON.stringify(old.rect) !== JSON.stringify(f.rect)) out.push({ path: at(`${name}.rect`), from: short(old.rect), to: short(f.rect) });
+    if (JSON.stringify(old.pivot) !== JSON.stringify(f.pivot)) out.push({ path: at(`${name}.pivot`), from: short(old.pivot), to: short(f.pivot) ?? 'removed' });
+  }
+  for (const [name, { f }] of fa) if (!fb.has(name)) out.push({ path: at(name), from: short(f.rect), to: 'removed' });
+  const order = (s?: SheetDef) => (s?.frames ?? []).map((f) => f.name).filter((n) => fa.has(n) && fb.has(n)).join('\u0000');
+  if (a?.frames && b.frames && order(a) !== order(b)) out.push({ path: at('order'), from: '並び', to: '並べ替え' });
+  for (const name of new Set([...Object.keys(a?.clips ?? {}), ...Object.keys(b.clips ?? {})])) {
+    const ca = a?.clips?.[name], cb = b.clips?.[name];
+    if (!ca) { out.push({ path: at(`clip:${name}`), to: 'added' }); continue; }
+    if (!cb) { out.push({ path: at(`clip:${name}`), from: ca, to: 'removed' }); continue; }
+    for (const k of ['frames', 'fps', 'loop'] as const) {
+      if (JSON.stringify(ca[k]) !== JSON.stringify(cb[k])) out.push({ path: at(`clip:${name}.${k}`), from: short(ca[k]), to: short(cb[k]) });
+    }
+  }
+  return out;
 }
 
 /** 値を文字列から推測して変換する（CLIの set 用）。 */
@@ -236,5 +430,6 @@ export function diffDocs(before: Docs, after: Docs): Change[] {
   for (const name of new Set([...before.prefabs.keys(), ...after.prefabs.keys()])) {
     diffHolder(`@${name}`, before.prefabs.get(name), after.prefabs.get(name));
   }
+  for (const image of new Set([...before.sheets.keys(), ...after.sheets.keys()])) out.push(...diffSheet(image, before.sheets.get(image), after.sheets.get(image)));
   return out;
 }

@@ -117,7 +117,9 @@ async function handleChanges(paths: string[]): Promise<void> {
   }
   if (!fresh.length) return;
   const code = fresh.some((p) => p.endsWith('.ts') || p === 'ages.project.json');
-  const docs = fresh.some((p) => /^(scenes|prefabs)\/.+\.json$/.test(p));
+  // 画像の切り方（.sheet.json）もシーン・プレハブと同じ扱い（外からの編集を記録し、ロックを戻す）
+  const docs = fresh.some((p) => /^(scenes|prefabs)\/.+\.json$/.test(p) || p.endsWith('.sheet.json'));
+  const assets = fresh.some((p) => /\.(png|jpe?g|webp|gif|wav|mp3|ogg|m4a|ttf|otf|woff2?)$/i.test(p));
   if (code) {
     version++;
     await startWorker();
@@ -128,6 +130,7 @@ async function handleChanges(paths: string[]): Promise<void> {
     broadcast({ type: 'docs', by: 'external', changes: r.changes, lockReport: r.lockReport });
     if (r.lockReport.length) console.log(r.lockReport.map((l) => '🔒 ' + l).join('\n'));
   } else {
+    if (assets) await call('recheckLocks'); // アセットとシートを読み直す（reload）
     broadcast({ type: 'files', paths: fresh });
   }
 }
@@ -172,15 +175,15 @@ const human = (req: http.IncomingMessage, win: string) => ({
   win,
 });
 
-async function listFiles(dir = projectDir, base = ''): Promise<{ path: string; size: number }[]> {
-  const out: { path: string; size: number }[] = [];
+async function listFiles(dir = projectDir, base = ''): Promise<{ path: string; size: number; mtime: number }[]> {
+  const out: { path: string; size: number; mtime: number }[] = [];
   for (const name of (await readdir(dir)).sort()) {
     if (name === '.git' || name === 'node_modules' || name === '.ages') continue;
     const abs = join(dir, name);
     const rel = base ? `${base}/${name}` : name;
     const s = await stat(abs);
     if (s.isDirectory()) out.push(...(await listFiles(abs, rel)));
-    else out.push({ path: rel, size: s.size });
+    else out.push({ path: rel, size: s.size, mtime: Math.round(s.mtimeMs) });
   }
   return out;
 }
@@ -206,8 +209,8 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
 
   if (p === '/' || p === '/index.html') return serveFile(res, join(EDITOR_DIR, 'index.html'));
   if (p.startsWith('/editor/')) return serveFile(res, inside(EDITOR_DIR, p.slice('/editor/'.length)));
-  // エンジン本体（src/core, src/render, src/index.ts）はルートに置く。エディタのコードの相対 import がそのまま通る
-  if (/^\/(core|render)\//.test(p) || p === '/index.ts') return serveFile(res, inside(SRC_DIR, p.slice(1)));
+  // エンジン本体（src/core, src/std, src/render, src/index.ts）はルートに置く。エディタのコードの相対 import がそのまま通る
+  if (/^\/(core|std|render)\//.test(p) || p === '/index.ts') return serveFile(res, inside(SRC_DIR, p.slice(1)));
   const proj = p.match(/^\/project@\d+\/(.*)$/);
   if (proj) return serveFile(res, inside(projectDir, proj[1]));
 
@@ -234,8 +237,8 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
     return json(res, { ok: true });
   }
   if (m === 'POST' && (p === '/api/lock' || p === '/api/unlock')) {
-    const { paths, note } = JSON.parse((await body(req)).toString('utf8'));
-    await call(p === '/api/lock' ? 'lock' : 'unlock', paths, human(req, 'inspector'), note);
+    const { paths, note, win } = JSON.parse((await body(req)).toString('utf8'));
+    await call(p === '/api/lock' ? 'lock' : 'unlock', paths, human(req, win ?? 'inspector'), note);
     broadcast({ type: 'locks' });
     return json(res, { ok: true });
   }
@@ -249,7 +252,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
       await writeFile(abs, text);
       known.set(abs, text);
       const who = human(req, 'text');
-      if (/^(scenes|prefabs)\/.+\.json$/.test(rel)) {
+      if (/^(scenes|prefabs)\/.+\.json$/.test(rel) || rel.endsWith('.sheet.json')) {
         const r = await call('humanTextEdit', who);
         broadcast({ type: 'docs', by: who.who, changes: r.changes });
       } else if (rel.endsWith('.ts') || rel === 'ages.project.json') {
