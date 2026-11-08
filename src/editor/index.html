@@ -71,7 +71,7 @@
   .lockbtn.on { color: var(--lock); }
   .game-wrap { flex: 1; display: flex; align-items: center; justify-content: center; background: #0e0f13; min-height: 0; position: relative; }
   .game-wrap canvas { image-rendering: pixelated; box-shadow: 0 0 0 1px var(--line); max-width: 100%; max-height: 100%; }
-  .game-hud { position: absolute; left: 8px; top: 6px; font: var(--mono); color: var(--dim); pointer-events: none; }
+  .game-hud { padding: 3px 8px; font: var(--mono); color: var(--dim); border-bottom: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
   .toolbar { display: flex; gap: 6px; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--line); }
   textarea.code { flex: 1; width: 100%; resize: none; border: 0; border-radius: 0; font: var(--mono); padding: 8px; tab-size: 2; }
   pre { font: var(--mono); margin: 0; white-space: pre-wrap; }
@@ -83,6 +83,11 @@
   .toast { background: var(--panel2); border: 1px solid var(--line); border-left: 3px solid var(--accent); padding: 8px 12px; border-radius: 4px; max-width: 440px; box-shadow: 0 4px 16px #0006; white-space: pre-wrap; }
   .toast.bad { border-left-color: var(--bad); }
   .toast.lock { border-left-color: var(--lock); }
+  .asset-thumb { width: 28px; height: 28px; object-fit: contain; image-rendering: pixelated; background: #0006; border: 1px solid var(--line); border-radius: 3px; flex: none; cursor: pointer; }
+  .frame-grid { image-rendering: pixelated; background-color: #0008 !important; }
+  .frame-cell { position: absolute; padding: 0; margin: 0; border: 1px solid #fff2; background: transparent; border-radius: 0; cursor: pointer; }
+  .frame-cell:hover { border-color: #fff; background: #fff2; }
+  .frame-cell.on { border: 2px solid #ffb02e; background: #ffb02e33 !important; }
   .modal-bg { position: fixed; inset: 0; background: #0008; display: flex; align-items: center; justify-content: center; z-index: 20; }
   .modal { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px; min-width: 380px; max-width: 640px; max-height: 80vh; overflow: auto; }
   .modal h3 { margin: 0 0 10px; font-size: 15px; }

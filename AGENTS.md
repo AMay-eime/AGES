@@ -46,6 +46,12 @@ AGESに足りない機能（画像・音・物理など。docs/PLAN.md の段階
 - フィールドには `desc` と、意味のある `min` / `max` を必ず付ける（インスペクタと検証に使われる）
 - 実行中だけ変わる値（クールダウンなど）は desc に「自動で変化」と書く
 
+## 標準の部品と画像
+
+- Transform / Sprite / Animator / Shape / Text は標準で用意されている。game/ で作り直さない。中身は `ages schema <dir> Sprite`
+- 画像はプロジェクト内のパスで指定する（`Sprite.image: "assets/x.png"`）。コマが並んだ画像は隣に `x.sheet.json`（`{"frame":[w,h],"clips":{...}}`）を置き、`Sprite.frame` か `Animator.clip` で選ぶ
+- 何コマあるか・どんな動きがあるかは `ages map <dir>` のアセットの欄に出る。画像を開いて確かめない
+
 ## エディタウインドウ
 
 プロジェクト独自の調整画面は `editor/<名前>.window.ts` に `defineWindow` で書き、`ages.project.json` の `editorWindows` に追加する。例: `examples/shooter/editor/wave-tuner.window.ts`

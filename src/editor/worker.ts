@@ -22,6 +22,8 @@ async function state() {
     prefabs: Object.fromEntries(project.docs.prefabs),
     touched: await readTouched(project.dir),
     locks: await project.effectiveLocks(),
+    sheets: Object.fromEntries(project.registry.sheets),
+    assets: project.assets,
     issues: project.validate(),
     lockReport: project.lockReport,
     integrity: { ok: project.integrity.ok, reason: project.integrity.reason, diff: project.lockDiff(), hasBackup: !!project.integrity.backup },

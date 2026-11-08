@@ -19,7 +19,9 @@ export interface EditorState {
   lockReport: string[];
   integrity: { ok: boolean; reason?: string; diff: { added: string[]; removed: string[]; changed: string[] }; hasBackup: boolean };
   version: number;
-  files: { path: string; size: number }[];
+  files: { path: string; size: number; mtime: number }[];
+  sheets: Record<string, import('../core/sheet.ts').SheetDef>;
+  assets: { path: string; kind: 'image' | 'sound' | 'font'; bytes: number; w?: number; h?: number }[];
   error?: string;
 }
 
@@ -92,7 +94,10 @@ export class App {
         toast(`ゲームコードを読み込めません: ${(e as Error).message}`, 'bad', 8000);
       }
     }
-    if (this.registry) this.registry.prefabs = new Map(Object.entries(s.prefabs));
+    if (this.registry) {
+      this.registry.prefabs = new Map(Object.entries(s.prefabs));
+      this.registry.sheets = new Map(Object.entries(s.sheets ?? {}));
+    }
     if (!this.scene || !s.scenes[this.scene]) this.scene = s.config.startScene in s.scenes ? s.config.startScene : Object.keys(s.scenes)[0] ?? '';
     this.rebuildPreview();
     this.emit('change');
@@ -137,6 +142,12 @@ export class App {
     }
     this.sel = sel;
     this.emit('select');
+  }
+
+  /** アセットを読み込むURL（ファイルが変われば変わる） */
+  assetUrl(path: string): string {
+    const f = this.state.files.find((x) => x.path === path);
+    return `/project@${this.state.version}/${path.split('/').map(encodeURIComponent).join('/')}?m=${f?.mtime ?? 0}`;
   }
 
   /** いま描くべきワールド */
