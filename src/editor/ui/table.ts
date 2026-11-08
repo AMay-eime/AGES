@@ -12,7 +12,7 @@ import { h, clear, toast, modal, time } from './dom.ts';
 import { isNested, nestedWidget, toOp, valueSummary, widget, type NestedOp } from './inspector.ts';
 import type { Panel } from './layout.ts';
 
-const SIMPLE = new Set(['number', 'int', 'string', 'enum', 'bool', 'color', 'row', 'prefab', 'asset', 'frame', 'ref', 'input', 'scene']);
+const SIMPLE = new Set(['number', 'int', 'string', 'enum', 'bool', 'color', 'row', 'prefab', 'asset', 'frame', 'ref', 'input', 'scene', 'ease']);
 
 export function tablePanel(app: App): Panel & { open(name: string, row?: string): void } {
   const el = h('div', { class: 'table-ed' });

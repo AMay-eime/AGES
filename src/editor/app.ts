@@ -262,6 +262,8 @@ export class App {
       this.audio.resume();
       this.audio.setBuses(game.audioBuses());
       game.audioListeners.push((cmd) => this.audio.handle(cmd));
+      // パーティクルを出す命令は、ゲームの画面（描く側）へ
+      game.particleListeners.push((cmd) => this.emit('particles', cmd));
       const play: PlayState = { game, paused: false, edits: new Map(), recorder: record ? new InputRecorder() : undefined, from: this.scene };
       this.play = play;
       // シーンが切り替わったら、エディタもそのシーンを見せ、次のシーンの画像・音を読み込む

@@ -352,6 +352,8 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
   out.push(`events: ${counts || 'なし'}`);
   if (g.sceneLog.length > 1) out.push(`scenes: ${g.sceneLog.map((x) => `${x.name}@${x.frame}`).join(' → ')}${g.transition ? `（${g.transition.phase === 'out' ? '消えていく途中' : '出てくる途中'}）` : ''}`);
   if (g.soundCounts.size) out.push(`sounds: ${[...g.soundCounts.entries()].map(([k, v]) => `♪${k}×${v}`).join(' ')}`);
+  if (g.particleCounts.size) out.push(`particles: ${[...g.particleCounts.entries()].map(([k, v]) => `✦${k}×${v}`).join(' ')}`);
+  if (g.tweens.length) out.push(`tweens: 動いている ${g.tweens.length}（${[...new Set(g.tweens.map((t) => `${t.comp}.${t.field}`))].join(' ')}）`);
   for (const w of g.warnings) out.push(`⚠ ${w}`);
   const byName = new Map<string, number>();
   for (const e of g.world.entities.values()) byName.set(e.prefab ? '@' + e.prefab : e.id, (byName.get(e.prefab ? '@' + e.prefab : e.id) ?? 0) + 1);

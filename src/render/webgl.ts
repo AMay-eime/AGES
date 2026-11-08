@@ -6,6 +6,7 @@ import type { World, Entity } from '../core/world.ts';
 import type { SheetDef } from '../core/sheet.ts';
 import { camerasOf, worldToScreen, type CameraView } from '../core/camera.ts';
 import { collectDrawables, cornersOf, pointInCorners, spriteGeometry, type Corners } from './geom.ts';
+import { ParticleSim } from './particles.ts';
 
 export interface RendererOptions {
   /** アセットの場所（assets/ship.png）から読み込むURLを作る */
@@ -63,6 +64,12 @@ export interface DrawOptions {
   view?: CameraView;
   /** 画面全体を覆う色（シーンの切り替えのフェード。Game.overlay() の値） */
   overlay?: { color: string; alpha: number } | null;
+  /**
+   * パーティクルを動かす。dt は進める秒数（一時停止中は 0）。
+   * preview は編集中（ゲームを動かしていない）に試しに粒を出す物（エディタで選んだ物）。渡さなければ再生中として rate の分も出す。
+   * particles を渡さなければ粒は動かさない（出す命令の粒は止まったまま描く）
+   */
+  particles?: { dt: number; preview?: string[] };
 }
 
 export class Renderer {
@@ -152,7 +159,8 @@ export class Renderer {
     gl.uniform2f(gl.getUniformLocation(this.prog, 'u_res'), W, H);
     this.shapes = [];
     this.cams = o.view ? [o.view] : camerasOf(world, W, H, o.design?.width ?? W, o.design?.height ?? H);
-    const all = collectDrawables(world);
+    if (o.particles) this.particles.update(world, o.particles.dt, o.particles.preview);
+    const all = collectDrawables(world, this.particles.orphans());
     gl.enable(gl.SCISSOR_TEST);
     this.cams.forEach((cam, i) => {
       this.cam = cam;
@@ -168,6 +176,7 @@ export class Renderer {
         if (d.layer < cam.layerMin || d.layer > cam.layerMax) continue;
         if (d.kind === 'sprite') this.sprite(d.e);
         else if (d.kind === 'shape') this.shape(d.e);
+        else if (d.kind === 'particles') this.drawParticles(d.e);
         else this.text(d.e);
       }
       this.flush();
@@ -198,7 +207,7 @@ export class Renderer {
   }
 
   /** ワールドの4つの角を、いまのカメラで描く先の座標にする。範囲の外なら null（描かない） */
-  private place(id: string, q: Corners): Corners | null {
+  private place(id: string, q: Corners, pick = true): Corners | null {
     const c = this.cam;
     const out = [0, 0, 0, 0, 0, 0, 0, 0] as Corners;
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -208,7 +217,7 @@ export class Renderer {
       x0 = Math.min(x0, sx); y0 = Math.min(y0, sy); x1 = Math.max(x1, sx); y1 = Math.max(y1, sy);
     }
     if (x1 < c.vx || y1 < c.vy || x0 > c.vx + c.vw || y0 > c.vy + c.vh) return null;
-    this.shapes.push({ id, corners: out, cam: this.camIndex });
+    if (pick) this.shapes.push({ id, corners: out, cam: this.camIndex });
     return out;
   }
 
@@ -240,6 +249,33 @@ export class Renderer {
     if (s.flipY) [v0, v1] = [v1, v0];
     const q = this.place(e.id, cornersOf(t, w, h, ax, ay));
     if (q) this.quad(tex, s.blend ?? 'normal', q, u0, v0, u1, v1, s.tint ?? '#ffffff', s.alpha ?? 1);
+  }
+
+  /** パーティクル（描く側で動かす）。粒は選べない */
+  readonly particles = new ParticleSim();
+
+  private drawParticles(e: Entity): void {
+    const em = this.particles.emitters.get(e.id);
+    if (!em?.parts.length) return;
+    const p = em.ghost.c.Particles, tr = em.ghost.c.Transform;
+    let tex: Tex = p.shape === 'square' ? this.white : this.circle;
+    let u0 = 0, v0 = 0, u1 = 1, v1 = 1, aspect = 1;
+    if (p.shape === 'image' && p.image) {
+      const tx = this.texture(p.image);
+      if (!tx.ready) return;
+      const g = spriteGeometry({ frame: p.frame }, this.opts.sheets.get(p.image), tx.w, tx.h);
+      if (!g) return;
+      tex = tx;
+      u0 = g.src.x / tx.w; v0 = g.src.y / tx.h; u1 = (g.src.x + g.src.w) / tx.w; v1 = (g.src.y + g.src.h) / tx.h;
+      aspect = g.h / g.w;
+    }
+    for (const q of em.parts) {
+      const look = ParticleSim.look(p, q);
+      if (look.size <= 0 || look.alpha <= 0) continue;
+      const x = p.world ? q.x : tr.x + q.x, y = p.world ? q.y : tr.y + q.y;
+      const corners = this.place(e.id, cornersOf({ x, y, rot: q.rot }, look.size, look.size * aspect, 0.5, 0.5), false);
+      if (corners) this.quad(tex, p.blend ?? 'add', corners, u0, v0, u1, v1, look.color, look.alpha);
+    }
   }
 
   private shape(e: Entity): void {

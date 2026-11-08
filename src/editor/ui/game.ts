@@ -10,6 +10,7 @@ import { h, toast } from './dom.ts';
 import type { Panel } from './layout.ts';
 import { ASSET_MIME } from './assets.ts';
 import { baseOf, extOf, kindOf } from '../../core/assets.ts';
+import type { ParticleCmd } from '../../core/particles.ts';
 
 const SCREENS: [string, number | null][] = [['パネルに合わせる', null], ['16:9', 16 / 9], ['4:3', 4 / 3], ['1:1', 1], ['9:16（スマホ縦）', 9 / 16], ['9:19.5（細長いスマホ縦）', 9 / 19.5], ['19.5:9（細長いスマホ横）', 19.5 / 9]];
 const FIT_LABEL: Record<FitMode, string> = { contain: '全体を入れる', cover: 'はみ出しを切る', stretch: '伸ばす', expand: '広い分だけ周りも見せる', pixel: '整数倍だけ' };
@@ -318,6 +319,11 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
   // ---------- ループ ----------
   let lastT = performance.now();
   let acc = 0;
+  let particleGame: unknown;
+  app.on('particles', (cmd) => {
+    const c = cmd as ParticleCmd;
+    if (app.play && renderer) renderer.particles.burst(app.play.game.world, c.id, c.count);
+  });
   const loop = (now: number) => {
     requestAnimationFrame(loop);
     const dt = Math.min(0.25, (now - lastT) / 1000);
@@ -338,7 +344,11 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     const d = design();
     // シーンの切り替えのフェードは、カメラの視点でだけ画面を覆う（自由な視点では様子を見られるように覆わない）
     const overlay = p && viewMode === 'camera' ? (p.loading ? { color: p.game.transition?.color ?? '#000000', alpha: p.game.transition ? 1 : 0 } : p.game.overlay()) : null;
-    renderer.draw(w, { background: app.state.config.view.background, design: d, view: viewMode === 'free' ? free : undefined, overlay });
+    // パーティクル: 再生中は実時間で動かす（一時停止中は止める）。編集中は選んだ物だけ試しに出す
+    if (p?.game !== particleGame) { renderer.particles.clear(); particleGame = p?.game; }
+    const selId = app.sel?.kind === 'scene' ? app.sel.id : '';
+    const particles = p ? { dt: p.paused || p.loading ? 0 : dt } : { dt, preview: selId && w.get(selId)?.c.Particles ? [selId] : [] };
+    renderer.draw(w, { background: app.state.config.view.background, design: d, view: viewMode === 'free' ? free : undefined, overlay, particles });
     drawOverlay(w);
     const cams = renderer.cams.filter((c) => c.id).length;
     const where = viewMode === 'free' ? `自由な視点 ${Math.round(free.zoom * 100)}%（ホイールで拡大・右ドラッグで移動）` : cams ? `カメラ ${cams}台` : '';

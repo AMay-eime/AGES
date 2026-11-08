@@ -7,6 +7,7 @@ import { formatSub, getIn, setIn } from '../../core/docs.ts';
 import type { Op } from '../../core/patch.ts';
 import { h, clear, time, modal, toast } from './dom.ts';
 import { findFrame, frameLabel, listFrames, type FrameRef, type SheetDef } from '../../core/sheet.ts';
+import { EASES, EASE_NAMES, type EaseName } from '../../core/ease.ts';
 import { buttonLabel } from '../../core/input.ts';
 import { captureNext } from '../../input/devices.ts';
 import { ASSET_MIME } from './assets.ts';
@@ -152,8 +153,8 @@ export function inspectorPanel(app: App): Panel {
 export interface Ctx { comp: string; field: string; holder: Record<string, Record<string, unknown>> }
 
 /** 同じ物の Sprite の画像に付いているスプライトシート */
-function sheetOfHolder(app: App, holder: Ctx['holder']): { image: string; sheet: SheetDef; w: number; h: number } | null {
-  const image = holder.Sprite?.image;
+function sheetOfHolder(app: App, holder: Ctx['holder'], comp = 'Sprite'): { image: string; sheet: SheetDef; w: number; h: number } | null {
+  const image = holder[comp]?.image;
   if (typeof image !== 'string' || !image) return null;
   const sheet = app.registry.sheets.get(image);
   const info = app.state.assets.find((a) => a.path === image);
@@ -163,8 +164,8 @@ function sheetOfHolder(app: App, holder: Ctx['holder']): { image: string; sheet:
 
 export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, final: boolean) => void, ctx: Ctx): { el: HTMLElement; set(v: unknown): void } {
   // 標準の Sprite.frame はシートの絵から選べる。Animator.clip はシートの動き一覧から選べる
-  if (ctx.comp === 'Sprite' && ctx.field === 'frame') {
-    const s = sheetOfHolder(app, ctx.holder);
+  if ((ctx.comp === 'Sprite' || ctx.comp === 'Particles') && ctx.field === 'frame') {
+    const s = sheetOfHolder(app, ctx.holder, ctx.comp);
     if (s) return frameWidget(app, s, value as FrameRef, commit);
   }
   if (ctx.comp === 'Animator' && ctx.field === 'clip') {
@@ -224,6 +225,33 @@ export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, 
       t.addEventListener('change', () => commit(t.value, true));
       wrap.append(c, t);
       return { el: wrap, set: (v) => { t.value = String(v); c.value = String(v).slice(0, 7); } };
+    }
+    case 'ease': {
+      // 動き方の名前を選ぶ。横に形（0→1 の進み方）を小さく描く
+      const sel = h('select', {}, EASE_NAMES.map((o) => h('option', { value: o, selected: o === value }, o))) as HTMLSelectElement;
+      if (!EASE_NAMES.includes(String(value) as EaseName)) sel.prepend(h('option', { value: String(value), selected: true }, `${String(value)}（ありません）`));
+      const cv = h('canvas', { width: 48, height: 32, class: 'ease-curve', title: '進み方（横: 時間、縦: 値）' }) as HTMLCanvasElement;
+      const draw = (name: string) => {
+        const g = cv.getContext('2d');
+        const fn = EASES[name as EaseName];
+        if (!g) return;
+        g.clearRect(0, 0, cv.width, cv.height);
+        g.strokeStyle = 'rgba(255,255,255,0.18)';
+        g.strokeRect(0.5, 6.5, cv.width - 1, cv.height - 13);
+        if (!fn) return;
+        g.strokeStyle = '#ffb02e';
+        g.lineWidth = 1.5;
+        g.beginPath();
+        for (let i = 0; i <= 40; i++) {
+          const k = i / 40, x = 1 + k * (cv.width - 2), y = cv.height - 7 - fn(k) * (cv.height - 14);
+          if (i) g.lineTo(x, y); else g.moveTo(x, y);
+        }
+        g.stroke();
+      };
+      sel.addEventListener('change', () => { draw(sel.value); commit(sel.value, true); });
+      draw(String(value));
+      wrap.append(sel, cv);
+      return { el: wrap, set: (v) => { sel.value = String(v); draw(String(v)); } };
     }
     case 'vec2': {
       const [x, y] = (value as [number, number]) ?? [0, 0];

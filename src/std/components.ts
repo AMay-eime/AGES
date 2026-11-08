@@ -134,4 +134,39 @@ export const AudioBus = defineComponent({
   },
 });
 
-export const STD_COMPONENTS = [Transform, Sprite, Animator, Shape, Text, Camera, Sound, AudioBus];
+export const Particles = defineComponent({
+  name: 'Particles',
+  desc: 'パーティクル（標準）。粒を出して動かすのは描く側（ゲームの結果には関わらない）。ctx.particles.burst(物) で一度に出す',
+  fields: {
+    burst: { type: 'int', default: 0, min: 0, max: 2000, desc: '現れたときに一度に出す数' },
+    rate: { type: 'number', default: 0, min: 0, max: 2000, step: 1, desc: '1秒に出す数（出し続ける）' },
+    playing: { type: 'bool', default: true, desc: '出し続けるか（ctx.particles.play / stop で変わる）' },
+    duration: { type: 'number', default: -1, min: -1, max: 600, step: 0.1, desc: '出し続ける秒数（-1 で止めるまで）' },
+    lifetime: { type: 'number', default: 0.6, min: 0.01, max: 30, step: 0.05, desc: '粒が消えるまでの秒数' },
+    lifetimeJitter: { type: 'number', default: 0.3, min: 0, max: 1, step: 0.05, desc: '消えるまでの秒数のばらつき（割合）' },
+    speed: { type: 'number', default: 120, min: 0, max: 5000, desc: '出たときの速さ(px/秒)' },
+    speedJitter: { type: 'number', default: 0.4, min: 0, max: 1, step: 0.05, desc: '速さのばらつき（割合）' },
+    angle: { type: 'number', default: -90, min: -360, max: 360, desc: '出る向き(度。-90 が上、0 が右)' },
+    spread: { type: 'number', default: 360, min: 0, max: 360, desc: '向きの広がり(度。360 で全方向)' },
+    radius: { type: 'number', default: 0, min: 0, max: 2000, desc: '出る場所の広がり(px。物の位置を中心にした円)' },
+    gravity: { type: 'vec2', default: [0, 0], desc: '重力(px/秒²。[0, 300] で下へ落ちる)' },
+    drag: { type: 'number', default: 0, min: 0, max: 20, step: 0.1, desc: '空気の抵抗（大きいほど早く止まる）' },
+    sizeStart: { type: 'number', default: 6, min: 0, max: 500, desc: '出たときの大きさ(px)' },
+    sizeEnd: { type: 'number', default: 0, min: 0, max: 500, desc: '消えるときの大きさ(px)' },
+    colorStart: { type: 'color', default: '#ffffff', desc: '出たときの色' },
+    colorEnd: { type: 'color', default: '#ffffff', desc: '消えるときの色' },
+    alphaStart: { type: 'number', default: 1, min: 0, max: 1, step: 0.05, desc: '出たときの不透明度' },
+    alphaEnd: { type: 'number', default: 0, min: 0, max: 1, step: 0.05, desc: '消えるときの不透明度' },
+    shape: { type: 'enum', options: ['circle', 'square', 'image'], default: 'circle', desc: '粒の形（image は image の画像）' },
+    image: { type: 'asset', kind: 'image', default: '', desc: '粒の画像（shape が image のとき）' },
+    frame: { type: 'frame', default: 0, desc: '粒の画像のコマ' },
+    spin: { type: 'number', default: 0, min: -3600, max: 3600, desc: '回る速さ(度/秒)' },
+    blend: { type: 'enum', options: ['normal', 'add', 'multiply', 'screen'], default: 'add', desc: '重ね方。add=光る（加算）' },
+    world: { type: 'bool', default: true, desc: '出た粒はその場に残る（false なら物と一緒に動く）' },
+    max: { type: 'int', default: 500, min: 1, max: 20000, desc: '同時に出ている粒の上限' },
+    autoDestroy: { type: 'bool', default: false, desc: '出し終わって粒が消えたら、この物を消す（爆発の後片付けなど）' },
+    ...drawOrder,
+  },
+});
+
+export const STD_COMPONENTS = [Transform, Sprite, Animator, Shape, Text, Camera, Sound, AudioBus, Particles];

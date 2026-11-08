@@ -2,7 +2,7 @@
 import type { World, Entity } from '../core/world.ts';
 import { findFrame, type FrameRef, type SheetDef } from '../core/sheet.ts';
 
-export type DrawKind = 'sprite' | 'shape' | 'text';
+export type DrawKind = 'sprite' | 'shape' | 'text' | 'particles';
 
 export interface Drawable {
   e: Entity;
@@ -14,13 +14,13 @@ export interface Drawable {
 }
 
 /** 描くものを、奥から手前の順に並べる */
-export function collectDrawables(world: World): Drawable[] {
+export function collectDrawables(world: World, extra: Entity[] = []): Drawable[] {
   const out: Drawable[] = [];
   let idx = 0;
-  for (const e of world.entities.values()) {
+  for (const e of [...world.entities.values(), ...extra]) {
     if (!e.c.Transform) continue;
-    for (const kind of ['sprite', 'shape', 'text'] as const) {
-      const c = e.c[kind === 'sprite' ? 'Sprite' : kind === 'shape' ? 'Shape' : 'Text'];
+    for (const kind of ['sprite', 'shape', 'text', 'particles'] as const) {
+      const c = e.c[kind === 'sprite' ? 'Sprite' : kind === 'shape' ? 'Shape' : kind === 'text' ? 'Text' : 'Particles'];
       if (!c || c.visible === false) continue;
       out.push({ e, kind, layer: c.layer ?? 0, order: c.order ?? 0, idx: idx++ });
     }

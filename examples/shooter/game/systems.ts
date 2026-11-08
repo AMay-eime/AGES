@@ -91,21 +91,28 @@ export const combat = defineSystem({
   desc: '弾と敵、敵と自機の当たりを処理する',
   reads: ['Bullet', 'Enemy', 'Player', 'Hitbox'],
   writes: ['Health', 'Score', 'Camera'],
-  update({ world, destroy, emit, spawn, shake, sound }) {
+  update({ world, destroy, emit, spawn, shake, sound, tween }) {
     const isAlive = (id: string) => world.isAlive(id);
+    // 爆発のプレハブには Particles が付いていて、出たときに火花を出す（標準の std.particles）
     const boom = (e: Entity) => spawn('explosion', { Transform: { x: e.c.Transform.x, y: e.c.Transform.y } });
     const enemies = world.query('Enemy', 'Health', 'Transform', 'Hitbox');
-    const score = world.query('Score')[0]?.c.Score;
+    const scorer = world.query('Score')[0];
+    const score = scorer?.c.Score;
     for (const b of world.query('Bullet', 'Transform', 'Hitbox')) {
       if (b.c.Bullet.team !== 'player') continue;
       for (const en of enemies) {
         if (!isAlive(en.id) || !overlap(b, en)) continue;
         destroy(b.id);
         en.c.Health.hp -= b.c.Bullet.damage;
+        // 手触りは表 $tweens の行（hitFlash・scorePop）で決める
+        if (en.c.Health.hp > 0) tween(en.id, { 'Sprite.alpha': 1 }, { preset: 'hitFlash', from: { 'Sprite.alpha': 0.25 } });
         if (en.c.Health.hp <= 0) {
           destroy(en.id);
           boom(en);
-          if (score) score.value += en.c.Enemy.score;
+          if (score) {
+            score.value += en.c.Enemy.score;
+            tween(scorer.id, { 'Transform.sx': 1, 'Transform.sy': 1 }, { preset: 'scorePop', from: { 'Transform.sx': 1.4, 'Transform.sy': 1.4 } });
+          }
           emit('enemyKilled');
           sound.play('se_explosion');
         }
