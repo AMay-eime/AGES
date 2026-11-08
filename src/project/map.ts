@@ -4,9 +4,10 @@ import { frameCount } from '../core/sheet.ts';
 import { assetRefs, baseOf, dirOf, isUnder } from '../core/assets.ts';
 import type { AssetKind } from '../core/schema.ts';
 import type { Project } from './project.ts';
+import type { WindowInfo } from './windows.ts';
 import type { LockMark, TouchMark } from './oplog.ts';
 
-export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, locks: Record<string, LockMark> = {}, code = new Map<string, string[]>()): string {
+export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, locks: Record<string, LockMark> = {}, code = new Map<string, string[]>(), windows: WindowInfo[] = []): string {
   const c = p.config;
   const out: string[] = [];
   out.push(`# ${c.name}  fps${c.fps} seed${c.seed} view${c.view.width}x${c.view.height} start:${c.startScene} code:${c.game}`);
@@ -56,7 +57,14 @@ export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, l
     out.push('## assets（画像は 幅x高さ、音は 秒。シートは 格子なら コマの大きさ×コマ数、自由なら コマ数と名前。使っている所は ages assets <dir> --refs <場所>）');
     out.push(...renderAssets(p, { touched, locks, code }));
   }
-  if (c.editorWindows?.length) out.push(`## editor windows\n${c.editorWindows.join(' ')}`);
+  if (c.editorWindows?.length) {
+    out.push('## editor windows（プロジェクト独自のエディタ。作る前にここを見て、近いものがあれば直す。変える値は edits に書いたものだけ）');
+    for (const w of windows.length ? windows : c.editorWindows.map((path) => ({ path }) as WindowInfo)) {
+      if (w.error) { out.push(`${w.path} ⚠ ${w.error}`); continue; }
+      const edits = w.edits ? (w.edits.length ? compactPaths(w.edits) : 'なし（見るだけ）') : '⚠ 宣言なし';
+      out.push(`${w.id ?? '?'}「${w.title ?? ''}」${w.desc ? ' ' + w.desc : ''} | 変える: ${edits} | ${w.path}`);
+    }
+  }
   out.push(`## 🔒ロック ${Object.keys(locks).length}件（AIは変更不可。理由があれば人に提案する） / ★人が調整 ${Object.keys(touched).length}件（変更前に人へ確認）`);
   return out.join('\n');
 }
@@ -119,4 +127,15 @@ export function renderAssets(p: Project, o: AssetListOptions = {}): string[] {
     out.push(line);
   }
   return out;
+}
+
+/** 住所の並びを短く（main#s.Spawner.a, main#s.Spawner.b → main#s.Spawner.{a,b}） */
+export function compactPaths(paths: string[]): string {
+  const groups = new Map<string, string[]>();
+  for (const p of paths) {
+    const i = p.lastIndexOf('.');
+    const [head, leaf] = i > 0 && !p.endsWith('.*') ? [p.slice(0, i), p.slice(i + 1)] : [p, ''];
+    groups.set(head, [...(groups.get(head) ?? []), leaf]);
+  }
+  return [...groups].map(([head, leaves]) => leaves.length === 1 ? (leaves[0] ? `${head}.${leaves[0]}` : head) : `${head}.{${leaves.filter(Boolean).join(',')}}`).join(' ');
 }

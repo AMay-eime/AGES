@@ -31,8 +31,17 @@ export interface EditorApi {
 }
 
 export interface EditorWindow {
+  /** 英数字・_・- （操作ログには window:<id> と残る） */
   id: string;
   title: string;
+  /** 何のためのウインドウか（1行。地図に出る。AI が同じものを作らないように） */
+  desc?: string;
+  /**
+   * このウインドウが変える値の住所（地図に出る）。書いたら、それ以外は変えられない。
+   * 例: 'main#spawner.Spawner.interval'、中をまとめて 'main#spawner.Spawner.*'、'@enemy.*'、'$enemies.*'
+   * ロックされた値は、ウインドウからは変えられない（人はインスペクタで変える）
+   */
+  edits?: string[];
   /** el に中身を作る。後片付けが必要なら関数を返す */
   mount(el: HTMLElement, api: EditorApi): void | (() => void);
 }

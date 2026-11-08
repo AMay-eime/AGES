@@ -14,6 +14,7 @@ import { appendLog, localTime, lockedHits, markTouched, moveTouched, readLocks a
 import { lockDiff, verifyLocks, type LockIntegrity } from './seal.ts';
 import { scanAssets, type AssetInfo } from './assets.ts';
 import { codeRefs, isUnder } from '../core/assets.ts';
+import { checkWindows, loadWindows, unlistedWindows, withinEdits, type WindowInfo } from './windows.ts';
 import { FIT_MODES } from '../core/camera.ts';
 import { KNOWN_AXES, KNOWN_BUTTONS } from '../core/input.ts';
 import { checkSheet, checkSheetImage, findFrame, frameCount, sheetPathOf, type SheetDef } from '../core/sheet.ts';
@@ -69,12 +70,52 @@ export class Project {
     this.registry.sheets = this.docs.sheets;
     this.registry.tableData = this.docs.tables;
     this.registry.images = imagesOf(scan.assets);
+    this.windowCache = null;
     this.integrity = await verifyLocks(this.dir);
     this.lockReport = await this.enforceLocks();
     if (!this.integrity.ok) {
       const d = this.lockDiff();
       const detail = [d.removed.length ? `消されたロック ${d.removed.length}件` : '', d.added.length ? `増えたロック ${d.added.length}件` : '', d.changed.length ? `値が変わったロック ${d.changed.length}件` : ''].filter(Boolean).join('・');
       this.lockReport.unshift(`⚠ ${this.integrity.reason}${detail ? `（${detail}）` : ''}。人がエディタで確認するまで、AIからの編集はすべて止めます。最後に封印されたロックは引き続き有効です`);
+    }
+  }
+
+  private windowCache: Promise<WindowInfo[]> | null = null;
+  /** プロジェクト独自のエディタウインドウの宣言（id・名前・説明・変える値） */
+  windows(): Promise<WindowInfo[]> {
+    hookAgesImport();
+    return (this.windowCache ??= loadWindows(this.dir, this.config.editorWindows ?? []));
+  }
+
+  /** ウインドウの宣言の問題と、登録し忘れたウインドウ */
+  async checkWindows(): Promise<string[]> {
+    const listed = this.config.editorWindows ?? [];
+    const errs = checkWindows(await this.windows(), (a) => this.addressProblem(a));
+    for (const p of await unlistedWindows(this.dir, listed)) errs.push(`${p}: ages.project.json の editorWindows に書いていないので、エディタに出ません`);
+    return errs;
+  }
+
+  /** 住所が指すものがあるか（ない理由を返す。あれば null） */
+  addressProblem(address: string): string | null {
+    if (address.startsWith('sheet:')) {
+      const img = address.slice('sheet:'.length).split('|')[0];
+      return this.docs.sheets.has(img) || this.assets.some((a) => a.path === img) ? null : `画像 ${img} がありません${suggest(img, this.assets.filter((a) => a.kind === 'image').map((a) => a.path))}`;
+    }
+    try {
+      const a = parseAddress(address);
+      if (a.kind === 'table') {
+        if (!this.registry.tables.has(a.doc)) return `表 ${a.doc} はありません${suggest(a.doc, [...this.registry.tables.keys()])}`;
+        if (a.entity && !this.docs.tables.get(a.doc)?.rows.some((r) => r.id === a.entity)) return `表 ${a.doc} に行 ${a.entity} はありません`;
+        if (a.field && !(a.field in this.registry.tables.get(a.doc)!.columns)) return `表 ${a.doc} に列 ${a.field} はありません${suggest(a.field, Object.keys(this.registry.tables.get(a.doc)!.columns))}`;
+        return null;
+      }
+      if (a.field) { getValue(this.docs, this.registry, address); return null; }
+      const holder = a.kind === 'prefab' ? this.docs.prefabs.get(a.doc) : this.docs.scenes.get(a.doc)?.entities.find((e) => e.id === a.entity);
+      if (!holder) return a.kind === 'prefab' ? `プレハブ ${a.doc} はありません${suggest(a.doc, [...this.docs.prefabs.keys()])}` : `シーン ${a.doc} に ${a.entity} はありません`;
+      if (a.component && !holder.components[a.component]) return `${address.split('.')[0]} に ${a.component} は付いていません${suggest(a.component, Object.keys(holder.components))}`;
+      return null;
+    } catch (e) {
+      return (e as Error).message;
     }
   }
 
@@ -364,6 +405,18 @@ export class Project {
         throw new Error(`🔒 ロックされた値は変更できません: ${hits.join(', ')}。この値は人が決めるものです。変えるべき理由があれば、ユーザーに提案してください`);
       }
     }
+    // 独自のウインドウ（AIが書いたコード）からの変更: ロックされた値は変えられない。edits に書いた値だけを変えられる
+    const viaWindow = actor.win?.startsWith('window:') ? actor.win.slice('window:'.length) : null;
+    let windowEdits: string[] | undefined;
+    if (viaWindow) {
+      const hits = ops.flatMap((op) => { const t = targetOf(op); return [...(t ? lockedHits(locks, t) : []), ...assetSheets(op).filter((k) => locks[k])]; });
+      if (hits.length) throw new Error(`🔒 ロックされた値は、ウインドウ ${viaWindow} からは変えられません: ${hits.join(', ')}。変えるならインスペクタで`);
+      windowEdits = (await this.windows()).find((w) => w.id === viaWindow)?.edits;
+      if (windowEdits) {
+        const outside = ops.map((op) => targetOf(op) ?? (op.op === 'addEntity' ? `${op.scene}#${op.entity.id}` : op.op === 'addComponent' || op.op === 'rename' ? op.target : op.op === 'addRow' || op.op === 'moveRow' ? `$${op.table}.${op.op === 'addRow' ? op.row.id : op.id}` : op.op)).filter((t) => !withinEdits(windowEdits!, t));
+        if (outside.length) throw new Error(`ウインドウ ${viaWindow} は、宣言（edits）にない値を変えようとしています: ${outside.join(', ')}。変えるなら ${viaWindow} の edits に足してください（地図に出ます）`);
+      }
+    }
     if (actor.kind === 'ai' && !opts.force) {
       const touched = await readTouched(this.dir);
       const hits: string[] = [];
@@ -419,7 +472,7 @@ export class Project {
       }
     }
     // 操作の結果として連動して変わる値（コマの名前の変更で書き換わる参照など）にも、ロックは効く
-    if (actor.kind === 'ai') {
+    if (actor.kind === 'ai' || viaWindow) {
       const hits = [...new Set(result.changes.flatMap((c) => lockedHits(locks, sheetRoot(c.path.replace(/\[\d+,\s*\d+\]$/, '')))))];
       if (hits.length) rollback(`🔒 この操作は、ロックされた値も変えてしまいます: ${hits.join(', ')}。この値は人が決めるものです。変えるべき理由があれば、ユーザーに提案してください`);
     }
