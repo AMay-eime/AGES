@@ -1,6 +1,9 @@
 // AGES の AI 向け CLI。出力はすべて短いテキスト（トークン節約）。
 // 後で MCP サーバーから同じ関数を呼べるよう、各コマンドは文字列を返す関数にしてある。
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile, readdir, mkdir, stat } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { join, resolve, relative, basename, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Project } from '../project/project.ts';
 import { renderMap } from '../project/map.ts';
 import { readCursor, readLocks, readLog, readTouched, summarize, writeCursor, type Actor } from '../project/oplog.ts';
@@ -11,7 +14,8 @@ import { GameError, type Game } from '../core/game.ts';
 
 const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [引数]
 
-  map    <dir>                       プロジェクトの地図（最初に読む）
+  init   <dir> [--name 名前]          新しいプロジェクトを作る（EDITOR-PLAN.md 付き。ゲームの企画を受けたら最初にこれ）
+  map    <dir>                       プロジェクトの地図（作業のたびに最初に読む）
   schema <dir> [Component ...]       コンポーネントの詳細（型・範囲・説明）
   get    <dir> <addr> [addr ...]     値を見る（例: main#player / main#player.Player.speed / @enemy）
   set    <dir> <addr> <value> [--force]  行列のセルは addr[行,列]（例 main#spawner.Spawner.formation[2,3] 1）
@@ -61,7 +65,61 @@ function compact(obj: Record<string, unknown>): string {
 
 export async function cmdMap(dir: string): Promise<string> {
   const p = await Project.load(dir);
-  return withLockReport(p, renderMap(p, await readTouched(p.dir), await readLocks(p.dir)));
+  const plan = await planWarning(p.dir);
+  return withLockReport(p, (plan ? plan + '\n' : '') + renderMap(p, await readTouched(p.dir), await readLocks(p.dir)));
+}
+
+/** エディタ計画書が未合意なら警告文を返す */
+export async function planWarning(dir: string): Promise<string> {
+  const text = await readFile(join(dir, 'EDITOR-PLAN.md'), 'utf8').catch(() => null);
+  if (text === null) return '⚠ EDITOR-PLAN.md がありません。ゲームを作る前に、必要なエディタを使用者と決めてください（AGENTS.md「ゲームの企画を受けたら」）';
+  if (!/-\s*\[x\]\s*使用者がこの計画を確認した/i.test(text)) return '⚠ EDITOR-PLAN.md がまだ合意されていません。使用者と計画を確認するまで、ゲームのコードは書かないでください';
+  return '';
+}
+
+const ENGINE_DIR = fileURLToPath(new URL('../..', import.meta.url));
+
+/** 新しいプロジェクトを作る。AIへの手順書とエディタ計画書のひな形も入れる。 */
+export async function cmdInit(dir: string, name?: string): Promise<string> {
+  const target = resolve(dir);
+  if (existsSync(join(target, 'ages.project.json'))) throw new Error(`${dir} にはすでに AGES のプロジェクトがあります`);
+  const projectName = name ?? basename(target);
+  if (!/^[\w.-]+$/.test(projectName)) throw new Error(`プロジェクト名 "${projectName}" には英数字・_・-・. だけが使えます（--name で指定できます）`);
+  // 共通の親フォルダがあれば相対パス、ドライブ直下まで離れていれば絶対パス（読みやすさのため）
+  const rel = (relative(target, ENGINE_DIR) || '.').split(sep).join('/');
+  const ups = rel.match(/\.\.\//g)?.length ?? 0;
+  const engine = ups >= target.split(sep).filter(Boolean).length ? ENGINE_DIR.replace(/[\\/]$/, '').split(sep).join('/') : rel;
+  const tpl = join(ENGINE_DIR, 'templates', 'new-project');
+  const created: string[] = [];
+  const copy = async (from: string, to: string) => {
+    for (const entry of await readdir(from)) {
+      const src = join(from, entry);
+      const outName = entry === 'gitignore' ? '.gitignore' : entry;
+      const dst = join(to, outName);
+      if ((await stat(src)).isDirectory()) {
+        await mkdir(dst, { recursive: true });
+        await copy(src, dst);
+      } else if (entry !== '.gitkeep') {
+        await mkdir(to, { recursive: true });
+        const text = (await readFile(src, 'utf8')).replaceAll('{{name}}', projectName);
+        await writeFile(dst, text);
+        created.push(relative(target, dst).split(sep).join('/'));
+      }
+    }
+  };
+  await copy(tpl, target);
+  // AIの手順書は AGES 本体の AGENTS.md をそのまま写す（プロジェクトだけを開いたAIも手順にたどり着けるように）
+  const agents = (await readFile(join(ENGINE_DIR, 'AGENTS.md'), 'utf8'))
+    .replace('`ages` は `node bin/ages.js`（`npm link` で `ages` コマンドになる）。', `\`ages\` は \`node ${engine}/bin/ages.js\`（AGES本体の場所: ${engine}。本体で \`npm link\` すれば \`ages\` だけで動く）。`)
+    .replaceAll('docs/PLAN.md', `${engine}/docs/PLAN.md`)
+    .replaceAll('`examples/', `\`${engine}/examples/`);
+  await writeFile(join(target, 'AGENTS.md'), agents);
+  created.push('AGENTS.md');
+  return [
+    `プロジェクト ${projectName} を作りました: ${dir}`,
+    ...created.sort().map((f) => `  ${f}`),
+    '次: EDITOR-PLAN.md の質問を使用者に確認し、必要なエディタを決める。合意するまでゲームのコードは書かない',
+  ].join('\n');
 }
 
 export async function cmdSchema(dir: string, names: string[]): Promise<string> {
@@ -229,6 +287,7 @@ async function main(argv: string[]): Promise<void> {
   const force = a.flags.force === true;
   let out: string;
   switch (cmd) {
+    case 'init': out = await cmdInit(dir, typeof a.flags.name === 'string' ? a.flags.name : undefined); break;
     case 'map': out = await cmdMap(dir); break;
     case 'schema': out = await cmdSchema(dir, a.pos.slice(1)); break;
     case 'get': out = await cmdGet(dir, a.pos.slice(1)); break;

@@ -147,3 +147,21 @@ test('行列: 人がセルを変えると行列全体に★が付き、AIは確�
   await p.apply([{ op: 'setCells', path: F, cells: [[2, 2, 1]] }], human);
   await assert.rejects(p.apply([{ op: 'setCells', path: F, cells: [[3, 3, 1]] }], ai), /人が調整した値/);
 });
+
+test('ages init: 手順書とエディタ計画書の入ったプロジェクトができ、そのまま読み込める', async () => {
+  const { cmdInit, planWarning } = await import('../src/cli/ages.ts');
+  const dir = join(await mkdtemp(join(tmpdir(), 'ages-init-')), 'newgame');
+  const out = await cmdInit(dir, 'newgame');
+  assert.match(out, /EDITOR-PLAN\.md/);
+  for (const f of ['AGENTS.md', 'CLAUDE.md', 'EDITOR-PLAN.md', '.gitignore', 'ages.project.json', 'game/index.ts', 'scenes/main.scene.json']) {
+    await readFile(join(dir, f), 'utf8');
+  }
+  assert.match(await readFile(join(dir, 'AGENTS.md'), 'utf8'), /ゲームの企画を受けたら/);
+  const p = await Project.load(dir);
+  assert.deepEqual(p.validate(), []);
+  assert.match(await planWarning(dir), /まだ合意されていません/);
+  const plan = join(dir, 'EDITOR-PLAN.md');
+  await writeFile(plan, (await readFile(plan, 'utf8')).replace('- [ ] 使用者がこの計画を確認した', '- [x] 使用者がこの計画を確認した'));
+  assert.equal(await planWarning(dir), '');
+  await assert.rejects(cmdInit(dir), /すでに/);
+});

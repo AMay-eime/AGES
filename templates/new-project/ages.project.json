@@ -1,0 +1,9 @@
+{
+  "name": "{{name}}",
+  "fps": 60,
+  "seed": 1,
+  "view": { "width": 480, "height": 640, "background": "#0b0d1a" },
+  "startScene": "main",
+  "game": "game/index.ts",
+  "editorWindows": []
+}
