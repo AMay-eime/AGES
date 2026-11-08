@@ -13,6 +13,8 @@ export type Field =
   | { type: 'prefab'; default: string; desc?: string }
   /** プロジェクトの中のファイル（例: assets/ships.png）。kind で種類を絞る。空文字はなし */
   | { type: 'asset'; kind: AssetKind; default: string; desc?: string }
+  /** スプライトシートのコマ。番号（0から）か名前。名前で指定すると、切り直してもずれない */
+  | { type: 'frame'; default: number | string; desc?: string }
   | MatrixField;
 
 export type AssetKind = 'image' | 'sound' | 'font';
@@ -99,6 +101,9 @@ export function checkValue(comp: string, key: string, f: Field, v: unknown): str
       const ok = ASSET_EXT[f.kind].some((e) => v.toLowerCase().endsWith(e));
       return ok ? null : `${at} は${f.kind === 'image' ? '画像' : f.kind === 'sound' ? '音' : 'フォント'}のファイル（${ASSET_EXT[f.kind].join(' ')}）が必要です。受け取った値: ${v}`;
     }
+    case 'frame':
+      if (typeof v === 'number') return Number.isInteger(v) && v >= 0 ? null : `${at} はコマの番号（0以上の整数）か名前が必要です。受け取った値: ${v}`;
+      return typeof v === 'string' && v !== '' ? null : `${at} はコマの番号（0以上の整数）か名前が必要です。受け取った値: ${JSON.stringify(v)}`;
     case 'matrix':
       return checkMatrix(at, f, v);
   }
@@ -166,6 +171,7 @@ export function brief(f: Field): string {
     case 'enum': return `${f.options.join('|')}=${f.default}`;
     case 'vec2': return `vec2=${JSON.stringify(f.default)}`;
     case 'asset': return `asset<${f.kind}>=${JSON.stringify(f.default)}`;
+    case 'frame': return `frame(番号か名前)=${JSON.stringify(f.default)}`;
     case 'matrix': {
       const size = f.rows !== undefined || f.cols !== undefined ? ` ${f.rows ?? '?'}x${f.cols ?? '?'}固定` : '';
       return `matrix<${f.cell ?? 'number'}${r(f.min, f.max)}>${size}=${matrixSize(f.default)}`;

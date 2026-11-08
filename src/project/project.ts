@@ -1,18 +1,18 @@
 // プロジェクト（フォルダ）の読み込みと保存。Node 側専用。
-import { readFile, writeFile, readdir, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, readdir, mkdir, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { registerHooks } from 'node:module';
 import { formatJson, type PrefabDoc, type ProjectConfig, type SceneDoc } from '../core/docs.ts';
 import { Registry, type GameModule } from '../core/registry.ts';
-import { applyOps, diffDocs, getValue, type Change, type Docs, type Op, type PatchResult } from '../core/patch.ts';
+import { applyOps, diffDocs, getValue, sheetRoot, type Change, type Docs, type Op, type PatchResult } from '../core/patch.ts';
 import { parseAddress } from '../core/docs.ts';
 import { Game } from '../core/game.ts';
 import { suggest } from '../core/schema.ts';
 import { appendLog, localTime, lockedHits, markTouched, readLocks as readLockFile, readLog, readTouched, writeLocks, type Actor, type LockMark } from './oplog.ts';
 import { lockDiff, verifyLocks, type LockIntegrity } from './seal.ts';
 import { scanAssets, type AssetInfo } from './assets.ts';
-import { frameCount, sheetPathOf } from '../core/sheet.ts';
+import { checkSheet, checkSheetImage, findFrame, frameCount, sheetPathOf, type SheetDef } from '../core/sheet.ts';
 
 // ゲームコードの import ... from 'ages' を、どのフォルダにあるプロジェクトからでもこのエンジンに向ける
 const AGES_INDEX = new URL('../index.ts', import.meta.url).href;
@@ -52,17 +52,18 @@ export class Project {
       throw new Error(`${this.dir} に ages.project.json がありません。AGESのプロジェクトフォルダを指定してください`);
     }
     this.config = JSON.parse(raw);
-    this.docs = await readDocs(this.dir);
+    const scan = await scanAssets(this.dir);
+    this.docs = { ...(await readDocs(this.dir)), sheets: scan.sheets };
     const prefabs = this.docs.prefabs;
     hookAgesImport();
     const url = pathToFileURL(join(this.dir, this.config.game)).href;
     const mod = (await import(url)) as GameModule;
     this.registry = Registry.from(mod, []);
     this.registry.prefabs = prefabs;
-    const scan = await scanAssets(this.dir);
     this.assets = scan.assets;
     this.assetIssues = scan.issues;
-    this.registry.sheets = scan.sheets;
+    this.registry.sheets = this.docs.sheets;
+    this.registry.images = new Map(scan.assets.filter((a) => a.w && a.h).map((a) => [a.path, { w: a.w!, h: a.h! }]));
     this.integrity = await verifyLocks(this.dir);
     this.lockReport = await this.enforceLocks();
     if (!this.integrity.ok) {
@@ -137,6 +138,15 @@ export class Project {
         continue;
       }
       if (JSON.stringify(current) === JSON.stringify(mark.value)) continue;
+      if (path.startsWith('sheet:')) {
+        const image = path.slice('sheet:'.length);
+        if (mark.value === null) this.docs.sheets.delete(image);
+        else this.docs.sheets.set(image, structuredClone(mark.value as SheetDef));
+        restored.push({ path, from: current ? '変更された切り方' : null, to: mark.value ? 'ロック時の切り方' : null });
+        dirty.add(path);
+        report.push(`ロック ${path}（画像の切り方）が変えられていたので、ロックしたときの切り方に戻しました`);
+        continue;
+      }
       const a = parseAddress(path);
       const holder = a.kind === 'prefab'
         ? this.docs.prefabs.get(a.doc)!
@@ -159,8 +169,12 @@ export class Project {
     const locks = await readLockFile(this.dir);
     const t = new Date().toISOString();
     for (const path of paths) {
-      const a = parseAddress(path);
-      if (!a.component || !a.field) throw new Error(`ロックはフィールド単位です（例: main#player.Player.speed）: ${path}`);
+      if (path.startsWith('sheet:')) {
+        if (sheetRoot(path) !== path) throw new Error(`画像の切り方のロックはシート全体です（例: sheet:assets/hero.png）: ${path}`);
+      } else {
+        const a = parseAddress(path);
+        if (!a.component || !a.field) throw new Error(`ロックはフィールド単位です（例: main#player.Player.speed）: ${path}`);
+      }
       const { value } = getValue(this.docs, this.registry, path);
       const mark: LockMark = { who: actor.who, t, value };
       if (note) mark.note = note;
@@ -205,16 +219,19 @@ export class Project {
           }
         }
       }
-      // スプライトのコマ番号とアニメーションの名前
-      const sp = comps.Sprite as { image?: string; frame?: number } | undefined;
+      // スプライトのコマとアニメーションの名前
+      const sp = comps.Sprite as { image?: string; frame?: number | string } | undefined;
       if (sp?.image) {
-        const sheet = this.registry.sheets.get(sheetPathOf(sp.image));
+        const sheet = this.docs.sheets.get(sp.image);
         const info = assetPaths.get(sp.image);
-        if (sheet && info?.w && info.h && sp.frame !== undefined) {
+        if (sheet && info?.w && info.h && sp.frame !== undefined && !findFrame(sheet, info.w, info.h, sp.frame)) {
           const n = frameCount(sheet, info.w, info.h);
-          if (sp.frame >= n) errs.push(`${where}.Sprite.frame=${sp.frame} は範囲外です（${sp.image} は ${n} コマ、0から数えます）`);
+          const names = (sheet.frames ?? []).map((f) => f.name);
+          errs.push(typeof sp.frame === 'number'
+            ? `${where}.Sprite.frame=${sp.frame} は範囲外です（${sp.image} は ${n} コマ、0から数えます）`
+            : `${where}.Sprite.frame="${sp.frame}" というコマは ${sp.image} にありません${names.length ? '' : '（格子のシートなので番号で指定します）'}${suggest(sp.frame, names)}`);
         } else if (!sheet && sp.frame) {
-          errs.push(`${where}.Sprite.frame=${sp.frame}: ${sp.image} にはスプライトシートの定義（${sheetPathOf(sp.image)}）がないので、コマは0だけです`);
+          errs.push(`${where}.Sprite.frame=${JSON.stringify(sp.frame)}: ${sp.image} にはスプライトシートの定義（${sheetPathOf(sp.image)}）がないので、コマは0だけです`);
         }
         const an = comps.Animator as { clip?: string } | undefined;
         if (an?.clip) {
@@ -233,6 +250,13 @@ export class Project {
     }
     for (const p of this.docs.prefabs.values()) check(`@${p.name}`, p.components);
     if (!this.docs.scenes.has(this.config.startScene)) errs.push(`開始シーン ${this.config.startScene} がありません`);
+    for (const [image, sheet] of this.docs.sheets) {
+      const sp = sheetPathOf(image);
+      const e = checkSheet(sp, sheet);
+      errs.push(...e);
+      const info = assetPaths.get(image);
+      if (!e.length && info?.w && info.h) errs.push(...checkSheetImage(sp, sheet, info.w, info.h));
+    }
     errs.push(...this.assetIssues);
     return errs;
   }
@@ -243,7 +267,11 @@ export class Project {
    */
   async apply(ops: Op[], actor: Actor, opts: { force?: boolean } = {}): Promise<PatchResult> {
     const targetOf = (op: Op) =>
-      op.op === 'set' || op.op === 'setCells' ? op.path : op.op === 'removeEntity' ? `${op.scene}#${op.id}` : op.op === 'removeComponent' ? `${op.target}.${op.component}` : null;
+      op.op === 'set' || op.op === 'setCells' ? op.path
+        : op.op === 'removeEntity' ? `${op.scene}#${op.id}`
+        : op.op === 'removeComponent' ? `${op.target}.${op.component}`
+        : op.op === 'setSheet' || op.op === 'setFrame' || op.op === 'setClip' ? `sheet:${op.image}`
+        : null;
     if (actor.kind === 'ai' && !this.integrity.ok) {
       throw new Error(`🔒 ロックの記録が人の封印と一致しないため、AIからの編集を止めています（${this.integrity.reason}）。ユーザーにエディタでの確認を頼んでください`);
     }
@@ -275,15 +303,23 @@ export class Project {
     }
     // 編集で新しい問題（ないファイル・ないアニメーション・範囲外のコマなど）が増えるなら、保存せずに止める
     const before = new Set(this.validate());
-    const backup: Docs = { scenes: new Map(this.docs.scenes), prefabs: new Map(this.docs.prefabs) };
+    const backup: Docs = { scenes: new Map(this.docs.scenes), prefabs: new Map(this.docs.prefabs), sheets: new Map(this.docs.sheets) };
     const result = applyOps(this.docs, this.registry, ops);
-    const introduced = this.validate().filter((e) => !before.has(e));
-    if (introduced.length) {
+    const rollback = (message: string): never => {
       this.docs.scenes = backup.scenes;
       this.docs.prefabs = backup.prefabs;
+      this.docs.sheets = backup.sheets;
       this.registry.prefabs = backup.prefabs;
-      throw new Error(introduced.join(' / '));
+      this.registry.sheets = backup.sheets;
+      throw new Error(message);
+    };
+    // 操作の結果として連動して変わる値（コマの名前の変更で書き換わる参照など）にも、ロックは効く
+    if (actor.kind === 'ai') {
+      const hits = [...new Set(result.changes.flatMap((c) => lockedHits(locks, sheetRoot(c.path.replace(/\[\d+,\s*\d+\]$/, '')))))];
+      if (hits.length) rollback(`🔒 この操作は、ロックされた値も変えてしまいます: ${hits.join(', ')}。この値は人が決めるものです。変えるべき理由があれば、ユーザーに提案してください`);
     }
+    const introduced = this.validate().filter((e) => !before.has(e));
+    if (introduced.length) rollback(introduced.join(' / '));
     await this.saveDirty(result.dirty);
     const opName = ops.length === 1 ? ops[0].op : 'batch';
     await appendLog(this.dir, actor, opName, result.changes);
@@ -292,8 +328,8 @@ export class Project {
       // 人がロック中の値を編集したら、ロックの値も新しい値にする。消したものはロックも外す
       let changed = false;
       for (const c of result.changes) {
-        const base = c.path.replace(/\[\d+,\s*\d+\]$/, '');
-        if (c.to === 'removed') {
+        const base = sheetRoot(c.path.replace(/\[\d+,\s*\d+\]$/, ''));
+        if (c.to === 'removed' && base === c.path) {
           for (const p of lockedHits(locks, base)) { delete locks[p]; changed = true; }
         } else if (locks[base]) {
           locks[base].value = structuredClone(getValue(this.docs, this.registry, base).value);
@@ -310,6 +346,16 @@ export class Project {
 
   async saveDirty(dirty: Iterable<string>): Promise<void> {
     for (const key of dirty) {
+      if (key.startsWith('sheet:')) {
+        const image = key.slice('sheet:'.length);
+        const path = join(this.dir, sheetPathOf(image));
+        const sheet = this.docs.sheets.get(image);
+        if (!sheet) { await rm(path, { force: true }); this.written.set(path, ''); continue; }
+        const text = formatSheet(sheet);
+        await writeFile(path, text);
+        this.written.set(path, text);
+        continue;
+      }
       const [kind, name] = key.split(':');
       const path = kind === 'scene' ? this.scenePath(name) : this.prefabPath(name);
       const text = formatJson(kind === 'scene' ? this.docs.scenes.get(name) : this.docs.prefabs.get(name));
@@ -325,11 +371,22 @@ export class Project {
    */
   async humanTextEdit(actor: Actor): Promise<Change[]> {
     const before = this.docs;
-    const changes = diffDocs(before, await readDocs(this.dir));
-    if (!this.integrity.ok && changes.some((c) => lockedHits(this.lockFileCache, c.path.replace(/\[\d+,\s*\d+\]$/, '')).length)) this.requireIntegrity();
+    const after: Docs = { ...(await readDocs(this.dir)), sheets: (await scanAssets(this.dir)).sheets };
+    const changes = diffDocs(before, after);
+    if (!this.integrity.ok && changes.some((c) => lockedHits(this.lockFileCache, sheetRoot(c.path.replace(/\[\d+,\s*\d+\]$/, ''))).length)) this.requireIntegrity();
     const locks = await readLockFile(this.dir);
     let touchedLock = false;
     for (const c of changes) {
+      if (c.path.startsWith('sheet:')) {
+        // 画像の切り方のロックは、人が書き換えた新しい切り方にする（消したらロックも外す）
+        const root = sheetRoot(c.path);
+        if (!locks[root]) continue;
+        const v = after.sheets.get(root.slice('sheet:'.length));
+        if (v) locks[root].value = structuredClone(v);
+        else delete locks[root];
+        touchedLock = true;
+        continue;
+      }
       if (locks[c.path] && c.to !== 'removed' && c.to !== 'added') { locks[c.path].value = structuredClone(c.to); touchedLock = true; }
       if (c.to === 'removed') for (const p of lockedHits(locks, c.path)) { delete locks[p]; touchedLock = true; }
     }
@@ -360,7 +417,25 @@ export class Project {
   }
 }
 
-async function readDocs(dir: string): Promise<Docs> {
+/**
+ * シートの書き出し。コマは1行1コマにする（Gitの行単位の統合がコマ単位になり、人が読んでも並びが分かる）
+ */
+export function formatSheet(sheet: SheetDef): string {
+  const lines: string[] = ['{'];
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(sheet)) {
+    if (k === 'frames' && Array.isArray(v)) {
+      parts.push(`  "frames": [\n${v.map((f) => `    ${JSON.stringify(f)}`).join(',\n')}\n  ]`);
+    } else if (k === 'clips' && v && typeof v === 'object') {
+      const cs = Object.entries(v as Record<string, unknown>).map(([n, c]) => `    ${JSON.stringify(n)}: ${JSON.stringify(c)}`);
+      parts.push(`  "clips": {\n${cs.join(',\n')}\n  }`);
+    } else parts.push(`  ${JSON.stringify(k)}: ${JSON.stringify(v)}`);
+  }
+  lines.push(parts.join(',\n'), '}');
+  return lines.join('\n') + '\n';
+}
+
+async function readDocs(dir: string): Promise<Omit<Docs, 'sheets'>> {
   const scenes = new Map<string, SceneDoc>();
   for (const f of await list(join(dir, 'scenes'), '.scene.json')) {
     const doc: SceneDoc = parseJson(await readFile(join(dir, 'scenes', f), 'utf8'), `scenes/${f}`);

@@ -5,7 +5,7 @@ import { cp, mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Project } from '../src/project/project.ts';
-import { frameCount, frameRect, sheetPathOf, checkSheet } from '../src/core/sheet.ts';
+import { frameCount, frameAt, sheetPathOf, checkSheet } from '../src/core/sheet.ts';
 import { collectDrawables, cornersOf, pointInCorners } from '../src/render/geom.ts';
 import { imageSize } from '../src/project/assets.ts';
 
@@ -26,7 +26,7 @@ test('スプライトシート: コマの数と位置（隙間・余白つき）
   const s = { frame: [16, 16] as [number, number], spacing: 2, margin: 1 };
   // 1 + 16 + 2 + 16 ... → 横に 5 コマ（1+5*16+4*2+1 = 90）
   assert.equal(frameCount(s, 90, 36), 10);
-  assert.deepEqual(frameRect(s, 90, 6), { x: 1 + 18, y: 1 + 18, w: 16, h: 16 });
+  assert.deepEqual(frameAt(s, 90, 36, 6), { index: 6, x: 1 + 18, y: 1 + 18, w: 16, h: 16 });
   assert.equal(checkSheet('x.sheet.json', { frame: [0, 16] } as never).length, 1);
 });
 
@@ -34,7 +34,7 @@ test('アセット: 画像の大きさをファイルの先頭から読み、シ
   const p = await Project.load(await fresh());
   const tiles = p.assets.find((a) => a.path === TILES)!;
   assert.deepEqual([tiles.kind, tiles.w, tiles.h], ['image', 192, 160]);
-  assert.ok(p.registry.sheets.get(sheetPathOf(TILES))?.clips?.explode);
+  assert.ok(p.registry.sheets.get(TILES)?.clips?.explode);
   assert.equal(imageSize(Buffer.from('not an image')), null);
   assert.deepEqual(p.validate(), []);
 });

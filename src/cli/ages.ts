@@ -8,9 +8,12 @@ import { Project } from '../project/project.ts';
 import { renderMap } from '../project/map.ts';
 import { readCursor, readLog, readTouched, summarize, writeCursor, type Actor } from '../project/oplog.ts';
 import { getValue, parseLiteral, splitCell, type Op } from '../core/patch.ts';
-import { brief, matrixSize } from '../core/schema.ts';
+import { brief, matrixSize, suggest } from '../core/schema.ts';
 import { InputPlayback, type InputEvent } from '../core/input.ts';
 import { GameError, type Game } from '../core/game.ts';
+import { baseNameOf, frameCount, listFrames, type SheetDef } from '../core/sheet.ts';
+import { autoRects, carryClips, gridRects, nameFrames, type Pixels, type Rect } from '../core/slice.ts';
+import { decodePng } from '../project/png.ts';
 
 const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [引数]
 
@@ -19,11 +22,15 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   schema <dir> [Component ...]       コンポーネントの詳細（型・範囲・説明）
   get    <dir> <addr> [addr ...]     値を見る（例: main#player / main#player.Player.speed / @enemy）
   set    <dir> <addr> <value> [--force]  行列のセルは addr[行,列]（例 main#spawner.Spawner.formation[2,3] 1）
-  patch  <dir> <ops.json | -> [--force]   操作の配列（set/setCells/addEntity/removeEntity/addComponent/removeComponent/rename）
+  patch  <dir> <ops.json | -> [--force]   操作の配列（set/setCells/addEntity/removeEntity/addComponent/removeComponent/rename/setSheet/setFrame/setClip）
   run    <dir> [--frames 600] [--scene main] [--seed 1] [--keys "0-120:ArrowLeft+KeyZ;120-200:ArrowRight"]
                [--input recordings/x.input.json] [--watch player.Health.hp,...] [--every 60] [--until gameOver] [--twice] [--dump]
   log    <dir> [--all] [--peek]      前回からの編集の要約（--peek は既読にしない）
   check  <dir>                       全データの検証とロックの検査
+  sheet  <dir> <画像>                 画像の切り方（コマの名前・位置・基準点・動き）を見る
+  slice  <dir> <画像> --grid 32x32 | --count 4x6 | --auto  画像を切る（前と同じ場所のコマは名前を引き継ぐ）
+               [--spacing n] [--margin n] [--skip-empty] [--alpha 1] [--min 2] [--gap 0] [--pad 0] [--pivot 0.5,1] [--dry] [--force]
+  コマ1つ・動き1つの変更は patch の setFrame / setClip（例 {"op":"setFrame","image":"assets/x.png","frame":"x_3","name":"hero_idle","pivot":[0.5,1]}）
 
 アドレス: シーン#ID.コンポーネント.フィールド（例 main#player.Player.speed）、プレハブは @名前.コンポーネント.フィールド
 印: 🔒=ロック（AIは変更不可）  ★=人が調整した値（変更前に人へ確認し、--force）`;
@@ -281,6 +288,85 @@ export async function cmdCheck(dir: string): Promise<string> {
   return withLockReport(p, errs.length ? errs.map((e) => `error: ${e}`).join('\n') : `ok（シーン${p.docs.scenes.size} プレハブ${p.docs.prefabs.size} コンポーネント${p.registry.components.size} システム${p.registry.systems.length}）`);
 }
 
+function imageOf(p: Project, image: string): { w: number; h: number } {
+  const size = p.registry.images.get(image);
+  if (!size) throw new Error(`画像 ${image} がありません${suggest(image, [...p.registry.images.keys()])}`);
+  return size;
+}
+
+const num = (v: number) => (Number.isInteger(v) ? String(v) : String(Math.round(v * 1000) / 1000).replace(/^0\./, '.'));
+
+/** 切り方を短いテキストで（格子はコマを並べない。位置は計算で決まるので） */
+export function describeSheet(image: string, sheet: SheetDef | undefined, w: number, h: number, marks = ''): string {
+  if (!sheet) return `${image} ${w}x${h} シートなし（画像全体を1コマとして描く）。切るには ages slice${marks}`;
+  const out: string[] = [];
+  const n = frameCount(sheet, w, h);
+  if (sheet.frames) {
+    out.push(`${image} ${w}x${h} 自由 ${n}コマ（#番号 名前 x,y 幅x高さ 基準点）${marks}`);
+    for (const f of listFrames(sheet, w, h)) out.push(`#${f.index} ${f.name} ${f.x},${f.y} ${f.w}x${f.h}${f.pivot ? ` pivot ${f.pivot.map(num).join(',')}` : ''}`);
+  } else {
+    out.push(`${image} ${w}x${h} 格子 ${sheet.frame!.join('x')}${sheet.spacing ? ` 隙間${sheet.spacing}` : ''}${sheet.margin ? ` 余白${sheet.margin}` : ''} → ${n}コマ（番号で指定。左上から右へ0から）${marks}`);
+  }
+  const clips = Object.entries(sheet.clips ?? {});
+  if (clips.length) out.push('動き:', ...clips.map(([k, c]) => `  ${k} ${c.frames.join(',')} ${c.fps}fps${c.loop === false ? ' 1回' : ''}`));
+  return out.join('\n');
+}
+
+export async function cmdSheet(dir: string, image: string): Promise<string> {
+  const p = await Project.load(dir);
+  const size = imageOf(p, image);
+  const locks = await p.effectiveLocks();
+  const touched = await readTouched(dir);
+  const root = `sheet:${image}`;
+  const marks = locks[root] ? ' 🔒（AIは変更不可）' : touched[root] ? ` ★人が調整（${touched[root].who}。変更前に人へ確認し --force）` : '';
+  return withLockReport(p, describeSheet(image, p.docs.sheets.get(image), size.w, size.h, marks));
+}
+
+const pair = (v: string | true | undefined, what: string): [number, number] => {
+  const m = typeof v === 'string' ? v.match(/^(\d+)[x,](\d+)$/) : null;
+  if (!m) throw new Error(`${what} は 幅x高さ の形で指定します（例 32x32）`);
+  return [Number(m[1]), Number(m[2])];
+};
+const numFlag = (v: string | true | undefined, d: number) => (typeof v === 'string' ? Number(v) : d);
+
+export async function cmdSlice(dir: string, image: string, flags: Record<string, string | true>): Promise<string> {
+  const p = await Project.load(dir);
+  const { w, h } = imageOf(p, image);
+  const before = p.docs.sheets.get(image);
+  const spacing = numFlag(flags.spacing, 0), margin = numFlag(flags.margin, 0);
+  const pivot = typeof flags.pivot === 'string' ? (flags.pivot.split(',').map(Number) as [number, number]) : undefined;
+  if (pivot && (pivot.length !== 2 || pivot.some((n) => !Number.isFinite(n)))) throw new Error('--pivot は 横,縦 の数で指定します（例 0.5,1 = 下の中央）');
+  let pixels: Pixels | undefined;
+  const needPixels = flags.auto === true || flags['skip-empty'] === true;
+  if (needPixels) {
+    if (!/\.png$/i.test(image)) throw new Error('自動で切る・空のコマを除くのは PNG だけです。ほかの形式はエディタの「切り方」画面を使ってください');
+    pixels = decodePng(await readFile(join(dir, image)));
+  }
+  let next: SheetDef;
+  if (flags.grid && !flags['skip-empty'] && !pivot && (!before || !before.frames)) {
+    // 格子のまま（ファイルが短く、番号での指定もそのまま）
+    next = { frame: pair(flags.grid, '--grid') };
+    if (spacing) next.spacing = spacing;
+    if (margin) next.margin = margin;
+  } else {
+    let rects: Rect[];
+    if (flags.auto) rects = autoRects(pixels!, { alpha: numFlag(flags.alpha, 1), minSize: numFlag(flags.min, 2), gap: numFlag(flags.gap, 0), pad: numFlag(flags.pad, 0) });
+    else if (flags.grid || flags.count) rects = gridRects(w, h, { cell: flags.grid ? pair(flags.grid, '--grid') : undefined, count: flags.count ? pair(flags.count, '--count') : undefined, spacing, margin, skipEmpty: flags['skip-empty'] === true }, pixels);
+    else throw new Error('切り方を --grid 32x32 / --count 4x6 / --auto のどれかで指定してください');
+    if (!rects.length) throw new Error('コマが1つも見つかりませんでした（透明な画像か、--alpha・--min が大きすぎます）');
+    // 前が自由な矩形なら、同じ場所のコマの名前と基準点を引き継ぐ（前が格子なら名前はないので、新しく付ける）
+    next = { frames: nameFrames(rects, baseNameOf(image), before?.frames ?? [], pivot) };
+  }
+  const carried = carryClips(before, next, w, h);
+  if (carried.missing.length) throw new Error(`この切り方では、動きが使っているコマが無くなります: ${carried.missing.join(', ')}。先に動きを直すか（setClip）、切り方を変えてください`);
+  if (carried.clips) next.clips = carried.clips;
+  const summary = describeSheet(image, next, w, h);
+  if (flags.dry) return `（試しに切っただけで、保存していません）\n${summary}`;
+  const r = await p.apply([{ op: 'setSheet', image, sheet: next }], AI_ACTOR, { force: flags.force === true });
+  const refs = r.changes.filter((c) => !c.path.startsWith('sheet:'));
+  return [summary, refs.length ? `番号のずれに合わせて直した指定: ${refs.map((c) => `${c.path} ${fmt(c.from)}→${fmt(c.to)}`).join(', ')}` : ''].filter(Boolean).join('\n');
+}
+
 function withLockReport(p: Project, text: string): string {
   return p.lockReport.length ? `${p.lockReport.map((l) => '🔒 ' + l).join('\n')}\n${text}` : text;
 }
@@ -316,9 +402,16 @@ async function main(argv: string[]): Promise<void> {
     case 'run': out = await cmdRun(dir, a.flags); break;
     case 'log': out = await cmdLog(dir, a.flags); break;
     case 'check': out = await cmdCheck(dir); break;
+    case 'sheet': out = await cmdSheet(dir, need(a.pos[1], '画像の場所（例 assets/hero.png）')); break;
+    case 'slice': out = await cmdSlice(dir, need(a.pos[1], '画像の場所（例 assets/hero.png）'), a.flags); break;
     default: throw new Error(`未知のコマンド ${cmd}。ages help で一覧を表示します`);
   }
   console.log(out);
+}
+
+function need(v: string | undefined, what: string): string {
+  if (!v) throw new Error(`${what} が必要です`);
+  return v;
 }
 
 async function readStdin(): Promise<string> {

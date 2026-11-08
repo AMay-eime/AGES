@@ -1,6 +1,5 @@
 // 標準のシステム。ゲームのシステムの後に、この順で動く。
 import { defineSystem } from '../core/registry.ts';
-import { sheetPathOf } from '../core/sheet.ts';
 
 /** Animator の再生。毎フレーム Sprite.frame を進める */
 export const animator = defineSystem({
@@ -13,7 +12,7 @@ export const animator = defineSystem({
       const a = e.c.Animator, s = e.c.Sprite;
       if (a.current !== a.clip) { a.current = a.clip; a.time = 0; a.playing = true; }
       if (!a.clip || !a.playing) continue;
-      const sheet = world.registry.sheets.get(sheetPathOf(s.image));
+      const sheet = world.registry.sheets.get(s.image);
       const clip = sheet?.clips?.[a.clip];
       if (!clip) continue; // 検証（ages check）で知らせる
       a.time += dt * a.speed;

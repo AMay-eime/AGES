@@ -1,5 +1,6 @@
 // 描くものの並び順と形。描画とクリックでの選択の両方が同じ計算を使う（見えている形どおりに選べる）。
 import type { World, Entity } from '../core/world.ts';
+import { findFrame, type FrameRef, type SheetDef } from '../core/sheet.ts';
 
 export type DrawKind = 'sprite' | 'shape' | 'text';
 
@@ -53,4 +54,34 @@ export function pointInCorners(px: number, py: number, q: Corners): boolean {
     }
   }
   return true;
+}
+
+/** スプライトの描き方（画像のどこを・どの大きさで・どこを基準に）。描画と検証が同じ計算を使う */
+export interface SpriteGeometry {
+  w: number;
+  h: number;
+  ax: number;
+  ay: number;
+  /** 画像の中の範囲(px) */
+  src: { x: number; y: number; w: number; h: number };
+}
+
+export function spriteGeometry(
+  s: { frame?: FrameRef; size?: [number, number]; anchor?: [number, number] },
+  sheet: SheetDef | undefined,
+  imageW: number,
+  imageH: number,
+): SpriteGeometry | null {
+  let src = { x: 0, y: 0, w: imageW, h: imageH };
+  let pivot: [number, number] | undefined;
+  if (sheet) {
+    const f = findFrame(sheet, imageW, imageH, s.frame ?? 0);
+    if (!f) return null;
+    src = { x: f.x, y: f.y, w: f.w, h: f.h };
+    pivot = f.pivot;
+  }
+  const w = s.size?.[0] && s.size[0] > 0 ? s.size[0] : src.w;
+  const h = s.size?.[1] && s.size[1] > 0 ? s.size[1] : src.h;
+  const [ax, ay] = pivot ?? s.anchor ?? [0.5, 0.5];
+  return { w, h, ax, ay, src };
 }

@@ -1,6 +1,6 @@
 // プロジェクトの地図。AIが最初に読む1枚。全体を少ないトークンで把握できる形にする。
 import { brief } from '../core/schema.ts';
-import { frameCount, sheetPathOf } from '../core/sheet.ts';
+import { frameCount } from '../core/sheet.ts';
 import type { Project } from './project.ts';
 import type { LockMark, TouchMark } from './oplog.ts';
 
@@ -39,15 +39,22 @@ export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, l
   }
 
   if (p.assets.length) {
-    out.push('## assets（画像は 幅x高さ、シートは コマの大きさ×コマ数 と clips）');
+    out.push('## assets（画像は 幅x高さ。シートは 格子なら コマの大きさ×コマ数、自由なら コマ数と名前。コマの位置は ages sheet <dir> <画像>）');
     for (const a of p.assets) {
       if (a.kind !== 'image') { out.push(`${a.path} ${a.kind} ${Math.ceil(a.bytes / 1024)}KB`); continue; }
-      const sheet = p.registry.sheets.get(sheetPathOf(a.path));
+      const sheet = p.registry.sheets.get(a.path);
       let line = `${a.path} ${a.w ?? '?'}x${a.h ?? '?'}`;
       if (sheet) {
         const n = a.w && a.h ? frameCount(sheet, a.w, a.h) : '?';
         const clips = Object.entries(sheet.clips ?? {}).map(([k, v]) => `${k}(${v.frames.join(',')} ${v.fps}fps${v.loop === false ? ' 1回' : ''})`).join(' ');
-        line += ` シート${sheet.frame[0]}x${sheet.frame[1]}×${n}${clips ? ' clips: ' + clips : ''}`;
+        if (sheet.frames) {
+          const names = sheet.frames.map((f) => f.name);
+          line += ` シート 自由${n}コマ（${names.slice(0, 6).join(' ')}${names.length > 6 ? ' …' : ''}）`;
+        } else if (sheet.frame) line += ` シート 格子${sheet.frame[0]}x${sheet.frame[1]}×${n}`;
+        if (clips) line += ` clips: ${clips}`;
+        const root = `sheet:${a.path}`;
+        if (locks[root]) line += ' 🔒切り方';
+        else if (touched[root]) line += ' ★切り方';
       }
       out.push(line);
     }

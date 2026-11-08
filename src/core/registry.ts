@@ -36,6 +36,8 @@ export class Registry {
   prefabs = new Map<string, PrefabDoc>();
   /** スプライトシート（定義ファイルの場所 → 中身） */
   sheets = new Map<string, SheetDef>();
+  /** 画像の大きさ（場所 → 幅・高さ）。格子のシートのコマを求めるのに使う */
+  images = new Map<string, { w: number; h: number }>();
   /** 標準のコンポーネントの名前 */
   readonly std = new Set(STD_COMPONENTS.map((c) => c.name));
 

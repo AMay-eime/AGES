@@ -25,9 +25,9 @@ export const Sprite = defineComponent({
   desc: '画像を描く（標準）。スプライトシートなら frame でコマを選ぶ',
   fields: {
     image: { type: 'asset', kind: 'image', default: '', desc: '画像ファイル（例: assets/ship.png）' },
-    frame: { type: 'int', default: 0, min: 0, max: 100000, desc: 'スプライトシートのコマ番号（左上から右へ、0から）' },
+    frame: { type: 'frame', default: 0, desc: 'スプライトシートのコマ。番号（0から）か名前。名前なら切り直してもずれない' },
     size: { type: 'vec2', default: [0, 0], desc: '表示する大きさ [幅, 高さ](px)。0なら画像（コマ）の大きさ' },
-    anchor: { type: 'vec2', default: [0.5, 0.5], desc: '位置の基準点。[0,0]=左上、[0.5,0.5]=中央' },
+    anchor: { type: 'vec2', default: [0.5, 0.5], desc: '位置の基準点。[0,0]=左上、[0.5,0.5]=中央。シートのコマに基準点（pivot）があればそちらを使う' },
     tint: { type: 'color', default: '#ffffff', desc: '色をかける（白なら元の色）' },
     alpha: { type: 'number', default: 1, min: 0, max: 1, step: 0.01, desc: '不透明度' },
     flipX: { type: 'bool', default: false, desc: '左右反転' },

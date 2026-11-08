@@ -3,13 +3,14 @@
 // - 同じ画像・同じ重ね方が続く間はまとめて1回で描く（大量の弾でも速い）
 // - 描いたものの形を shapes に残す（クリックでの選択に使う）
 import type { World, Entity } from '../core/world.ts';
-import { frameRect, sheetPathOf, type SheetDef } from '../core/sheet.ts';
-import { collectDrawables, cornersOf, pointInCorners, type Corners } from './geom.ts';
+import type { SheetDef } from '../core/sheet.ts';
+import { collectDrawables, cornersOf, pointInCorners, spriteGeometry, type Corners } from './geom.ts';
 
 export interface RendererOptions {
   /** アセットの場所（assets/ship.png）から読み込むURLを作る */
   urlOf(path: string): string;
   /** スプライトシート（定義ファイルの場所 → 中身） */
+  /** 画像の場所 → 切り方 */
   sheets: Map<string, SheetDef>;
   /** nearest=ドット絵向け、linear=なめらか */
   filter?: 'nearest' | 'linear';
@@ -149,25 +150,27 @@ export class Renderer {
     const s = e.c.Sprite, t = e.c.Transform as TransformLike;
     let tex: Tex = this.missing;
     let u0 = 0, v0 = 0, u1 = 1, v1 = 1;
-    let w = 16, h = 16;
+    let w = 16, h = 16, ax = s.anchor?.[0] ?? 0.5, ay = s.anchor?.[1] ?? 0.5;
     if (s.image) {
       const tx = this.texture(s.image);
-      if (tx.ready) {
+      if (!tx.ready) return; // 読み込み中は描かない
+      const g = spriteGeometry(s, this.opts.sheets.get(s.image), tx.w, tx.h);
+      if (g) {
         tex = tx;
-        const sheet = this.opts.sheets.get(sheetPathOf(s.image));
-        const rect = sheet ? frameRect(sheet, tx.w, s.frame ?? 0) : { x: 0, y: 0, w: tx.w, h: tx.h };
         // なめらか表示のときは隣のコマがにじまないよう半ピクセル内側を使う
         const inset = this.opts.filter === 'nearest' ? 0 : 0.5;
-        u0 = (rect.x + inset) / tx.w; v0 = (rect.y + inset) / tx.h;
-        u1 = (rect.x + rect.w - inset) / tx.w; v1 = (rect.y + rect.h - inset) / tx.h;
-        w = rect.w; h = rect.h;
-      } else return; // 読み込み中は描かない
+        u0 = (g.src.x + inset) / tx.w; v0 = (g.src.y + inset) / tx.h;
+        u1 = (g.src.x + g.src.w - inset) / tx.w; v1 = (g.src.y + g.src.h - inset) / tx.h;
+        ({ w, h, ax, ay } = g);
+      } // コマが見つからないときは市松模様で知らせる（検証でも知らせる）
     }
-    if (s.size?.[0] > 0) w = s.size[0];
-    if (s.size?.[1] > 0) h = s.size[1];
+    if (tex === this.missing) {
+      if (s.size?.[0] > 0) w = s.size[0];
+      if (s.size?.[1] > 0) h = s.size[1];
+    }
     if (s.flipX) [u0, u1] = [u1, u0];
     if (s.flipY) [v0, v1] = [v1, v0];
-    const q = cornersOf(t, w, h, s.anchor?.[0] ?? 0.5, s.anchor?.[1] ?? 0.5);
+    const q = cornersOf(t, w, h, ax, ay);
     this.shapes.push({ id: e.id, corners: q });
     this.quad(tex, s.blend ?? 'normal', q, u0, v0, u1, v1, s.tint ?? '#ffffff', s.alpha ?? 1);
   }

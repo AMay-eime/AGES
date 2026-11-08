@@ -2,7 +2,7 @@
 import { readdir, readFile, stat, open } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ASSET_EXT, type AssetKind } from '../core/schema.ts';
-import { checkSheet, type SheetDef } from '../core/sheet.ts';
+import { sheetPathOf, type SheetDef } from '../core/sheet.ts';
 
 export interface AssetInfo {
   path: string;
@@ -71,6 +71,7 @@ async function head(path: string, n: number): Promise<Buffer> {
 
 export interface AssetScan {
   assets: AssetInfo[];
+  /** 画像の場所 → 切り方（画像の隣の <画像名>.sheet.json） */
   sheets: Map<string, SheetDef>;
   issues: string[];
 }
@@ -79,14 +80,12 @@ export interface AssetScan {
 export async function scanAssets(dir: string): Promise<AssetScan> {
   const files = await walk(dir);
   const assets: AssetInfo[] = [];
-  const sheets = new Map<string, SheetDef>();
+  const sheetFiles = new Map<string, SheetDef>();
   const issues: string[] = [];
   for (const rel of files) {
     if (rel.endsWith('.sheet.json')) {
       try {
-        const sheet = JSON.parse(await readFile(join(dir, rel), 'utf8')) as SheetDef;
-        issues.push(...checkSheet(rel, sheet));
-        sheets.set(rel, sheet);
+        sheetFiles.set(rel, JSON.parse(await readFile(join(dir, rel), 'utf8')) as SheetDef);
       } catch (e) {
         issues.push(`${rel} のJSONが壊れています: ${(e as Error).message}`);
       }
@@ -103,5 +102,15 @@ export async function scanAssets(dir: string): Promise<AssetScan> {
     }
     assets.push(info);
   }
+  // 定義ファイルを、隣にある同じ名前の画像に結びつける
+  const sheets = new Map<string, SheetDef>();
+  const used = new Set<string>();
+  for (const a of assets) {
+    if (a.kind !== 'image') continue;
+    const sp = sheetPathOf(a.path);
+    const def = sheetFiles.get(sp);
+    if (def) { sheets.set(a.path, def); used.add(sp); }
+  }
+  for (const sp of sheetFiles.keys()) if (!used.has(sp)) issues.push(`${sp}: 同じ名前の画像がありません（例: ${sp.replace(/\.sheet\.json$/, '.png')}）`);
   return { assets, sheets, issues };
 }

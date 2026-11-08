@@ -4,7 +4,7 @@ import type { App } from '../app.ts';
 import type { Field } from '../../core/schema.ts';
 import { brief, matrixSize } from '../../core/schema.ts';
 import { h, clear, time, modal } from './dom.ts';
-import { sheetPathOf, columnsOf, frameCount, frameRect, type SheetDef } from '../../core/sheet.ts';
+import { findFrame, frameLabel, listFrames, type FrameRef, type SheetDef } from '../../core/sheet.ts';
 import type { Panel } from './layout.ts';
 
 interface Live { path: string; comp: string; field: string; set(v: unknown): void; el: HTMLElement }
@@ -132,7 +132,7 @@ interface Ctx { comp: string; field: string; holder: Record<string, Record<strin
 function sheetOfHolder(app: App, holder: Ctx['holder']): { image: string; sheet: SheetDef; w: number; h: number } | null {
   const image = holder.Sprite?.image;
   if (typeof image !== 'string' || !image) return null;
-  const sheet = app.registry.sheets.get(sheetPathOf(image));
+  const sheet = app.registry.sheets.get(image);
   const info = app.state.assets.find((a) => a.path === image);
   if (!sheet || !info?.w || !info.h) return null;
   return { image, sheet, w: info.w, h: info.h };
@@ -142,7 +142,7 @@ function widget(app: App, f: Field, value: unknown, commit: (v: unknown, final: 
   // 標準の Sprite.frame はシートの絵から選べる。Animator.clip はシートの動き一覧から選べる
   if (ctx.comp === 'Sprite' && ctx.field === 'frame') {
     const s = sheetOfHolder(app, ctx.holder);
-    if (s) return frameWidget(app, s, value as number, commit);
+    if (s) return frameWidget(app, s, value as FrameRef, commit);
   }
   if (ctx.comp === 'Animator' && ctx.field === 'clip') {
     const s = sheetOfHolder(app, ctx.holder);
@@ -221,8 +221,19 @@ function widget(app: App, f: Field, value: unknown, commit: (v: unknown, final: 
       };
       show(cur);
       sel.addEventListener('change', () => { show(sel.value); commit(sel.value, true); });
+      thumb.addEventListener('click', () => { if (sel.value) app.emit('openSprite', sel.value); });
       wrap.append(thumb, sel);
+      if (f.kind === 'image') wrap.append(h('button', { class: 'icon', title: 'この画像の切り方（コマ・基準点・動き）を開く', onclick: () => { if (sel.value) app.emit('openSprite', sel.value); } }, '✂'));
       return { el: wrap, set: (v) => { sel.value = String(v ?? ''); show(String(v ?? '')); } };
+    }
+    case 'frame': {
+      // シートがない画像: 番号か名前を直接入れる。切り方の画面へも行ける
+      const t = h('input', { type: 'text', value: String(value ?? 0), style: 'width:80px' }) as HTMLInputElement;
+      t.addEventListener('change', () => commit(/^\d+$/.test(t.value.trim()) ? Number(t.value) : t.value.trim(), true));
+      const image = ctx.holder.Sprite?.image;
+      wrap.append(t);
+      if (typeof image === 'string' && image) wrap.append(h('button', { title: 'この画像をコマに切る', onclick: () => app.emit('openSprite', image) }, '✂ 切る'));
+      return { el: wrap, set: (v) => { t.value = String(v); } };
     }
     default: {
       const t = h('input', { type: 'text', value: value === null ? '' : String(value) }) as HTMLInputElement;
@@ -242,47 +253,50 @@ function matrixWidget(app: App, path: string, value: unknown, cell: string): { e
   return { el: wrap, set: (v) => { size.textContent = `${matrixSize(v)} ${cell}`; } };
 }
 
-/** スプライトシートのコマ番号。数字でも入れられるし、絵を見てクリックでも選べる */
-function frameWidget(app: App, s: { image: string; sheet: SheetDef; w: number; h: number }, value: number, commit: (v: unknown, final: boolean) => void): { el: HTMLElement; set(v: unknown): void } {
-  const count = frameCount(s.sheet, s.w, s.h);
-  const num = h('input', { type: 'number', min: '0', max: String(count - 1), step: '1', value: String(value ?? 0), style: 'width:64px' }) as HTMLInputElement;
+/** スプライトシートのコマ。番号か名前を入れられるし、絵を見てクリックでも選べる（名前のあるコマは名前で入る） */
+function frameWidget(app: App, s: { image: string; sheet: SheetDef; w: number; h: number }, value: FrameRef, commit: (v: unknown, final: boolean) => void): { el: HTMLElement; set(v: unknown): void } {
+  const all = listFrames(s.sheet, s.w, s.h);
+  const count = all.length;
+  const num = h('input', { type: 'text', value: String(value ?? 0), style: 'width:90px;font:var(--mono)', title: '番号（0から）か名前' }) as HTMLInputElement;
   const preview = h('canvas', { width: 28, height: 28, class: 'asset-thumb', title: 'クリックで絵から選ぶ' }) as HTMLCanvasElement;
   const img = new Image();
   img.src = app.assetUrl(s.image);
-  const paint = (i: number) => {
+  const parse = (t: string): FrameRef => (/^\d+$/.test(t.trim()) ? Number(t) : t.trim());
+  const paint = (ref: FrameRef) => {
     const g = preview.getContext('2d')!;
     g.imageSmoothingEnabled = false;
     g.clearRect(0, 0, 28, 28);
-    if (!img.complete || !img.naturalWidth) return;
-    const r = frameRect(s.sheet, s.w, Math.max(0, Math.min(count - 1, i)));
-    const k = Math.min(28 / r.w, 28 / r.h);
-    g.drawImage(img, r.x, r.y, r.w, r.h, (28 - r.w * k) / 2, (28 - r.h * k) / 2, r.w * k, r.h * k);
+    const f = findFrame(s.sheet, s.w, s.h, ref);
+    if (!img.complete || !img.naturalWidth || !f) return;
+    const k = Math.min(28 / f.w, 28 / f.h);
+    g.drawImage(img, f.x, f.y, f.w, f.h, (28 - f.w * k) / 2, (28 - f.h * k) / 2, f.w * k, f.h * k);
   };
-  img.onload = () => paint(Number(num.value));
-  num.addEventListener('change', () => { paint(Number(num.value)); commit(Math.round(Number(num.value)), true); });
+  img.onload = () => paint(parse(num.value));
+  num.addEventListener('change', () => { const v = parse(num.value); paint(v); commit(v, true); });
   const pick = () => modal((close) => {
-    const cols = columnsOf(s.sheet, s.w);
-    const [fw, fh] = s.sheet.frame;
     const zoom = Math.max(1, Math.min(4, Math.floor(560 / s.w)));
+    const cur = findFrame(s.sheet, s.w, s.h, parse(num.value));
     const grid = h('div', { class: 'frame-grid', style: `position:relative;width:${s.w * zoom}px;height:${s.h * zoom}px;background:url("${app.assetUrl(s.image)}") 0 0 / ${s.w * zoom}px ${s.h * zoom}px no-repeat` });
-    for (let i = 0; i < count; i++) {
-      const r = frameRect(s.sheet, s.w, i);
+    for (const f of all) {
       grid.append(h('button', {
-        class: `frame-cell ${i === Number(num.value) ? 'on' : ''}`,
-        title: `${i}`,
-        style: `left:${r.x * zoom}px;top:${r.y * zoom}px;width:${fw * zoom}px;height:${fh * zoom}px`,
-        onclick: () => { num.value = String(i); paint(i); commit(i, true); close(); },
+        class: `frame-cell ${f.index === cur?.index ? 'on' : ''}`,
+        title: frameLabel(f),
+        style: `left:${f.x * zoom}px;top:${f.y * zoom}px;width:${f.w * zoom}px;height:${f.h * zoom}px`,
+        onclick: () => { const v = f.name ?? f.index; num.value = String(v); paint(v); commit(v, true); close(); },
       }));
     }
     const clips = Object.entries(s.sheet.clips ?? {}).map(([n, c]) => `${n}: ${c.frames.join(',')}`).join('  ');
+    const kind = s.sheet.frames ? '自由な矩形' : `格子 ${s.sheet.frame!.join('x')}px`;
     return h('div', {}, h('h3', {}, `コマを選ぶ — ${s.image}`),
-      h('div', { class: 'muted', style: 'margin-bottom:8px' }, `${count}コマ（${cols}列）・1コマ ${fw}×${fh}px${clips ? `　動き ${clips}` : ''}`),
+      h('div', { class: 'muted', style: 'margin-bottom:8px' }, `${count}コマ（${kind}）${clips ? `　動き ${clips}` : ''}`),
       h('div', { style: 'overflow:auto;max-height:60vh' }, grid),
-      h('div', { class: 'row', style: 'justify-content:flex-end;margin-top:10px' }, h('button', { onclick: close }, '閉じる')));
+      h('div', { class: 'row', style: 'justify-content:space-between;margin-top:10px' },
+        h('button', { onclick: () => { close(); app.emit('openSprite', s.image); } }, '✂ 切り方を編集'),
+        h('button', { onclick: close }, '閉じる')));
   });
   preview.addEventListener('click', pick);
   const wrap = h('div', { class: 'ctl' }, preview, num, h('button', { onclick: pick, title: '絵を見て選ぶ' }, '選ぶ'), h('span', { class: 'muted' }, `/${count}`));
-  return { el: wrap, set: (v) => { num.value = String(v); paint(Number(v)); } };
+  return { el: wrap, set: (v) => { num.value = String(v); paint(v as FrameRef); } };
 }
 
 const round = (v: number) => (Number.isInteger(v) ? v : Math.round(v * 1000) / 1000);

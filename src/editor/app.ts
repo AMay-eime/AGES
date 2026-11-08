@@ -97,6 +97,7 @@ export class App {
     if (this.registry) {
       this.registry.prefabs = new Map(Object.entries(s.prefabs));
       this.registry.sheets = new Map(Object.entries(s.sheets ?? {}));
+      this.registry.images = new Map(s.assets.filter((a) => a.w && a.h).map((a) => [a.path, { w: a.w!, h: a.h! }]));
     }
     if (!this.scene || !s.scenes[this.scene]) this.scene = s.config.startScene in s.scenes ? s.config.startScene : Object.keys(s.scenes)[0] ?? '';
     this.rebuildPreview();
@@ -126,9 +127,9 @@ export class App {
     }
   }
 
-  async setLock(paths: string[], locked: boolean, note?: string): Promise<void> {
+  async setLock(paths: string[], locked: boolean, note?: string, win = 'inspector'): Promise<void> {
     try {
-      await this.api(locked ? '/api/lock' : '/api/unlock', { body: { paths, note } });
+      await this.api(locked ? '/api/lock' : '/api/unlock', { body: { paths, note, win } });
       await this.refresh();
     } catch (e) {
       toast((e as Error).message, 'bad');

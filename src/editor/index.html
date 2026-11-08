@@ -83,6 +83,28 @@
   .toast { background: var(--panel2); border: 1px solid var(--line); border-left: 3px solid var(--accent); padding: 8px 12px; border-radius: 4px; max-width: 440px; box-shadow: 0 4px 16px #0006; white-space: pre-wrap; }
   .toast.bad { border-left-color: var(--bad); }
   .toast.lock { border-left-color: var(--lock); }
+  /* 切り方（スプライトエディタ） */
+  .sprite-bar { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-bottom: 1px solid var(--line); flex-wrap: wrap; flex: none; }
+  .sprite-body { flex: 1; display: flex; min-height: 0; }
+  .sprite-scroll { flex: 1; overflow: auto; background: #0e0f13; padding: 12px; min-width: 0; }
+  .sprite-canvas { display: block; cursor: crosshair; outline: none; box-shadow: 0 0 0 1px var(--line); }
+  .sprite-side { width: 310px; flex: none; overflow: auto; border-left: 1px solid var(--line); }
+  .sprite-sec { padding: 8px; border-bottom: 1px solid var(--line); }
+  .sprite-h { font-weight: 600; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+  .sprite-h .spacer { flex: 1; }
+  .sprite-list { max-height: 240px; overflow: auto; font: var(--mono); }
+  .sprite-list .item { display: flex; gap: 4px; padding: 1px 4px; cursor: pointer; border-radius: 3px; }
+  .sprite-list .item:hover { background: var(--panel2); }
+  .sprite-list .item.sel { background: #2f4a6b; }
+  .sprite-hint { padding: 3px 8px; border-top: 1px solid var(--line); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
+  .sprite-err { color: var(--bad); padding: 8px; font-size: 12px; white-space: pre-wrap; }
+  .sprite-preview { display: block; margin: 6px auto 0; border: 1px solid var(--line); }
+  .clip { padding: 4px; border-radius: 4px; margin-bottom: 4px; }
+  .clip.sel { background: #5fd38d14; outline: 1px solid #5fd38d55; }
+  .seg { display: flex; margin-bottom: 4px; }
+  .seg button { flex: 1; border-radius: 0; }
+  .seg button:first-child { border-radius: 4px 0 0 4px; }
+  .seg button:last-child { border-radius: 0 4px 4px 0; }
   .asset-thumb { width: 28px; height: 28px; object-fit: contain; image-rendering: pixelated; background: #0006; border: 1px solid var(--line); border-radius: 3px; flex: none; cursor: pointer; }
   .frame-grid { image-rendering: pixelated; background-color: #0008 !important; }
   .frame-cell { position: absolute; padding: 0; margin: 0; border: 1px solid #fff2; background: transparent; border-radius: 0; cursor: pointer; }

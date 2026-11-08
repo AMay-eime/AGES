@@ -117,8 +117,9 @@ async function handleChanges(paths: string[]): Promise<void> {
   }
   if (!fresh.length) return;
   const code = fresh.some((p) => p.endsWith('.ts') || p === 'ages.project.json');
-  const docs = fresh.some((p) => /^(scenes|prefabs)\/.+\.json$/.test(p));
-  const assets = fresh.some((p) => p.endsWith('.sheet.json') || /\.(png|jpe?g|webp|gif|wav|mp3|ogg|m4a|ttf|otf|woff2?)$/i.test(p));
+  // 画像の切り方（.sheet.json）もシーン・プレハブと同じ扱い（外からの編集を記録し、ロックを戻す）
+  const docs = fresh.some((p) => /^(scenes|prefabs)\/.+\.json$/.test(p) || p.endsWith('.sheet.json'));
+  const assets = fresh.some((p) => /\.(png|jpe?g|webp|gif|wav|mp3|ogg|m4a|ttf|otf|woff2?)$/i.test(p));
   if (code) {
     version++;
     await startWorker();
@@ -236,8 +237,8 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
     return json(res, { ok: true });
   }
   if (m === 'POST' && (p === '/api/lock' || p === '/api/unlock')) {
-    const { paths, note } = JSON.parse((await body(req)).toString('utf8'));
-    await call(p === '/api/lock' ? 'lock' : 'unlock', paths, human(req, 'inspector'), note);
+    const { paths, note, win } = JSON.parse((await body(req)).toString('utf8'));
+    await call(p === '/api/lock' ? 'lock' : 'unlock', paths, human(req, win ?? 'inspector'), note);
     broadcast({ type: 'locks' });
     return json(res, { ok: true });
   }
@@ -251,7 +252,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
       await writeFile(abs, text);
       known.set(abs, text);
       const who = human(req, 'text');
-      if (/^(scenes|prefabs)\/.+\.json$/.test(rel)) {
+      if (/^(scenes|prefabs)\/.+\.json$/.test(rel) || rel.endsWith('.sheet.json')) {
         const r = await call('humanTextEdit', who);
         broadcast({ type: 'docs', by: who.who, changes: r.changes });
       } else if (rel.endsWith('.ts') || rel === 'ages.project.json') {

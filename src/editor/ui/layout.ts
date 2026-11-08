@@ -14,6 +14,8 @@ export interface Panel {
   fill?: boolean;
   /** 表示されたとき・状態が変わったときに呼ばれる */
   render?(): void;
+  /** 保存された配置にまだないとき、最初に置くエリア（既定: 下） */
+  area?: AreaName;
 }
 
 export interface LayoutData {
@@ -23,7 +25,7 @@ export interface LayoutData {
 }
 
 export const DEFAULT_LAYOUT: LayoutData = {
-  areas: { left: ['hierarchy', 'project'], center: ['game', 'matrix', 'text'], bottom: ['log', 'git'], right: ['inspector'] },
+  areas: { left: ['hierarchy', 'project'], center: ['game', 'matrix', 'sprite', 'text'], bottom: ['log', 'git'], right: ['inspector'] },
   active: { left: 'hierarchy', center: 'game', bottom: 'log', right: 'inspector' },
   sizes: { left: 260, right: 360, bottom: 210 },
 };
@@ -73,7 +75,7 @@ export class Layout {
   build(): void {
     // 新しく増えたパネル（カスタムウインドウなど）は下のエリアへ。消えたパネルは外す
     const placed = new Set(AREAS.flatMap((a) => this.data.areas[a]));
-    for (const id of this.panels.keys()) if (!placed.has(id)) this.data.areas.bottom.push(id);
+    for (const [id, p] of this.panels) if (!placed.has(id)) this.data.areas[p.area ?? 'bottom'].push(id);
     for (const a of AREAS) {
       this.data.areas[a] = this.data.areas[a].filter((id) => this.panels.has(id));
       if (!this.data.areas[a].includes(this.data.active[a] ?? '')) this.data.active[a] = this.data.areas[a][0];

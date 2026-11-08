@@ -65,6 +65,7 @@ export function hierarchyPanel(app: App): Panel {
 
 // ---------- プロジェクト（ファイル） ----------
 const TEXT_EXT = /\.(json|ts|js|md|txt|css|html)$/;
+const IMAGE_EXT = /\.(png|jpe?g|webp|gif)$/i;
 
 export function projectPanel(app: App, openText: (path: string) => void): Panel {
   const el = h('div', {});
@@ -92,7 +93,8 @@ export function projectPanel(app: App, openText: (path: string) => void): Panel 
       files.map((f) => h('div', {
         class: 'item',
         title: `${f.path}（${f.size} bytes）`,
-        onclick: () => TEXT_EXT.test(f.path) ? openText(f.path) : window.open(`/project@${app.state.version}/${f.path}`),
+        // 画像は「切り方」で開く（コマ・基準点・動きを決められる）
+        onclick: () => TEXT_EXT.test(f.path) ? openText(f.path) : IMAGE_EXT.test(f.path) ? app.emit('openSprite', f.path) : window.open(`/project@${app.state.version}/${f.path}`),
       }, f.path.split('/').pop()!, h('span', { class: 'muted' }, kb(f.size)))),
     ])));
   };
@@ -317,7 +319,16 @@ export function logPanel(app: App): Panel {
   const fmt = (v: unknown) => (v === undefined ? '' : typeof v === 'string' ? v : JSON.stringify(v));
   const render = async () => {
     try {
-      const entries = await app.api<{ t: string; who: string; kind: string; win?: string; op: string; path: string; from?: unknown; to?: unknown }[]>('/api/log?limit=300');
+      type E = { t: string; who: string; kind: string; win?: string; op: string; path: string; from?: unknown; to?: unknown };
+      const raw = await app.api<E[]>('/api/log?limit=300');
+      // 同じ操作での画像の切り方の変更（コマごとに記録される）は、1行にまとめて見せる
+      const entries: E[] = [];
+      for (const e of raw) {
+        const root = e.path.startsWith('sheet:') && e.path.includes('|') ? e.path.split('|')[0] : null;
+        const prev = entries[entries.length - 1] as E & { n?: number; root?: string };
+        if (root && prev?.root === root && prev.t === e.t && prev.who === e.who) { prev.n = (prev.n ?? 1) + 1; prev.to = `切り方 ${prev.n}件変更`; continue; }
+        entries.push(root ? { ...e, path: root, from: undefined, to: `切り方 ${e.path.split('|')[1]} ${typeof e.to === 'string' ? e.to : '変更'}`, root } as E : e);
+      }
       clear(el, entries.length ? entries.reverse().map((e) => h('div', { class: 'line' },
         h('span', { class: 'muted' }, time(e.t), ' '),
         h('span', { class: `who-${e.kind}` }, `${e.who}`), h('span', { class: 'muted' }, `(${e.win ?? e.kind}) `),
