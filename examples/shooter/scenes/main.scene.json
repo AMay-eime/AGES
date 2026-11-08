@@ -1,0 +1,138 @@
+{
+  "name": "main",
+  "entities": [
+    {
+      "id": "player",
+      "name": "Player",
+      "tags": [
+        "player"
+      ],
+      "components": {
+        "Transform": {
+          "x": 240,
+          "y": 560
+        },
+        "Shape": {
+          "kind": "rect",
+          "w": 26,
+          "h": 26,
+          "color": "#5ee6ff"
+        },
+        "Player": {
+          "speed": 4.5,
+          "fireInterval": 8
+        },
+        "Health": {
+          "hp": 3
+        }
+      }
+    },
+    {
+      "id": "spawner",
+      "name": "Enemy Spawner",
+      "components": {
+        "Spawner": {
+          "interval": 45,
+          "formation": [
+            [
+              0,
+              0,
+              0,
+              1,
+              1,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1,
+              0,
+              0,
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              1,
+              0,
+              0,
+              0,
+              0,
+              1,
+              0
+            ],
+            [
+              1,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              1
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              1,
+              0,
+              1,
+              0,
+              1,
+              0,
+              1,
+              0
+            ],
+            [
+              0,
+              1,
+              0,
+              1,
+              0,
+              1,
+              0,
+              1
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "id": "hud",
+      "name": "HUD",
+      "components": {
+        "Transform": {
+          "x": 12,
+          "y": 24
+        },
+        "Text": {
+          "text": "",
+          "size": 16,
+          "color": "#e8ecff"
+        },
+        "Score": {}
+      }
+    }
+  ]
+}

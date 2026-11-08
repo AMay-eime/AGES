@@ -1,0 +1,12 @@
+{
+  "name": "enemy",
+  "desc": "まっすぐ落ちてくる敵",
+  "tags": ["enemy"],
+  "components": {
+    "Transform": {},
+    "Shape": { "kind": "circle", "w": 28, "h": 28, "color": "#ff5d73" },
+    "Velocity": { "vy": 2 },
+    "Health": { "hp": 2 },
+    "Enemy": { "score": 100 }
+  }
+}
