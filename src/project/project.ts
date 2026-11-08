@@ -12,6 +12,7 @@ import { suggest } from '../core/schema.ts';
 import { appendLog, localTime, lockedHits, markTouched, readLocks as readLockFile, readLog, readTouched, writeLocks, type Actor, type LockMark } from './oplog.ts';
 import { lockDiff, verifyLocks, type LockIntegrity } from './seal.ts';
 import { scanAssets, type AssetInfo } from './assets.ts';
+import { FIT_MODES } from '../core/camera.ts';
 import { checkSheet, checkSheetImage, findFrame, frameCount, sheetPathOf, type SheetDef } from '../core/sheet.ts';
 
 // ゲームコードの import ... from 'ages' を、どのフォルダにあるプロジェクトからでもこのエンジンに向ける
@@ -247,6 +248,20 @@ export class Project {
         ids.add(e.id);
         check(`${s.name}#${e.id}`, e.components);
       }
+      // 同じシーンの中のIDを指す値（例: Camera.follow）は、その相手がいること
+      const all = s.entities.map((e) => e.id);
+      for (const e of s.entities) {
+        for (const [name, values] of Object.entries(e.components)) {
+          const def = this.registry.components.get(name);
+          for (const [k, f] of Object.entries(def?.fields ?? {})) {
+            const v = values[k];
+            if (f.type === 'ref' && typeof v === 'string' && v && !ids.has(v)) errs.push(`${s.name}#${e.id}.${name}.${k}="${v}": シーン ${s.name} にそのIDはありません${suggest(v, all)}`);
+          }
+        }
+      }
+    }
+    if (this.config.view.fit && !FIT_MODES.includes(this.config.view.fit)) {
+      errs.push(`ages.project.json の view.fit="${this.config.view.fit}" は ${FIT_MODES.join(' | ')} のどれかです${suggest(this.config.view.fit, FIT_MODES)}`);
     }
     for (const p of this.docs.prefabs.values()) check(`@${p.name}`, p.components);
     if (!this.docs.scenes.has(this.config.startScene)) errs.push(`開始シーン ${this.config.startScene} がありません`);

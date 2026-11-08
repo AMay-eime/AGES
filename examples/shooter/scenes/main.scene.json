@@ -139,6 +139,17 @@
         },
         "Score": {}
       }
+    },
+    {
+      "id": "camera",
+      "name": "Camera",
+      "components": {
+        "Transform": {
+          "x": 240,
+          "y": 320
+        },
+        "Camera": {}
+      }
     }
   ]
 }

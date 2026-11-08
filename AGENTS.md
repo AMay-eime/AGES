@@ -53,6 +53,8 @@ AGESに足りない機能（画像・音・物理など。docs/PLAN.md の段階
 - 切り方は `ages sheet <dir> <画像>` で見る。画像を開いて確かめない（何コマあるかは `ages map` にも出る）
 - 切るのは `ages slice <dir> <画像> --grid 32x32 | --count 4x6 | --auto`（`--dry` で保存せずに確かめる）。1コマ・1動きの変更は patch の `setFrame` / `setClip`。`.sheet.json` を直接書き換えない
 - コマを指定するときは名前を使う（切り直してもずれない）。切り方の🔒・★はシーンの値と同じ扱い
+- カメラは標準の Camera（`ages schema <dir> Camera`）。追いかけ・範囲の制限・揺れは自分で書かない。揺らすのは `ctx.shake(0〜1)`
+- 画面の大きさへの合わせ方は `ages.project.json` の `view.fit`。ゲームのロジックは `ctx.view`（設計の大きさ）だけを使う
 
 ## エディタウインドウ
 
