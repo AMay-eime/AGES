@@ -26,6 +26,10 @@ export interface EditorState {
   sheets: Record<string, import('../core/sheet.ts').SheetDef>;
   tables: Record<string, import('../core/table.ts').TableDoc>;
   assets: { path: string; kind: 'image' | 'sound' | 'font'; bytes: number; w?: number; h?: number; sec?: number }[];
+  /** コードの中でアセットの場所を書いている所（場所 → "game/x.ts:12"） */
+  codeRefs: Record<string, string[]>;
+  /** フォルダの一覧（空のフォルダも） */
+  dirs: string[];
   error?: string;
 }
 
@@ -74,7 +78,7 @@ export class App {
       body: init.raw ?? (init.body !== undefined ? JSON.stringify(init.body) : undefined),
     });
     const data = await res.json();
-    if (!res.ok || data?.error) throw new Error(data?.error ?? res.statusText);
+    if (!res.ok || data?.error) throw Object.assign(new Error(data?.error ?? res.statusText), { status: res.status, data });
     return data;
   }
 
@@ -123,8 +127,9 @@ export class App {
 
   async patch(ops: Op[], win = 'inspector'): Promise<Change[] | null> {
     try {
-      const r = await this.api<{ changes: Change[] }>('/api/patch', { body: { ops, win } });
+      const r = await this.api<{ changes: Change[]; warnings?: string[] }>('/api/patch', { body: { ops, win } });
       await this.refresh();
+      for (const w of r.warnings ?? []) toast(`⚠ ${w}`, 'bad', 8000);
       return r.changes;
     } catch (e) {
       toast((e as Error).message, 'bad', 6000);

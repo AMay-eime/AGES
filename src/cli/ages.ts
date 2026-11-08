@@ -5,10 +5,11 @@ import { existsSync } from 'node:fs';
 import { join, resolve, relative, basename, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Project } from '../project/project.ts';
-import { renderMap } from '../project/map.ts';
+import { renderAssets, renderMap } from '../project/map.ts';
 import { readCursor, readLog, readTouched, summarize, writeCursor, type Actor } from '../project/oplog.ts';
 import { getValue, parseLiteral, splitCell, type Op } from '../core/patch.ts';
-import { brief, defaultOf, matrixSize, suggest, typeOf } from '../core/schema.ts';
+import { brief, defaultOf, matrixSize, suggest, typeOf, type AssetKind } from '../core/schema.ts';
+import { assetRefs, isUnder } from '../core/assets.ts';
 import { parseAddress } from '../core/docs.ts';
 import { cellsToRows, formatDelimited, importOps, parseDelimited, tableToCells } from '../core/csv.ts';
 import type { Row, TableDoc } from '../core/table.ts';
@@ -26,13 +27,15 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   get    <dir> <addr> [addr ...]     値を見る（例: main#player / main#player.Player.speed / @enemy / $enemies.basic）
   set    <dir> <addr> <value> [--force]  行列のセルは addr[行,列]（例 main#spawner.Spawner.formation[2,3] 1）
   patch  <dir> <ops.json | -> [--force]   操作の配列（set/setCells/insert/removeItem/moveItem/addEntity/removeEntity/addComponent/removeComponent/rename/
-               addRow/removeRow/moveRow/renameRow/setSheet/setFrame/setClip）
+               addRow/removeRow/moveRow/renameRow/setSheet/setFrame/setClip/moveAsset/removeAsset）
+               例 {"op":"moveAsset","from":"assets/a.png","to":"assets/ships/a.png"}（フォルダも可。使っている値と切り方も一緒に動く）
   table  <dir> <表> [--cols a,b] [--rows id1,id2]   表を見る（1行1行）
                [--export x.csv] [--import x.csv [--force]]   表計算ソフトとの行き来（読み込みは表をまるごと置き換える）
   run    <dir> [--frames 600] [--scene main] [--seed 1] [--keys "0-120:ArrowLeft+KeyZ;120-200:@move_x=1;30:Mouse0+ptr=240,100"]
                [--input recordings/x.input.json] [--watch player.Health.hp,...] [--every 60] [--until gameOver] [--twice] [--dump]
   log    <dir> [--all] [--peek]      前回からの編集の要約（--peek は既読にしない）
   check  <dir>                       全データの検証とロックの検査
+  assets <dir> [フォルダ] [--kind image|sound|font] [--unused] [--refs 場所]   アセットの一覧（使っている所の数）・使っている所
   sheet  <dir> <画像>                 画像の切り方（コマの名前・位置・基準点・動き）を見る
   slice  <dir> <画像> --grid 32x32 | --count 4x6 | --auto  画像を切る（前と同じ場所のコマは名前を引き継ぐ）
                [--spacing n] [--margin n] [--skip-empty] [--alpha 1] [--min 2] [--gap 0] [--pad 0] [--pivot 0.5,1] [--dry] [--force]
@@ -80,7 +83,7 @@ function compact(obj: Record<string, unknown>): string {
 export async function cmdMap(dir: string): Promise<string> {
   const p = await Project.load(dir);
   const plan = await planWarning(p.dir);
-  return withLockReport(p, (plan ? plan + '\n' : '') + renderMap(p, await readTouched(p.dir), await p.effectiveLocks()));
+  return withLockReport(p, (plan ? plan + '\n' : '') + renderMap(p, await readTouched(p.dir), await p.effectiveLocks(), await p.codeRefs()));
 }
 
 /** エディタ計画書が未合意なら警告文を返す */
@@ -240,9 +243,38 @@ export async function cmdPatch(dir: string, ops: Op[], force: boolean): Promise<
   const r = await p.apply(ops, AI_ACTOR, { force });
   if (!r.changes.length) return '変更なし（すでに同じ値です）';
   const show = (v: unknown) => (isMatrix(v) ? `行列${matrixSize(v)}` : fmt(v));
-  return r.changes.map((c) => (c.to === 'added' || c.to === 'removed' ? `ok ${c.path} ${c.to === 'added' ? '追加' : '削除'}`
+  return [...r.changes.map((c) => (c.to === 'added' || c.to === 'removed' ? `ok ${c.path} ${c.to === 'added' ? '追加' : '削除'}`
     : typeof c.to === 'string' && c.to.startsWith('renamed:') ? `ok ${c.path} → ${c.path.replace(/[^.]+$/, c.to.slice('renamed:'.length))}（ID の変更）`
-    : `ok ${c.path} ${show(c.from)} → ${show(c.to)}${c.auto ? '（自動）' : ''}`)).join('\n');
+    : c.path.startsWith('file:') ? `ok ${c.path} → ${c.to}（場所の変更）`
+    : `ok ${c.path} ${show(c.from)} → ${show(c.to)}${c.auto ? '（自動）' : ''}`)), ...(r.warnings ?? []).map((w) => `⚠ ${w}`)].join('\n');
+}
+
+/** アセットの一覧（フォルダごと・使っている所の数）。refs を渡すと、そのアセットを使っている所 */
+export async function cmdAssets(dir: string, folder: string | undefined, f: Args['flags']): Promise<string> {
+  const p = await Project.load(dir);
+  const code = await p.codeRefs();
+  if (typeof f.refs === 'string') {
+    const path = f.refs;
+    const a = p.assets.find((x) => x.path === path);
+    if (!a) {
+      const inside = p.assets.filter((x) => isUnder(x.path, path.replace(/\/+$/, '')));
+      if (!inside.length) throw new Error(`ファイル ${path} はありません${suggest(path, p.assets.map((x) => x.path))}`);
+    }
+    const refs = assetRefs(p.docs, p.registry);
+    const targets = a ? [a.path] : p.assets.filter((x) => isUnder(x.path, path.replace(/\/+$/, ''))).map((x) => x.path);
+    const lines: string[] = [];
+    for (const t of targets) {
+      const at = [...(refs.get(t) ?? []), ...(code.get(t) ?? []).map((c) => `${c}（コード）`)];
+      lines.push(`${t}: ${at.length ? at.join(' ') : '未使用'}`);
+    }
+    return lines.join('\n');
+  }
+  const kind = typeof f.kind === 'string' ? f.kind : undefined;
+  if (kind && !['image', 'sound', 'font'].includes(kind)) throw new Error(`--kind は image / sound / font のどれかです${suggest(kind, ['image', 'sound', 'font'])}`);
+  const lines = renderAssets(p, { touched: await readTouched(p.dir), locks: await p.effectiveLocks(), code, folder: folder?.replace(/\/+$/, ''), kind: kind as AssetKind | undefined, unused: !!f.unused, counts: true });
+  const n = lines.filter((l) => l.startsWith('  ')).length;
+  if (!n) return folder || kind || f.unused ? '該当するアセットはありません' : 'アセットはまだありません（assets/ にファイルを置く）';
+  return [`アセット ${n}件${f.unused ? '（未使用）' : ''}。場所を変える: patch の moveAsset（使っている値も直る）／消す: removeAsset（使っていないものだけ）`, ...lines].join('\n');
 }
 
 /** プロジェクトの操作の名前と割り当て（$actions） */
@@ -450,6 +482,7 @@ async function main(argv: string[]): Promise<void> {
     case 'run': out = await cmdRun(dir, a.flags); break;
     case 'log': out = await cmdLog(dir, a.flags); break;
     case 'check': out = await cmdCheck(dir); break;
+    case 'assets': out = await cmdAssets(dir, a.pos[1], a.flags); break;
     case 'sheet': out = await cmdSheet(dir, need(a.pos[1], '画像の場所（例 assets/hero.png）')); break;
     case 'slice': out = await cmdSlice(dir, need(a.pos[1], '画像の場所（例 assets/hero.png）'), a.flags); break;
     case 'table': out = await cmdTable(dir, need(a.pos[1], '表の名前（例 enemies）').replace(/^\$/, ''), a.flags); break;

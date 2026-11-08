@@ -12,6 +12,7 @@ import { execFile } from 'node:child_process';
 import { resolve, join, relative, extname, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { summarize, readLog } from '../project/oplog.ts';
+import { checkAssetPath, freeName } from '../core/assets.ts';
 
 process.removeAllListeners('warning');
 
@@ -140,7 +141,8 @@ const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.ts': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.wav': 'audio/wav',
-  '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8',
+  '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8',
+  '.ttf': 'font/ttf', '.otf': 'font/otf', '.woff': 'font/woff', '.woff2': 'font/woff2',
 };
 
 function inside(dir: string, rel: string): string {
@@ -188,6 +190,17 @@ async function listFiles(dir = projectDir, base = ''): Promise<{ path: string; s
   return out;
 }
 
+/** フォルダの一覧（空のフォルダも。アセットの画面で使う） */
+async function listDirs(dir = projectDir, base = ''): Promise<string[]> {
+  const out: string[] = [];
+  for (const d of (await readdir(dir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
+    if (!d.isDirectory() || d.name === '.git' || d.name === 'node_modules' || d.name === '.ages') continue;
+    const rel = base ? `${base}/${d.name}` : d.name;
+    out.push(rel, ...(await listDirs(join(dir, d.name), rel)));
+  }
+  return out;
+}
+
 function git(a: string[]): Promise<string> {
   return new Promise((ok) => {
     execFile('git', a, { cwd: projectDir }, (err, stdout, stderr) => ok((stdout + stderr).trim() || (err ? err.message : '')));
@@ -221,7 +234,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
     req.on('close', () => clients.delete(res));
     return;
   }
-  if (p === '/api/state') return json(res, { ...(await call('state')), version, files: await listFiles() });
+  if (p === '/api/state') return json(res, { ...(await call('state')), version, files: await listFiles(), dirs: await listDirs() });
   if (p === '/api/log') return json(res, await call('log', Number(url.searchParams.get('limit') ?? 200)));
 
   if (m === 'POST' && p === '/api/patch') {
@@ -264,12 +277,30 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
     }
   }
   if (m === 'POST' && p === '/api/upload') {
-    const rel = url.searchParams.get('path') ?? '';
-    const abs = inside(projectDir, rel);
+    // 取り込み。同じ名前があるとき: mode=replace で差し替え、mode=keep で別の名前（-2 など）、指定がなければ 409 で知らせる
+    let rel = (url.searchParams.get('path') ?? '').replace(/\\/g, '/');
+    const mode = url.searchParams.get('mode') ?? 'new';
+    const bad = checkAssetPath(rel);
+    if (bad) return json(res, { error: bad }, 400);
+    const exists = (r: string) => existsSync(inside(projectDir, r));
     const data = await body(req);
+    const had = exists(rel);
+    if (had && mode === 'new') return json(res, { error: `${rel} はすでにあります`, exists: true, free: freeName(rel, exists) }, 409);
+    if (had && mode === 'keep') rel = freeName(rel, exists);
+    const abs = inside(projectDir, rel);
     await mkdir(dirname(abs), { recursive: true });
     await writeFile(abs, data);
     known.set(abs, data.toString('utf8'));
+    await call('logFiles', human(req, 'assets'), [{ path: `file:${rel}`, to: had && mode === 'replace' ? 'replaced' : 'added' }]);
+    await call('recheckLocks');
+    broadcast({ type: 'files', paths: [rel] });
+    return json(res, { ok: true, path: rel });
+  }
+  if (m === 'POST' && p === '/api/mkdir') {
+    const rel = (url.searchParams.get('path') ?? '').replace(/\\/g, '/').replace(/\/+$/, '');
+    const bad = checkAssetPath(rel);
+    if (bad) return json(res, { error: bad }, 400);
+    await mkdir(inside(projectDir, rel), { recursive: true });
     broadcast({ type: 'files', paths: [rel] });
     return json(res, { ok: true, path: rel });
   }

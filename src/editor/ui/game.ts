@@ -6,8 +6,10 @@
 import type { App } from '../app.ts';
 import { Renderer } from '../../render/webgl.ts';
 import { camerasOf, fitView, screenToWorld, visibleCorners, worldToScreen, FIT_MODES, type CameraView, type FitMode } from '../../core/camera.ts';
-import { h } from './dom.ts';
+import { h, toast } from './dom.ts';
 import type { Panel } from './layout.ts';
+import { ASSET_MIME } from './assets.ts';
+import { baseOf, extOf, kindOf } from '../../core/assets.ts';
 
 const SCREENS: [string, number | null][] = [['パネルに合わせる', null], ['16:9', 16 / 9], ['4:3', 4 / 3], ['1:1', 1], ['9:16（スマホ縦）', 9 / 16], ['9:19.5（細長いスマホ縦）', 9 / 19.5], ['19.5:9（細長いスマホ横）', 19.5 / 9]];
 const FIT_LABEL: Record<FitMode, string> = { contain: '全体を入れる', cover: 'はみ出しを切る', stretch: '伸ばす', expand: '広い分だけ周りも見せる', pixel: '整数倍だけ' };
@@ -166,6 +168,36 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     }
     return out;
   };
+
+  // ---------- アセットを落として置く ----------
+  // 画像は Sprite、音は Sound、フォントは Text を付けた物を、落とした場所に作る
+  canvas.addEventListener('dragover', (e) => {
+    if (!e.dataTransfer?.types.includes(ASSET_MIME)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+  canvas.addEventListener('drop', async (e) => {
+    const path = e.dataTransfer?.getData(ASSET_MIME);
+    const kind = path ? kindOf(path) : null;
+    if (!path || !kind || !renderer) return;
+    e.preventDefault();
+    if (app.play) return toast('停止してから置いてください', 'bad');
+    const scene = app.state.scenes[app.scene];
+    if (!scene) return;
+    const p = toCanvas(e);
+    const cam = viewMode === 'free' ? free : [...renderer.cams].reverse().find((c) => inView(c, p.x, p.y)) ?? renderer.cams[0];
+    const [wx, wy] = cam ? screenToWorld(cam, p.x, p.y) : [p.x, p.y];
+    const stem = baseOf(path).slice(0, -extOf(path).length).replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '') || kind;
+    const taken = new Set(scene.entities.map((x) => x.id));
+    let id = stem;
+    for (let i = 2; taken.has(id); i++) id = `${stem}_${i}`;
+    const pos = { x: Math.round(wx), y: Math.round(wy) };
+    const components: Record<string, Record<string, unknown>> = kind === 'image' ? { Transform: pos, Sprite: { image: path } }
+      : kind === 'sound' ? { Sound: { clip: path } }
+      : { Transform: pos, Text: { text: 'テキスト', font: path } };
+    const r = await app.patch([{ op: 'addEntity', scene: app.scene, entity: { id, name: baseOf(path).slice(0, -extOf(path).length) || id, components } }], 'game');
+    if (r) app.select({ kind: 'scene', scene: app.scene, id });
+  });
 
   // ---------- マウス ----------
   let last: { x: number; y: number; ids: string[]; i: number } | null = null;

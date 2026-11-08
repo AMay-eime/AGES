@@ -38,6 +38,7 @@ node bin/ages.js map examples/shooter            # プロジェクトの地図
 node bin/ages.js get examples/shooter main#player # 値を見る
 node bin/ages.js set examples/shooter main#player.Player.speed 5
 node bin/ages.js table examples/shooter enemies  # 表を見る（$enemies.basic.hp のように住所で読み書き）
+node bin/ages.js assets examples/shooter          # アセットの一覧（使っている所の数・未使用）
 node bin/ages.js sheet examples/shooter assets/kenney-pixel-shmup/ships.png  # 画像の切り方
 node bin/ages.js run examples/shooter --frames 600 --watch main#player.Health.hp
 node bin/ages.js log examples/shooter            # 前回からの編集の要約
@@ -55,7 +56,8 @@ claude mcp add ages -- node /path/to/AGES/src/mcp/server.ts --project /path/to/m
 
 ## エディタでできること
 
-- 階層・プロジェクト（ファイル一覧、ドロップで assets/ に追加）・インスペクタ・ゲーム・テキスト・操作ログ・Git
+- 階層・プロジェクト（ファイル一覧）・アセット・インスペクタ・ゲーム・テキスト・操作ログ・Git
+- アセット: フォルダの木と一覧（画像・音・フォントの見本）、取り込み（ドロップ）、名前の変更・移動・削除。場所を変えると使っている値も直り、使われているものは消せない。ゲームの画面へドラッグすると置ける
 - インスペクタはコンポーネントの宣言から自動生成。各値に 🔒 ロック（AIは変更不可）を付けられる。「🔒を隠す」でロック済みの値を非表示にできる
 - 2次元行列のパラメータは専用の行列エディタで編集（表計算ソフトからの貼り付け、別ウインドウ表示に対応）
 - リスト・構造体・どれか1つ（命令の列など）は、インスペクタの中でそのまま編集（足す・消す・並べ替え）

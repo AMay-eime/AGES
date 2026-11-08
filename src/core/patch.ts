@@ -6,6 +6,7 @@ import { ROW_ID, type Row, type TableDoc } from './table.ts';
 import type { Registry } from './registry.ts';
 import { baseNameOf, checkSheet, findFrame, sheetPathOf, toExplicit, type FrameDef, type FrameRef, type SheetDef } from './sheet.ts';
 import { frameMapper, remapRef } from './slice.ts';
+import { assetRefs, checkAssetPath, extOf, isUnder, kindOf } from './assets.ts';
 
 export type Op =
   | { op: 'set'; path: string; value: unknown }
@@ -41,7 +42,11 @@ export type Op =
   /** 表の中で行を動かす（to は動かした後の番号） */
   | { op: 'moveRow'; table: string; id: string; to: number }
   /** 行の ID を変える。その行を指している値（row 型）も書き換える */
-  | { op: 'renameRow'; table: string; id: string; to: string };
+  | { op: 'renameRow'; table: string; id: string; to: string }
+  /** ファイル（かフォルダ）の場所を変える。使っている値も直る。画像の切り方（.sheet.json）も一緒に動く */
+  | { op: 'moveAsset'; from: string; to: string }
+  /** ファイル（かフォルダ）を消す。使われているものは消せない */
+  | { op: 'removeAsset'; path: string };
 
 /** シートの値の住所。sheet:<画像>（全体）、sheet:<画像>|<コマ>.rect、sheet:<画像>|clip:<動き>.fps */
 export const sheetAddress = (image: string, rest = '') => `sheet:${image}${rest ? '|' + rest : ''}`;
@@ -69,12 +74,25 @@ export interface Docs {
   sheets: Map<string, SheetDef>;
   /** 表（名前 → 行）。ファイルは data/<名前>.table.json */
   tables: Map<string, TableDoc>;
+  /** プロジェクトの中のファイルの場所（アセットの移動・削除で使う。ないときはその操作ができない） */
+  files?: Set<string>;
+}
+
+/** 文書の変更に合わせて行うファイルの操作（to が null なら消す） */
+export interface FileOp {
+  from: string;
+  to: string | null;
+  dir: boolean;
 }
 
 export interface PatchResult {
   changes: Change[];
   /** 変更があった文書（"scene:main" / "prefab:enemy" / "sheet:assets/x.png" / "table:enemies"） */
   dirty: Set<string>;
+  /** ファイルの移動・削除（保存の前に行う） */
+  files: FileOp[];
+  /** 気をつけること（コードの中に書かれた場所は直していない、など） */
+  warnings?: string[];
 }
 
 export class PatchError extends Error {
@@ -216,12 +234,14 @@ export function setValue(docs: Docs, reg: Registry, path: string, value: unknown
 
 /** 操作をまとめて適用する。1つでも失敗したら何も変えない。 */
 export function applyOps(docs: Docs, reg: Registry, ops: Op[]): PatchResult {
-  const work: Docs = { scenes: structuredClone(docs.scenes), prefabs: structuredClone(docs.prefabs), sheets: structuredClone(docs.sheets), tables: structuredClone(docs.tables) };
+  const work: Docs = { scenes: structuredClone(docs.scenes), prefabs: structuredClone(docs.prefabs), sheets: structuredClone(docs.sheets), tables: structuredClone(docs.tables), files: docs.files && new Set(docs.files) };
   const changes: Change[] = [];
   const dirty = new Set<string>();
+  const files: FileOp[] = [];
   ops.forEach((op, i) => {
     try {
-      applyOne(work, reg, op, changes, dirty);
+      if (op.op === 'moveAsset' || op.op === 'removeAsset') assetOp(work, reg, op, changes, dirty, files);
+      else applyOne(work, reg, op, changes, dirty);
     } catch (err) {
       throw new PatchError(i, err instanceof Error ? err.message : String(err));
     }
@@ -236,7 +256,8 @@ export function applyOps(docs: Docs, reg: Registry, ops: Op[]): PatchResult {
     else if (work.sheets.has(name)) docs.sheets.set(name, work.sheets.get(name)!);
     else docs.sheets.delete(name);
   }
-  return { changes, dirty };
+  if (files.length && docs.files && work.files) { docs.files.clear(); for (const f of work.files) docs.files.add(f); }
+  return { changes, dirty, files };
 }
 
 function applyOne(docs: Docs, reg: Registry, op: Op, changes: Change[], dirty: Set<string>): void {
@@ -523,7 +544,11 @@ export function splitItem(path: string): { list: string; index: number } {
 
 /** 行の ID を変えたとき、その行を指している値（row 型。入れ子の中も）を書き換える */
 function renameRowRefs(docs: Docs, reg: Registry, table: string, from: string, to: string, changes: Change[], dirty: Set<string>): void {
-  const fix = (f: Field, v: unknown) => (f.type === 'row' && f.table === table && v === from ? to : undefined);
+  fixLeaves(docs, reg, (f, v) => (f.type === 'row' && f.table === table && v === from ? to : undefined), changes, dirty);
+}
+
+/** シーン・プレハブ・表のすべての値の葉を fix で直す（直したものは自動の変更として記録） */
+function fixLeaves(docs: Docs, reg: Registry, fix: (f: Field, v: unknown) => unknown, changes: Change[], dirty: Set<string>): void {
   const fixHolder = (base: string, comps: Record<string, Record<string, unknown>>, key: string) => {
     for (const [cname, values] of Object.entries(comps)) {
       const def = reg.components.get(cname);
@@ -554,6 +579,63 @@ function renameRowRefs(docs: Docs, reg: Registry, table: string, from: string, t
       }
     }
   }
+}
+
+/** アセットの移動・削除。ファイルそのものは呼び出し側が files に従って動かす */
+function assetOp(docs: Docs, reg: Registry, op: Extract<Op, { op: 'moveAsset' | 'removeAsset' }>, changes: Change[], dirty: Set<string>, fileOps: FileOp[]): void {
+  const files = docs.files;
+  if (!files) throw new Error(`${op.op} はプロジェクトのファイルの一覧がないと使えません`);
+  const norm = (p: unknown, what: string) => {
+    if (typeof p !== 'string') throw new Error(`${op.op} の ${what} にはファイルの場所（文字列）が必要です`);
+    return p.replace(/\\/g, '/').replace(/\/+$/, '');
+  };
+  const from = norm(op.op === 'moveAsset' ? op.from : op.path, op.op === 'moveAsset' ? 'from' : 'path');
+  const inside = [...files].filter((f) => isUnder(f, from));
+  const dir = !files.has(from) && inside.length > 0;
+  if (!files.has(from) && !dir) {
+    const all = [...files].filter((f) => kindOf(f));
+    throw new Error(`ファイル ${from} はありません${suggest(from, all)}`);
+  }
+  const targets = dir ? inside : [from];
+  if (!dir && !kindOf(from)) throw new Error(`${from} は画像・音・フォントではありません（${op.op} はアセットだけ）`);
+  if (op.op === 'removeAsset') {
+    const refs = assetRefs(docs, reg);
+    const used = targets.flatMap((t) => (refs.get(t) ?? []).map((at) => `${at}=${t}`));
+    if (used.length) throw new Error(`${from} は使われているので消せません: ${used.slice(0, 5).join(', ')}${used.length > 5 ? ` ほか${used.length - 5}か所` : ''}。先にその指定を変えてください`);
+    for (const t of targets) {
+      files.delete(t);
+      if (docs.sheets.delete(t)) dirty.add(`sheet:${t}`);
+      const sp = sheetPathOf(t);
+      if (!dir && files.delete(sp)) dirty.add(`sheet:${t}`);
+    }
+    fileOps.push({ from, to: null, dir });
+    changes.push({ path: `file:${from}`, from, to: 'removed' });
+    return;
+  }
+  const to = norm(op.to, 'to');
+  const err = checkAssetPath(to);
+  if (err) throw new Error(err);
+  if (to === from) return;
+  if (dir && isUnder(to, from)) throw new Error(`フォルダ ${from} を、その中（${to}）へは移せません`);
+  if (!dir && [...files].some((f) => isUnder(f, to))) throw new Error(`${to} はフォルダです。中へ入れるなら ${to}/${from.slice(from.lastIndexOf('/') + 1)} のように名前まで書いてください`);
+  if (!dir && extOf(to) !== extOf(from)) throw new Error(`拡張子は変えられません（${extOf(from)} → ${extOf(to) || 'なし'}）。中身の形式が変わらないため`);
+  const map = new Map<string, string>(targets.map((t) => [t, dir ? to + t.slice(from.length) : to]));
+  // 画像の切り方は、隣のファイルごと一緒に動く
+  if (!dir && files.has(sheetPathOf(from))) map.set(sheetPathOf(from), sheetPathOf(to));
+  for (const t of map.values()) if (files.has(t)) throw new Error(`${t} はすでにあります。別の名前にするか、先にそちらを動かしてください`);
+  if (files.has(to)) throw new Error(`${to} はすでにあります`);
+  for (const [f, t] of map) { files.delete(f); files.add(t); }
+  for (const [img, def] of [...docs.sheets]) {
+    const t = map.get(img);
+    if (!t) continue;
+    docs.sheets.delete(img);
+    docs.sheets.set(t, def);
+    dirty.add(`sheet:${img}`);
+    dirty.add(`sheet:${t}`);
+  }
+  fileOps.push({ from, to, dir });
+  changes.push({ path: `file:${from}`, from, to });
+  fixLeaves(docs, reg, (f, v) => (f.type === 'asset' && typeof v === 'string' && map.has(v) ? map.get(v) : undefined), changes, dirty);
 }
 
 /** 切り方の変更で番号がずれたシーン・プレハブの Sprite.frame を直す。無くなったコマを使っていたら止める */
