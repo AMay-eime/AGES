@@ -1,0 +1,9 @@
+{
+  "name": "actions",
+  "rows": [
+    {"id":"move_x","kind":"axis","keys":["ArrowRight","KeyD","Pad.Right"],"negative":["ArrowLeft","KeyA","Pad.Left"],"analog":["Pad.LX"],"desc":"左右に動く"},
+    {"id":"move_y","kind":"axis","keys":["ArrowDown","KeyS","Pad.Down"],"negative":["ArrowUp","KeyW","Pad.Up"],"analog":["Pad.LY"],"desc":"上下に動く"},
+    {"id":"fire","keys":["KeyZ","Space","Pad.A","Mouse0"],"desc":"撃つ"},
+    {"id":"pause","keys":["Escape","Pad.Start"],"desc":"一時停止"}
+  ]
+}

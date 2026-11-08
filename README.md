@@ -62,8 +62,9 @@ claude mcp add ages -- node /path/to/AGES/src/mcp/server.ts --project /path/to/m
 - 表（武器・敵・カードなど同じ形の行が並ぶデータ）は表のエディタで。セルの直接編集、表計算ソフトからの貼り付け、CSV の書き出し・読み込み、セル・行ごとのロック
 - 画像の切り方（スプライトエディタ）: 格子・数・自動で切る、矩形の編集、基準点、動き
 - 標準の部品: 画像・アニメーション・図形・文字・カメラ（追いかけ・揺れ・複数）・音（区分・BGM の重ね）
+- 入力: キーボード・マウス・タッチ・ゲームパッドを「操作の名前」で読む（割り当ては表 `$actions`。⌨ で押して決める）。キーコンフィグはゲームのスクリプトから割り当てを変えて作れる
 - 再生・一時停止・1フレーム送り。実行中に変えた値は、停止時に保存するか選べる
-- 「記録して再生」で入力を recordings/ に保存。AIは `ages run --input` で同じ操作を再現できる
+- 「記録して再生」で入力（キー・パッドの軸・マウスの位置も）を recordings/ に保存。AIは `ages run --input` で同じ操作を再現できる
 - ゲーム画面でクリックして選択（重なっていれば同じ場所をもう一度クリックで奥へ）、ドラッグで移動。カメラの視点と自由な視点、画面の形の切り替え
 - タブはドラッグで別の場所へ移動でき、境界線で大きさを変えられる（配置は .ages/layout.json に保存）
 - プロジェクト独自のウインドウ（`editor/*.window.ts`）を追加できる
@@ -79,9 +80,10 @@ claude mcp add ages -- node /path/to/AGES/src/mcp/server.ts --project /path/to/m
 
 ```
 src/core/     エンジンの核（ブラウザでもNodeでも動く）: 型・住所・差分編集・表・シート・カメラ・音の命令
-src/std/      標準の部品（Transform / Sprite / Animator / Shape / Text / Camera / Sound / AudioBus）
+src/std/      標準の部品（Transform / Sprite / Animator / Shape / Text / Camera / Sound / AudioBus）と標準の表（$actions）
 src/render/   描画（WebGL2）
 src/audio/    音を鳴らす側（Web Audio。ブラウザ専用）
+src/input/    入力の機器（キーボード・マウス・タッチ・ゲームパッド → ボタンの名前と軸の値。ブラウザ専用）
 src/mcp/      MCP サーバー
 src/project/  プロジェクトの読み書き・操作ログ・ロック・地図（Node専用）
 src/cli/      AI向けCLI

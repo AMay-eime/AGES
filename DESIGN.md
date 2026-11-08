@@ -51,7 +51,7 @@ project/
 
 フィールドごとに型・範囲・既定値・説明を宣言する。インスペクタはここから自動生成され、AIは同じ宣言を読んで範囲外の値を入れない。
 
-型: `number` `int` `bool` `string` `enum` `color` `vec2` `ref`（エンティティID） `prefab` `asset`（画像・音・フォントのファイル） `frame`（コマ） `row`（表の行） `matrix`（2次元行列） `list`（リスト） `struct`（構造体） `oneOf`（どれか1つ）
+型: `number` `int` `bool` `string` `enum` `color` `vec2` `ref`（エンティティID） `prefab` `asset`（画像・音・フォントのファイル） `frame`（コマ） `row`（表の行） `input`（ボタン・軸の名前。`analog: true` で軸） `matrix`（2次元行列） `list`（リスト） `struct`（構造体） `oneOf`（どれか1つ）
 
 ```ts
 export const Mover = defineComponent({
@@ -195,6 +195,18 @@ AGES本体が用意し、すべてのプロジェクトで自動で使える。�
 - 高さのばらつきは鳴らす側で決める（ゲームの乱数を使わない。聞こえ方のためにゲームの結果が変わらないように）
 - エディタ: インスペクタの Sound の ▶ で今の設定のまま試し聞き。上のバーの 🔊 と音量は手元だけ。再生中に区分の音量を変えると、その場で反映される
 - WAV は長さを地図に出す（`assets/sounds/shot.wav sound 4KB 0.09s`）
+
+### 入力
+
+- キーボード・マウス・タッチ・ゲームパッドを、同じ「ボタンの名前」と「軸の値」で扱う。ボタン: `KeyZ` `Space` `ArrowLeft`（KeyboardEvent.code）、`Mouse0`〜`Mouse2`、`Touch`、`Pad.A` `Pad.Start` `Pad.Up` `Pad.LStickLeft`（2台目は `Pad2.A`）。軸（-1〜1、トリガーは 0〜1）: `Pad.LX` `Pad.LY` `Pad.RX` `Pad.RY` `Pad.LT` `Pad.RT`
+- **ゲームのコードは操作の名前で読む**: `ctx.input.isDown('fire')` `pressed` `released` `value('move_x')`（-1〜1。キーなら -1/0/1、スティックならその間）。操作の名前と割り当ては標準の表 `$actions`（`data/actions.table.json`）で決める。1行が1つの操作で、列は `kind`（button / axis）・`keys`・`negative`（axis の − の向き）・`analog`（スティック・トリガー）・`deadzone`（遊び）
+- ボタンの名前でも直接読める（`isDown('KeyZ')`）。手早く試すとき用
+- **キーコンフィグはゲームの中のスクリプトで作る**: `ctx.input.bind('fire', { keys: ['KeyX'] })` で割り当てを変え、`resetBindings()` で表の通りに戻す。`exportBindings()` は変えた分だけを返すのでセーブに入れ、`importBindings()` で戻す（表から消えた操作は無視）。`lastPressed()` は「押したボタンを割り当てる」画面用、`usedBy('KeyX')` は二重の割り当ての確認用、`label('Pad.A')` は人に見せる名前（パッドA）
+- マウス・タッチの位置 `ctx.input.pointer` は、ゲームの画面の座標（`ctx.view` と同じ設計の大きさで数える。画面の外は null）。ワールドの座標は `ctx.pointerWorld()`（その点を映している一番手前のカメラで。カメラの名前も渡せる）。ホイールは `ctx.input.wheel`（1回の回転が 1）、指は `ctx.input.touches`
+- 記録と再生はこれら全部（ボタン・軸・位置・ホイール・指）を、変わったフレームだけ残す。軸の値は 1/256 にそろえるので、記録が短く、再生でずれない。エディタで「記録して再生」した入力を `ages run --input` で流すと、同じ結果（hash）になる
+- AIの試し実行: `ages run --keys "0-300:@fire;0-120:@move_x=-1;120-200:Pad.LX=0.5;30:ptr=240,100+Mouse0"`。`@操作` はその操作の最初の割り当て、`@操作=-1` は − の向き、`@操作=0.5` はアナログの軸。名前を間違えると「もしかして」で知らせる
+- 表の割り当てに無い名前（`KeyZZ` など）は、検証で候補付きで知らせる
+- エディタ: 再生中（一時停止していない・カメラの視点）は、ゲームの画面のクリックはゲームの入力になる（選ぶのは一時停止中か自由な視点で）。表やインスペクタの `input` の欄は ⌨ で「押して決める」（次に押したキー・パッドのボタン、枠の中のクリックならマウスのボタン。軸の欄はスティックを倒して決める）
 
 ### 画面の大きさへの合わせ方
 

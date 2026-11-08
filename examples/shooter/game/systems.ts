@@ -8,16 +8,17 @@ const overlap = (a: Entity, b: Entity) => {
 
 export const playerControl = defineSystem({
   name: 'playerControl',
-  desc: '矢印キーで自機を動かし、Z/スペースで弾を撃つ',
+  desc: '操作 move_x・move_y で自機を動かし、fire で弾を撃つ（割り当ては $actions）',
   reads: ['Player'],
   writes: ['Transform', 'Player'],
   update({ world, input, view, spawn, sound }) {
     for (const e of world.query('Player', 'Transform')) {
       const p = e.c.Player, t = e.c.Transform;
-      t.x = Math.min(view.width, Math.max(0, t.x + input.axis('ArrowLeft', 'ArrowRight') * p.speed));
-      t.y = Math.min(view.height, Math.max(0, t.y + input.axis('ArrowUp', 'ArrowDown') * p.speed));
+      // 操作の名前で読む（割り当ては表 $actions。キーコンフィグで変えられる）
+      t.x = Math.min(view.width, Math.max(0, t.x + input.value('move_x') * p.speed));
+      t.y = Math.min(view.height, Math.max(0, t.y + input.value('move_y') * p.speed));
       if (p.cooldown > 0) p.cooldown--;
-      if ((input.isDown('KeyZ') || input.isDown('Space')) && p.cooldown === 0) {
+      if (input.isDown('fire') && p.cooldown === 0) {
         spawn(p.bullet, { Transform: { x: t.x, y: t.y - 16 } });
         sound.play('se_shot');
         p.cooldown = p.fireInterval;

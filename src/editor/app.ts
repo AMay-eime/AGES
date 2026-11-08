@@ -1,7 +1,8 @@
 // エディタの中心。状態の読み込み、サーバーとのやりとり、再生（プレイモード）を受け持つ。
 import { Registry, type GameModule } from '../core/registry.ts';
 import { Game, busesOf } from '../core/game.ts';
-import { InputRecorder, InputPlayback, type InputEvent } from '../core/input.ts';
+import { InputRecorder, InputPlayback, actionsFromRows, keysToEvents, type InputEvent } from '../core/input.ts';
+import { Devices } from '../input/devices.ts';
 import type { PrefabDoc, ProjectConfig, SceneDoc } from '../core/docs.ts';
 import type { Op, Change } from '../core/patch.ts';
 import { modal, toast, h } from './ui/dom.ts';
@@ -49,7 +50,8 @@ export class App {
   play: PlayState | null = null;
   /** 編集モードで描く用のゲーム（シーンを並べただけで、進めない） */
   preview: Game | null = null;
-  keys = new Set<string>();
+  /** キーボード・マウス・タッチ・ゲームパッド（再生中だけゲームへ） */
+  readonly devices = new Devices();
   private loadedVersion = 0;
   private listeners = new Map<string, Set<Listener>>();
 
@@ -236,8 +238,9 @@ export class App {
   tick(): void {
     const p = this.play!;
     try {
-      p.recorder?.record(p.game.frame, this.keys);
-      p.game.step(this.keys);
+      const input = this.devices.frame();
+      p.recorder?.record(p.game.frame, input);
+      p.game.step(input);
       this.syncBuses();
     } catch (e) {
       p.paused = true;
@@ -252,7 +255,7 @@ export class App {
     this.play = null;
     this.audio.stopAll();
     this.audio.resume();
-    this.keys.clear();
+    this.devices.clear();
     this.emit('play');
     if (p.recorder) await this.saveRecording(p.recorder.events, p.game.frame);
     if (p.edits.size) await this.askKeepEdits(p.edits);
@@ -291,23 +294,12 @@ export class App {
     });
   }
 
-  /** 画面なしでの試し実行（カスタムウインドウ用）。keys は "0-600:KeyZ;100-200:ArrowLeft" の形 */
+  /** 画面なしでの試し実行（カスタムウインドウ用）。keys は ages run --keys と同じ書き方（"0-600:@fire;100-200:ArrowLeft"） */
   simulate(frames: number, keys = '', seed?: number): { counts: Record<string, number>; frame: number; ms: number } {
     const game = new Game(this.registry, this.state.config, this.state.scenes[this.scene], seed ?? this.state.config.seed);
-    const play = new InputPlayback(parseKeys(keys));
+    const play = new InputPlayback(keysToEvents(keys, actionsFromRows(this.registry.tableView('actions').rows)));
     const t0 = performance.now();
-    for (let i = 0; i < frames; i++) game.step(play.keysAt(game.frame));
+    for (let i = 0; i < frames; i++) game.step(play.at(game.frame));
     return { counts: Object.fromEntries(game.counts), frame: game.frame, ms: performance.now() - t0 };
   }
-}
-
-function parseKeys(spec: string): InputEvent[] {
-  const ev: InputEvent[] = [];
-  for (const seg of spec.split(';').map((s) => s.trim()).filter(Boolean)) {
-    const m = seg.match(/^(\d+)-(\d+):(.+)$/);
-    if (!m) throw new Error(`keys の書き方が違います: ${seg}`);
-    const keys = m[3].split('+');
-    ev.push({ f: Number(m[1]), d: keys }, { f: Number(m[2]), u: keys });
-  }
-  return ev.sort((a, b) => a.f - b.f);
 }

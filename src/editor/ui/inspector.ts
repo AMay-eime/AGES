@@ -7,6 +7,8 @@ import { formatSub, getIn, setIn } from '../../core/docs.ts';
 import type { Op } from '../../core/patch.ts';
 import { h, clear, time, modal } from './dom.ts';
 import { findFrame, frameLabel, listFrames, type FrameRef, type SheetDef } from '../../core/sheet.ts';
+import { buttonLabel } from '../../core/input.ts';
+import { captureNext } from '../../input/devices.ts';
 import type { Panel } from './layout.ts';
 
 interface Live { path: string; comp: string; field: string; set(v: unknown): void; el: HTMLElement }
@@ -137,6 +139,7 @@ export function inspectorPanel(app: App): Panel {
 
   app.on('change', render);
   app.on('select', render);
+  app.on('nestToggle', render);
   app.on('play', render);
   return { id: 'inspector', title: 'インスペクタ', el, render };
 }
@@ -263,6 +266,17 @@ export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, 
       wrap.append(sel, h('button', { class: 'icon row-open', title: `表 ${f.table} を開く`, onclick: () => app.emit('openTable', { name: f.table, row: sel.value }) }, '▦'));
       return { el: wrap, set: (v) => { sel.value = String(v); } };
     }
+    case 'input': {
+      // ボタン・軸の名前。「押して決める」で、次に押したキー・マウス・パッドのボタン（analog なら倒した軸）が入る
+      const t = h('input', { type: 'text', value: String(value ?? ''), style: 'width:110px;font:var(--mono)', title: f.analog ? '軸の名前（例 Pad.LX）' : 'ボタンの名前（例 KeyZ, Space, Mouse0, Pad.A）' }) as HTMLInputElement;
+      const label = h('span', { class: 'muted input-label' });
+      const show = (v: string) => { label.textContent = v ? buttonLabel(v) : ''; label.style.display = v && buttonLabel(v) !== v ? '' : 'none'; };
+      show(String(value ?? ''));
+      t.addEventListener('change', () => { show(t.value.trim()); commit(t.value.trim(), true); });
+      const pick = h('button', { class: 'icon', title: f.analog ? '倒して決める: 次に大きく倒したスティック・トリガーが入る' : '押して決める: 次に押したキー・マウス・パッドのボタンが入る', onclick: () => capture(!!f.analog, (code) => { t.value = code; show(code); commit(code, true); }) }, '⌨');
+      wrap.append(t, label, pick);
+      return { el: wrap, set: (v) => { t.value = String(v ?? ''); show(String(v ?? '')); } };
+    }
     case 'frame': {
       // シートがない画像: 番号か名前を直接入れる。切り方の画面へも行ける
       const t = h('input', { type: 'text', value: String(value ?? 0), style: 'width:80px' }) as HTMLInputElement;
@@ -373,7 +387,14 @@ const opened = new Set<string>();
 
 /** 表のセルなどに出す短い要約 */
 export const valueSummary = (f: Field, v: unknown): string => {
-  if (f.type === 'list') return `${Array.isArray(v) ? v.length : 0}件`;
+  if (f.type === 'list') {
+    const a = Array.isArray(v) ? v : [];
+    // ボタンの割り当てなどの短いリストは、中身をそのまま見せる
+    const text = f.of.type === 'input' ? a.map((x) => buttonLabel(String(x))).join(' / ')
+      : ['string', 'number', 'int', 'enum', 'row', 'prefab', 'bool'].includes(f.of.type) ? a.map((x) => String(x)).join(', ') : '';
+    if (!a.length) return '（なし）';
+    return text && text.length <= 32 ? text : `${a.length}件`;
+  }
   if (f.type === 'oneOf') return String((v as { kind?: string } | null)?.kind ?? '');
   if (f.type === 'struct') return '';
   const s = JSON.stringify(v) ?? '';
@@ -394,7 +415,7 @@ export function nestedWidget(app: App, f: Field, value: unknown, path: string, s
   if (f.type === 'list') {
     const list = Array.isArray(value) ? value : [];
     const open = opened.has(key) || list.length <= 3;
-    const toggle = h('button', { class: 'icon', title: open ? '閉じる' : '開く', onclick: () => { if (opened.has(key)) opened.delete(key); else opened.add(key); app.emit('select'); } }, open ? '▾' : '▸');
+    const toggle = h('button', { class: 'icon', title: open ? '閉じる' : '開く', onclick: () => { if (opened.has(key)) opened.delete(key); else opened.add(key); app.emit('nestToggle'); } }, open ? '▾' : '▸');
     const add = h('button', { class: 'icon', title: `最後に足す（${typeOf(f.of)}）`, disabled: f.max !== undefined && list.length >= f.max, onclick: () => emit({ kind: 'insert', sub, value: defaultOf(f.of) }) }, '＋');
     const items = open ? list.map((v, i) => row(`[${i}]`, `${key}[${i}]`, leaf(f.of, v, [...sub, i]),
       h('button', { class: 'icon tiny', title: '上へ', disabled: i === 0, onclick: () => emit({ kind: 'move', sub: [...sub, i], to: i - 1 }) }, '↑'),
@@ -416,4 +437,16 @@ export function nestedWidget(app: App, f: Field, value: unknown, path: string, s
   const fields = o.variants[kind]?.fields ?? {};
   return h('div', { class: 'nest' }, row('kind', o.variants[kind]?.desc ?? '種類', pick),
     Object.entries(fields).map(([k, sf]) => row(k, `${k}: ${typeOf(sf)}${sf.desc ? '\n' + sf.desc : ''}`, leaf(sf, k in obj ? obj[k] : defaultOf(sf), [...sub, k]))));
+}
+
+/** 「押して決める」の画面。次に押されたボタン（analog なら大きく倒した軸）を返す */
+function capture(analog: boolean, done: (code: string) => void): void {
+  modal((close) => {
+    const area = h('div', { class: 'capture-area', tabindex: 0 }, analog ? 'スティックかトリガーを大きく倒してください' : 'キーかゲームパッドのボタンを押してください\n（この枠の中でクリックすると、マウスのボタン）');
+    const stop = captureNext((code) => { close(); done(code); }, { analog, target: area, alive: () => area.isConnected });
+    return h('div', {},
+      h('h3', {}, analog ? '軸を決める' : 'ボタンを決める'),
+      area,
+      h('div', { class: 'row', style: 'justify-content:flex-end;margin-top:12px' }, h('button', { onclick: () => { stop(); close(); } }, '取り消す')));
+  });
 }

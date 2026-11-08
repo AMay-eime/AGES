@@ -127,15 +127,10 @@ function checkLocks(): void {
   });
 }
 
-// ---------- キー入力（再生中だけゲームへ） ----------
+// ---------- キー入力（再生中だけゲームへ。マウス・タッチはゲームの画面がつなぐ） ----------
 const typing = (e: KeyboardEvent) => e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement;
-window.addEventListener('keydown', (e) => {
-  if (!app.play || typing(e)) return;
-  app.keys.add(e.code);
-  if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
-});
-window.addEventListener('keyup', (e) => { app.keys.delete(e.code); });
-window.addEventListener('blur', () => app.keys.clear());
+app.devices.enabled = () => !!app.play;
+app.devices.bindKeyboard(window, typing);
 
 // ---------- プロジェクト独自のウインドウ ----------
 const windows = new Map<string, { el: HTMLElement; cleanup?: () => void }>();

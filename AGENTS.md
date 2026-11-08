@@ -37,7 +37,8 @@ AGESに足りない機能（画像・音・物理など。docs/PLAN.md の段階
 
 ## 確かめる
 
-- `ages run <dir> --frames 1800 --keys "0-1800:KeyZ;0-300:ArrowLeft" --watch player.Health.hp --until gameOver`
+- `ages run <dir> --frames 1800 --keys "0-1800:@fire;0-300:@move_x=-1" --watch player.Health.hp --until gameOver`
+- `--keys` は `開始-終了:入力+入力`。`@操作`（表 $actions の名前）、`@操作=-1`（− の向き）、`@操作=0.5`（アナログ）、`KeyZ` などのボタン、`Pad.LX=0.7`（軸）、`ptr=240,100`（マウスの位置）、`wheel=1`
 - 人の操作を再現: `--input recordings/<名前>.input.json`
 - 変更後は `--twice` で再現性（毎回同じ結果か）を確認する
 - 画面の確認が必要なときだけエディタやスクリーンショットを使う（画像は高い）
@@ -61,6 +62,9 @@ AGESに足りない機能（画像・音・物理など。docs/PLAN.md の段階
 - 音は Sound の付いたプレハブ（例 `@se_shot`）を作り、`ctx.sound.play('se_shot')` で鳴らす。音量などの調整値はプレハブに置き、コードに書かない。BGM・環境音は物に Sound（playOnStart）を付ける
 - 音量の区分はゲームに合わせて AudioBus のプレハブで作る（例 `@bgm` exclusive、`@se`）。どんな区分にするかは EDITOR-PLAN.md で使用者と決める
 - 鳴ったかどうかは `ages run` の `sounds:` と ⚠ で確かめる（音を聞かなくてよい）
+- 入力は操作の名前で読む（`ctx.input.isDown('fire')` / `pressed` / `value('move_x')`）。キーの名前をコードに書かない。操作と既定の割り当ては標準の表 `$actions`（`ages table <dir> actions`）に行を足す
+- キーコンフィグの画面はゲームのスクリプトで作る: `ctx.input.bind(操作, { keys: [...] })` / `resetBindings()` / `lastPressed()` / `usedBy(ボタン)` / `label(ボタン)`。セーブには `exportBindings()` を入れ、読み込みで `importBindings()`
+- マウス・タッチの位置は `ctx.input.pointer`（画面の座標）か `ctx.pointerWorld()`（ワールドの座標）
 
 ## エディタウインドウ
 

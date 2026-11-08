@@ -1,12 +1,13 @@
 // 固定更新のゲームループ。描画は知らない（ロジックだけ）。
 import { World, type Entity } from './world.ts';
 import { Rng } from './rng.ts';
-import { Input } from './input.ts';
+import { Input, actionsFromRows, type FrameInput } from './input.ts';
 import type { Registry } from './registry.ts';
 import type { SceneDoc, ProjectConfig } from './docs.ts';
 import { DEFAULT_SOUND, isSoundPath, playCmd, type AudioCmd, type BusDef, type SoundApi, type SoundSettings } from './audio.ts';
 import { suggest } from './schema.ts';
 import type { RowOf, TableDef, TableView } from './table.ts';
+import { camerasOf, screenToWorld } from './camera.ts';
 
 export interface Ctx {
   world: World;
@@ -32,6 +33,11 @@ export interface Ctx {
    */
   table<T extends TableDef>(def: T): TableView<RowOf<T>>;
   table(name: string): TableView;
+  /**
+   * マウス・タッチの位置を、ワールドの座標にする（カメラの位置・拡大・回転込み）。画面の外なら null
+   * camera を省くと、その点を映している一番手前のカメラで
+   */
+  pointerWorld(camera?: string): [number, number] | null;
 }
 
 export interface GameEvent {
@@ -94,6 +100,10 @@ export class Game {
     this.rng = new Rng(seed);
     this.dt = 1 / config.fps;
     for (const e of scene.entities) this.world.add(e);
+    // 操作の名前と割り当て（標準の表 $actions）
+    if (registry.tables.has('actions')) {
+      this.input.setActions(actionsFromRows(registry.tableView('actions').rows));
+    }
     const game = this;
     this.ctx = {
       world: this.world,
@@ -113,6 +123,15 @@ export class Game {
       },
       sound: this.makeSoundApi(),
       table: ((def: string | TableDef) => this.registry.tableView(typeof def === 'string' ? def : def.name)) as Ctx['table'],
+      pointerWorld: (camera) => {
+        const p = this.input.pointer;
+        // 画面の座標は設計の大きさ（ctx.view）で数える。どの画面でも同じ結果になる
+        const cams = camerasOf(this.world, config.view.width, config.view.height);
+        if (camera && !cams.some((c) => c.id === camera)) throw new Error(`pointerWorld: カメラ ${camera} がありません（Camera の付いた物のID）${suggest(camera, cams.flatMap((c) => (c.id ? [c.id] : [])))}`);
+        if (!p) return null;
+        const c = camera ? cams.find((x) => x.id === camera)! : [...cams].reverse().find((x) => p.x >= x.vx && p.y >= x.vy && p.x <= x.vx + x.vw && p.y <= x.vy + x.vh);
+        return c ? screenToWorld(c, p.x, p.y) : null;
+      },
       emit: (name, data) => {
         this.counts.set(name, (this.counts.get(name) ?? 0) + 1);
         const ev: GameEvent = { frame: this.frame, name, data };
@@ -184,9 +203,9 @@ export class Game {
     };
   }
 
-  /** 1フレーム進める。keys はそのフレームで押されているキー。 */
-  step(keys: Iterable<string> = []): void {
-    this.input.setFrame(keys);
+  /** 1フレーム進める。input はそのフレームの入力（押されているボタンの並びだけでもよい）。 */
+  step(input: Iterable<string> | FrameInput = []): void {
+    this.input.setFrame(input);
     if (!this.started) {
       this.started = true;
       for (const s of this.registry.systems) {

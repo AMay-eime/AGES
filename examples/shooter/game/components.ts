@@ -22,7 +22,7 @@ export const Velocity = defineComponent({
 
 export const Player = defineComponent({
   name: 'Player',
-  desc: '自機。矢印キーで移動、Z/スペースで射撃',
+  desc: '自機。操作 move_x・move_y で移動、fire で射撃',
   fields: {
     speed: { type: 'number', default: 4.5, min: 0, max: 20, step: 0.1, desc: '移動の速さ(px/フレーム)' },
     fireInterval: { type: 'int', default: 8, min: 1, max: 60, desc: '射撃の間隔(フレーム)' },

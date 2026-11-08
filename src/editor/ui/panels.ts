@@ -58,8 +58,10 @@ export function hierarchyPanel(app: App): Panel {
         [...(app.registry?.tables.values() ?? [])].map((t) => {
           const n = lockCount(`$${t.name}`);
           const rows = s.tables?.[t.name]?.rows.length ?? 0;
-          return h('div', { class: 'item', onclick: () => app.emit('openTable', { name: t.name }), title: '表のエディタで開く' },
-            '$' + t.name, h('span', { class: 'muted' }, `${rows}行 ${t.desc ?? ''}`), n ? h('span', { style: 'color:var(--lock)' }, '🔒' + n) : null);
+          // 説明は最初の文だけ（全体は名前にカーソルを乗せると出る）
+          const first = (t.desc ?? '').split('。')[0];
+          return h('div', { class: 'item', onclick: () => app.emit('openTable', { name: t.name }), title: `${t.desc ?? ''}\n表のエディタで開く` },
+            '$' + t.name, h('span', { class: 'muted' }, `${rows}行 ${first}`), n ? h('span', { style: 'color:var(--lock)' }, '🔒' + n) : null);
         })),
     );
   };
