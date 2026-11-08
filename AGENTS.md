@@ -2,7 +2,7 @@
 
 短く保つこと。このファイル自体がトークンを使う。
 
-`ages` は `node bin/ages.js`（`npm link` で `ages` コマンドになる）。
+`ages` は `node bin/ages.js`（`npm link` で `ages` コマンドになる）。MCPが使えるなら、同じ機能が道具 `ages_map` `ages_get` `ages_set` `ages_patch` `ages_run` `ages_log` `ages_check` `ages_init` `ages_schema` として渡されている。
 
 ## ゲームの企画を受けたら（最初の最初に必ず）
 
@@ -28,6 +28,7 @@ AGESに足りない機能（画像・音・物理など。docs/PLAN.md の段階
 - シーン・プレハブの値は `ages set` / `ages patch` で変える。JSONを直接書き換えない（検証とログが通らない）
 - 行列（matrix）はセル単位で変える: `ages set <dir> 住所[行,列] 値`、まとめてなら patch の `setCells`。行列全体を送り直さない
 - `🔒` ロックされた値は変更できない（`--force` でも不可）。変えるべき理由があれば、人に提案する
+- `.ages/locks.json`・`.ages/locks.seal` は決して触らない。書き換えると封印と合わなくなり、人が確認するまでAIの編集はすべて止まる
 - `★` 人が調整した値は、変える前に人へ確認し、了承を得てから `--force`
 - エラーには範囲や候補（もしかして）が書いてある。読み込み直さず、それに従って直す
 

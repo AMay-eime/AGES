@@ -2,7 +2,7 @@
 // ゲームコードが変わったらスレッドごと作り直す（モジュールのキャッシュを確実に捨てるため）。
 import { parentPort, workerData } from 'node:worker_threads';
 import { Project } from '../project/project.ts';
-import { readLocks, readTouched, readLog, type Actor } from '../project/oplog.ts';
+import { readTouched, readLog, type Actor } from '../project/oplog.ts';
 import type { Op } from '../core/patch.ts';
 
 const port = parentPort!;
@@ -21,9 +21,10 @@ async function state() {
     scenes: Object.fromEntries(project.docs.scenes),
     prefabs: Object.fromEntries(project.docs.prefabs),
     touched: await readTouched(project.dir),
-    locks: await readLocks(project.dir),
+    locks: await project.effectiveLocks(),
     issues: project.validate(),
     lockReport: project.lockReport,
+    integrity: { ok: project.integrity.ok, reason: project.integrity.reason, diff: project.lockDiff(), hasBackup: !!project.integrity.backup },
   };
 }
 
@@ -38,6 +39,17 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   },
   async unlock(paths: string[], actor: Actor) {
     await project.unlock(paths, actor);
+  },
+  async approveLocks(actor: Actor) {
+    await project.approveLocks(actor);
+  },
+  async restoreLocks(actor: Actor) {
+    await project.restoreLocks(actor);
+  },
+  /** ロックの記録が外から変わったとき: 読み直して検査し、ロックを効かせ直す */
+  async recheckLocks() {
+    await project.reload();
+    return { ok: project.integrity.ok, lockReport: project.lockReport };
   },
   async humanTextEdit(actor: Actor) {
     return { changes: await project.humanTextEdit(actor) };

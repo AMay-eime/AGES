@@ -73,11 +73,28 @@ let timer: NodeJS.Timeout | undefined;
 watch(projectDir, { recursive: true }, (_ev, name) => {
   if (!name) return;
   const rel = name.split(sep).join('/');
+  // ロックの記録は外から書き換えられたら検査し直す（それ以外の .ages/ は無視）
+  if (rel === '.ages/locks.json' || rel === '.ages/locks.seal') {
+    clearTimeout(lockTimer);
+    lockTimer = setTimeout(recheckLocks, 150);
+    return;
+  }
   if (rel.startsWith('.git/') || rel.startsWith('.ages/') || rel.includes('node_modules/')) return;
   changed.add(rel);
   clearTimeout(timer);
   timer = setTimeout(flushChanges, 120);
 });
+
+let lockTimer: NodeJS.Timeout | undefined;
+let lastLockOk = true;
+async function recheckLocks(): Promise<void> {
+  const r = await call<{ ok: boolean; lockReport: string[] }>('recheckLocks').catch(() => null);
+  if (!r) return;
+  // 状態が変わったとき、または問題があるときだけ知らせる（エディタ自身の書き込みでは何も起きない）
+  if (!r.ok || r.ok !== lastLockOk) broadcast({ type: 'locks', integrity: r.ok, lockReport: r.lockReport });
+  if (!r.ok && lastLockOk) console.log(r.lockReport.filter((l) => l.startsWith('⚠')).join('\n'));
+  lastLockOk = r.ok;
+}
 
 let flushing = Promise.resolve();
 function flushChanges(): void {
@@ -206,6 +223,12 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
     const r = await call('apply', ops, human(req, win ?? 'inspector'));
     broadcast({ type: 'docs', by: human(req, '').who, changes: r.changes });
     return json(res, r);
+  }
+  if (m === 'POST' && (p === '/api/locks/approve' || p === '/api/locks/restore')) {
+    await call(p.endsWith('approve') ? 'approveLocks' : 'restoreLocks', human(req, 'lock-check'));
+    lastLockOk = true;
+    broadcast({ type: 'locks', integrity: true });
+    return json(res, { ok: true });
   }
   if (m === 'POST' && (p === '/api/lock' || p === '/api/unlock')) {
     const { paths, note } = JSON.parse((await body(req)).toString('utf8'));

@@ -1,2 +1,4 @@
 # AIごとの既読位置（共有しない）
 .ages/ai-cursor
+# 端末ごとのロックの封印（共有しない）
+.ages/locks.seal

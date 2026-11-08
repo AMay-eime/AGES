@@ -1,3 +1,4 @@
 node_modules/
 # AIごとの既読位置（共有しない）
 .ages/ai-cursor
+.ages/locks.seal
