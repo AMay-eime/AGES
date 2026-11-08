@@ -5,10 +5,11 @@ import { pathToFileURL } from 'node:url';
 import { registerHooks } from 'node:module';
 import { formatJson, type PrefabDoc, type ProjectConfig, type SceneDoc } from '../core/docs.ts';
 import { Registry, type GameModule } from '../core/registry.ts';
-import { applyOps, diffDocs, getValue, sheetRoot, type Change, type Docs, type Op, type PatchResult } from '../core/patch.ts';
+import { applyOps, diffDocs, getValue, setValue, sheetRoot, splitItem, type Change, type Docs, type Op, type PatchResult } from '../core/patch.ts';
 import { parseAddress } from '../core/docs.ts';
 import { Game } from '../core/game.ts';
-import { suggest } from '../core/schema.ts';
+import { checkAt, suggest, visit, type Field } from '../core/schema.ts';
+import { ROW_ID, type TableDoc } from '../core/table.ts';
 import { appendLog, localTime, lockedHits, markTouched, readLocks as readLockFile, readLog, readTouched, writeLocks, type Actor, type LockMark } from './oplog.ts';
 import { lockDiff, verifyLocks, type LockIntegrity } from './seal.ts';
 import { scanAssets, type AssetInfo } from './assets.ts';
@@ -64,6 +65,7 @@ export class Project {
     this.assets = scan.assets;
     this.assetIssues = scan.issues;
     this.registry.sheets = this.docs.sheets;
+    this.registry.tableData = this.docs.tables;
     this.registry.images = new Map(scan.assets.filter((a) => a.w && a.h).map((a) => [a.path, { w: a.w!, h: a.h! }]));
     this.integrity = await verifyLocks(this.dir);
     this.lockReport = await this.enforceLocks();
@@ -148,13 +150,8 @@ export class Project {
         report.push(`ロック ${path}（画像の切り方）が変えられていたので、ロックしたときの切り方に戻しました`);
         continue;
       }
-      const a = parseAddress(path);
-      const holder = a.kind === 'prefab'
-        ? this.docs.prefabs.get(a.doc)!
-        : this.docs.scenes.get(a.doc)!.entities.find((e) => e.id === a.entity)!;
-      holder.components[a.component!][a.field!] = structuredClone(mark.value);
+      dirty.add(setValue(this.docs, this.registry, path, mark.value));
       restored.push({ path, from: current, to: mark.value });
-      dirty.add(a.kind === 'prefab' ? `prefab:${a.doc}` : `scene:${a.doc}`);
       report.push(`ロック ${path} が ${JSON.stringify(current)} に変えられていたので ${JSON.stringify(mark.value)} に戻しました`);
     }
     if (restored.length) {
@@ -174,7 +171,9 @@ export class Project {
         if (sheetRoot(path) !== path) throw new Error(`画像の切り方のロックはシート全体です（例: sheet:assets/hero.png）: ${path}`);
       } else {
         const a = parseAddress(path);
-        if (!a.component || !a.field) throw new Error(`ロックはフィールド単位です（例: main#player.Player.speed）: ${path}`);
+        if (!a.field) throw new Error(`ロックは値（フィールド・表のセル）単位です（例: main#player.Player.speed、$enemies.basic.hp）: ${path}`);
+        // リストの中の要素は、並べ替え・追加・削除で場所が変わるのでロックできない
+        if (a.sub.some((x) => typeof x === 'number')) throw new Error(`リストの中の要素はロックできません（並べ替えで場所が変わるため）。リスト全体をロックするか、行に ID のある表にしてください: ${path}`);
       }
       const { value } = getValue(this.docs, this.registry, path);
       const mark: LockMark = { who: actor.who, t, value };
@@ -201,6 +200,21 @@ export class Project {
     return join(this.dir, 'prefabs', `${name}.prefab.json`);
   }
 
+  /** 値の中（リスト・構造体・どれか1つの中まで）の参照を確かめる: 表の行・プレハブ・ファイル */
+  private checkNested(at: string, f: Field, v: unknown, errs: string[]): void {
+    const assetPaths = new Set(this.assets.map((a) => a.path));
+    visit(f, v, at, (lf, lv, lat) => {
+      if (lf.type === 'row' && typeof lv === 'string' && lv) {
+        if (!this.registry.tables.has(lf.table)) { errs.push(`${lat}: 表 ${lf.table} の形がありません${suggest(lf.table, [...this.registry.tables.keys()])}`); return; }
+        const ids = (this.docs.tables.get(lf.table)?.rows ?? []).map((r) => r.id);
+        if (!ids.includes(lv)) errs.push(`${lat}="${lv}": 表 ${lf.table} にその行はありません${suggest(lv, ids)}`);
+      }
+      if (lat === at) return; // フィールドそのものの prefab・asset は、下のこれまでの検証で見る
+      if (lf.type === 'prefab' && typeof lv === 'string' && lv && !this.docs.prefabs.has(lv)) errs.push(`${lat}: プレハブ ${lv} はありません${suggest(lv, [...this.docs.prefabs.keys()])}`);
+      if (lf.type === 'asset' && typeof lv === 'string' && lv && !assetPaths.has(lv)) errs.push(`${lat}: ファイル ${lv} がありません${suggest(lv, this.assets.filter((a) => a.kind === lf.kind).map((a) => a.path))}`);
+    });
+  }
+
   /** 全文書を検証する。問題の一覧を返す（空なら健全）。 */
   validate(): string[] {
     const errs: string[] = [];
@@ -211,6 +225,7 @@ export class Project {
         const def = this.registry.components.get(name);
         if (!def) continue;
         for (const [k, f] of Object.entries(def.fields)) {
+          if (k in values) this.checkNested(`${where}.${name}.${k}`, f, values[k], errs);
           if (f.type === 'prefab' && k in values && values[k] !== '' && !this.docs.prefabs.has(values[k] as string)) {
             errs.push(`${where}.${name}.${k}: プレハブ ${values[k]} はありません${suggest(String(values[k]), [...this.docs.prefabs.keys()])}`);
           }
@@ -265,6 +280,25 @@ export class Project {
         }
       }
     }
+    // 表: 形があるか、ID、列の値、参照
+    for (const [name, t] of this.docs.tables) {
+      const def = this.registry.tables.get(name);
+      if (!def) { errs.push(`data/${name}.table.json: 表 ${name} の形がゲームのコードにありません（defineTable で作り、game/index.ts の tables に入れる）${suggest(name, [...this.registry.tables.keys()])}`); continue; }
+      const ids = new Set<string>();
+      t.rows.forEach((r, i) => {
+        if (typeof r.id !== 'string' || !ROW_ID.test(r.id)) errs.push(`$${name} の ${i} 行目: id "${r.id}" には英数字・_・- だけが使えます`);
+        else if (ids.has(r.id)) errs.push(`$${name}.${r.id}: id が重複しています`);
+        ids.add(r.id);
+        for (const [k, v] of Object.entries(r)) {
+          if (k === 'id') continue;
+          const f = def.columns[k];
+          if (!f) { errs.push(`$${name}.${r.id}: 列 ${k} はありません${suggest(k, Object.keys(def.columns))}`); continue; }
+          const e = checkAt(`$${name}.${r.id}.${k}`, f, v);
+          if (e) errs.push(e);
+          else this.checkNested(`$${name}.${r.id}.${k}`, f, v, errs);
+        }
+      });
+    }
     // 音量の区分の親子が輪になっていないこと
     for (const p of this.docs.prefabs.values()) {
       if (!p.components.AudioBus) continue;
@@ -296,10 +330,12 @@ export class Project {
    */
   async apply(ops: Op[], actor: Actor, opts: { force?: boolean } = {}): Promise<PatchResult> {
     const targetOf = (op: Op) =>
-      op.op === 'set' || op.op === 'setCells' ? op.path
+      op.op === 'set' || op.op === 'setCells' || op.op === 'insert' ? op.path
+        : op.op === 'removeItem' || op.op === 'moveItem' ? splitItem(op.path).list
         : op.op === 'removeEntity' ? `${op.scene}#${op.id}`
         : op.op === 'removeComponent' ? `${op.target}.${op.component}`
         : op.op === 'setSheet' || op.op === 'setFrame' || op.op === 'setClip' ? `sheet:${op.image}`
+        : op.op === 'removeRow' || op.op === 'renameRow' ? `$${op.table}.${op.id}`
         : null;
     if (actor.kind === 'ai' && !this.integrity.ok) {
       throw new Error(`🔒 ロックの記録が人の封印と一致しないため、AIからの編集を止めています（${this.integrity.reason}）。ユーザーにエディタでの確認を頼んでください`);
@@ -323,7 +359,7 @@ export class Project {
         const target = targetOf(op);
         if (!target) continue;
         for (const [path, mark] of Object.entries(touched)) {
-          if (path === target || path.startsWith(target + '.')) hits.push(`${path}（${mark.who} が ${localTime(mark.t)} に調整）`);
+          if (related(path, target)) hits.push(`${path}（${mark.who} が ${localTime(mark.t)} に調整）`);
         }
       }
       if (hits.length) {
@@ -332,14 +368,16 @@ export class Project {
     }
     // 編集で新しい問題（ないファイル・ないアニメーション・範囲外のコマなど）が増えるなら、保存せずに止める
     const before = new Set(this.validate());
-    const backup: Docs = { scenes: new Map(this.docs.scenes), prefabs: new Map(this.docs.prefabs), sheets: new Map(this.docs.sheets) };
+    const backup: Docs = { scenes: new Map(this.docs.scenes), prefabs: new Map(this.docs.prefabs), sheets: new Map(this.docs.sheets), tables: new Map(this.docs.tables) };
     const result = applyOps(this.docs, this.registry, ops);
     const rollback = (message: string): never => {
       this.docs.scenes = backup.scenes;
       this.docs.prefabs = backup.prefabs;
       this.docs.sheets = backup.sheets;
+      this.docs.tables = backup.tables;
       this.registry.prefabs = backup.prefabs;
       this.registry.sheets = backup.sheets;
+      this.registry.tableData = backup.tables;
       throw new Error(message);
     };
     // 操作の結果として連動して変わる値（コマの名前の変更で書き換わる参照など）にも、ロックは効く
@@ -354,15 +392,23 @@ export class Project {
     await appendLog(this.dir, actor, opName, result.changes);
     await markTouched(this.dir, actor, result.changes);
     if (actor.kind === 'human') {
-      // 人がロック中の値を編集したら、ロックの値も新しい値にする。消したものはロックも外す
+      // 人がロック中の値を編集したら、ロックの値も新しい値にする。消したものはロックも外す。行の ID を変えたらロックも付け替える
       let changed = false;
       for (const c of result.changes) {
-        const base = sheetRoot(c.path.replace(/\[\d+,\s*\d+\]$/, ''));
-        if (c.to === 'removed' && base === c.path) {
-          for (const p of lockedHits(locks, base)) { delete locks[p]; changed = true; }
-        } else if (locks[base]) {
-          locks[base].value = structuredClone(getValue(this.docs, this.registry, base).value);
-          changed = true;
+        const path = sheetRoot(c.path.replace(/\[\d+,\s*\d+\]$/, ''));
+        const renamed = typeof c.to === 'string' && c.to.startsWith('renamed:') ? c.path.replace(/[^.]+$/, c.to.slice('renamed:'.length)) : null;
+        for (const p of Object.keys(locks)) {
+          if (renamed && (p === c.path || p.startsWith(c.path + '.'))) {
+            locks[renamed + p.slice(c.path.length)] = locks[p];
+            delete locks[p];
+            changed = true;
+          } else if (c.to === 'removed' && (p === path || isInside(p, path))) {
+            delete locks[p];
+            changed = true;
+          } else if (p === path || isInside(path, p)) {
+            locks[p].value = structuredClone(getValue(this.docs, this.registry, p).value);
+            changed = true;
+          }
         }
       }
       if (changed) await writeLocks(this.dir, actor, locks);
@@ -375,6 +421,17 @@ export class Project {
 
   async saveDirty(dirty: Iterable<string>): Promise<void> {
     for (const key of dirty) {
+      if (key.startsWith('table:')) {
+        const name = key.slice('table:'.length);
+        const path = join(this.dir, 'data', `${name}.table.json`);
+        const t = this.docs.tables.get(name);
+        await mkdir(join(this.dir, 'data'), { recursive: true });
+        if (!t) { await rm(path, { force: true }); this.written.set(path, ''); continue; }
+        const text = formatTable(t);
+        await writeFile(path, text);
+        this.written.set(path, text);
+        continue;
+      }
       if (key.startsWith('sheet:')) {
         const image = key.slice('sheet:'.length);
         const path = join(this.dir, sheetPathOf(image));
@@ -464,6 +521,21 @@ export function formatSheet(sheet: SheetDef): string {
   return lines.join('\n') + '\n';
 }
 
+/** 表の書き出し。1行1行（Gitの統合が行の単位になり、表計算ソフトのように見える） */
+export function formatTable(t: TableDoc): string {
+  return `{\n  "name": ${JSON.stringify(t.name)},\n  "rows": [${t.rows.length ? '\n' + t.rows.map((r) => `    ${JSON.stringify(r)}`).join(',\n') + '\n  ' : ''}]\n}\n`;
+}
+
+/** 2つの住所の片方がもう片方の中にあるか（a が b の中） */
+export function isInside(a: string, b: string): boolean {
+  return a.startsWith(b + '.') || a.startsWith(b + '[');
+}
+
+/** 同じ値か、片方がもう片方の中（ロック・★の当たり判定に使う） */
+export function related(a: string, b: string): boolean {
+  return a === b || isInside(a, b) || isInside(b, a);
+}
+
 async function readDocs(dir: string): Promise<Omit<Docs, 'sheets'>> {
   const scenes = new Map<string, SceneDoc>();
   for (const f of await list(join(dir, 'scenes'), '.scene.json')) {
@@ -475,7 +547,13 @@ async function readDocs(dir: string): Promise<Omit<Docs, 'sheets'>> {
     const doc: PrefabDoc = parseJson(await readFile(join(dir, 'prefabs', f), 'utf8'), `prefabs/${f}`);
     prefabs.set(doc.name, doc);
   }
-  return { scenes, prefabs };
+  const tables = new Map<string, TableDoc>();
+  for (const f of await list(join(dir, 'data'), '.table.json')) {
+    const doc: TableDoc = parseJson(await readFile(join(dir, 'data', f), 'utf8'), `data/${f}`);
+    const name = f.slice(0, -'.table.json'.length);
+    tables.set(name, { name, rows: Array.isArray(doc.rows) ? doc.rows : [] });
+  }
+  return { scenes, prefabs, tables };
 }
 
 function parseJson<T>(text: string, file: string): T {

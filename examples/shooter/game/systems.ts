@@ -1,3 +1,4 @@
+import { enemies } from './tables.ts';
 import { defineSystem, type Entity } from 'ages';
 
 const overlap = (a: Entity, b: Entity) => {
@@ -27,25 +28,29 @@ export const playerControl = defineSystem({
 
 export const spawner = defineSystem({
   name: 'spawner',
-  desc: '一定間隔で画面上端に敵を出す（出現パターンの行列があればその通りに）',
+  desc: '一定間隔で画面上端に敵を出す（出現パターンの行列があればその通りに。種類は表 enemies）',
   reads: ['Spawner'],
-  update({ world, rng, frame, view, spawn }) {
+  update({ world, rng, frame, view, spawn, table }) {
     for (const e of world.query('Spawner')) {
       const s = e.c.Spawner;
       if (frame % s.interval !== 0) continue;
-      const vy = () => rng.range(s.speedMin, Math.max(s.speedMin, s.speedMax));
+      const wave = frame / s.interval;
+      // 敵の種類は表 enemies から（波ごとに kinds を順番に）
+      const kind = table(enemies).get(s.kinds[wave % s.kinds.length]);
+      const vy = () => rng.range(s.speedMin, Math.max(s.speedMin, s.speedMax)) * kind.speed;
+      const stats = (vy: number) => ({ Velocity: { vy }, Health: { hp: kind.hp }, Enemy: { score: kind.score }, Sprite: { frame: kind.frame, tint: kind.tint } });
       const rows: number[][] = s.formation;
       if (!rows.length) {
-        spawn(s.prefab, { Transform: { x: rng.range(s.margin, view.width - s.margin), y: -20 }, Velocity: { vy: vy() } });
+        spawn(s.prefab, { Transform: { x: rng.range(s.margin, view.width - s.margin), y: -20 }, ...stats(vy()) });
         continue;
       }
       // 出現パターン: 波ごとに1行ずつ使い、1の列に敵を出す
-      const row = rows[(frame / s.interval) % rows.length];
+      const row = rows[wave % rows.length];
       const speed = vy();
       row.forEach((on, col) => {
         if (!on) return;
         const x = s.margin + ((view.width - s.margin * 2) * (col + 0.5)) / row.length;
-        spawn(s.prefab, { Transform: { x, y: -20 }, Velocity: { vy: speed } });
+        spawn(s.prefab, { Transform: { x, y: -20 }, ...stats(speed) });
       });
     }
   },

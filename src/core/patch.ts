@@ -1,7 +1,8 @@
 // 差分編集。AIも人（エディタ）も、ファイルの変更はすべてここを通る。
 // 返り値は「何がいくつからいくつに変わったか」だけ。
-import { parseAddress, type Address, type EntityData, type PrefabDoc, type SceneDoc } from './docs.ts';
-import { checkCell, checkValue, suggest, type CellValue } from './schema.ts';
+import { formatSub, getIn, parseAddress, setIn, type Address, type EntityData, type PrefabDoc, type SceneDoc } from './docs.ts';
+import { checkAt, checkCell, defaultOf, filled, mapLeaves, suggest, type CellValue, type Field } from './schema.ts';
+import { ROW_ID, type Row, type TableDoc } from './table.ts';
 import type { Registry } from './registry.ts';
 import { baseNameOf, checkSheet, findFrame, sheetPathOf, toExplicit, type FrameDef, type FrameRef, type SheetDef } from './sheet.ts';
 import { frameMapper, remapRef } from './slice.ts';
@@ -26,7 +27,21 @@ export type Op =
    */
   | { op: 'setFrame'; image: string; frame: FrameRef; name?: string; rect?: FrameDef['rect']; pivot?: [number, number] | null; remove?: boolean }
   /** 動きを1つ変える・足す・消す。ない名前は追加（frames と fps が必要） */
-  | { op: 'setClip'; image: string; clip: string; frames?: FrameRef[]; fps?: number; loop?: boolean; remove?: boolean };
+  | { op: 'setClip'; image: string; clip: string; frames?: FrameRef[]; fps?: number; loop?: boolean; remove?: boolean }
+  /** リストに足す。path はリストの住所（例 main#spawner.Spawner.waves）。index を省くと最後。value を省くと既定値 */
+  | { op: 'insert'; path: string; value?: unknown; index?: number }
+  /** リストから消す。path は要素の住所（例 main#spawner.Spawner.waves[2]） */
+  | { op: 'removeItem'; path: string }
+  /** リストの中で動かす。path は要素の住所、to は動かした後の番号 */
+  | { op: 'moveItem'; path: string; to: number }
+  /** 表に行を足す。row には id が要る。省いた列は既定値。index を省くと最後 */
+  | { op: 'addRow'; table: string; row: Row; index?: number }
+  /** 表から行を消す */
+  | { op: 'removeRow'; table: string; id: string }
+  /** 表の中で行を動かす（to は動かした後の番号） */
+  | { op: 'moveRow'; table: string; id: string; to: number }
+  /** 行の ID を変える。その行を指している値（row 型）も書き換える */
+  | { op: 'renameRow'; table: string; id: string; to: string };
 
 /** シートの値の住所。sheet:<画像>（全体）、sheet:<画像>|<コマ>.rect、sheet:<画像>|clip:<動き>.fps */
 export const sheetAddress = (image: string, rest = '') => `sheet:${image}${rest ? '|' + rest : ''}`;
@@ -52,11 +67,13 @@ export interface Docs {
   prefabs: Map<string, PrefabDoc>;
   /** スプライトシート（画像の場所 → 切り方）。ファイルは画像の隣の <画像名>.sheet.json */
   sheets: Map<string, SheetDef>;
+  /** 表（名前 → 行）。ファイルは data/<名前>.table.json */
+  tables: Map<string, TableDoc>;
 }
 
 export interface PatchResult {
   changes: Change[];
-  /** 変更があった文書（"scene:main" / "prefab:enemy" / "sheet:assets/x.png"） */
+  /** 変更があった文書（"scene:main" / "prefab:enemy" / "sheet:assets/x.png" / "table:enemies"） */
   dirty: Set<string>;
 }
 
@@ -83,6 +100,83 @@ function holderOf(docs: Docs, a: Address): { holder: Holder; key: string } {
   return { holder: e, key: `scene:${a.doc}` };
 }
 
+/** フィールド（表なら列）の中の、ある場所。読む・書くの両方に使う */
+interface Slot {
+  /** フィールドの型 */
+  top: Field;
+  /** フィールドの今の値（省略されていれば既定値） */
+  topValue: unknown;
+  isDefault: boolean;
+  sub: (string | number)[];
+  /** その場所の型と値 */
+  field: Field;
+  value: unknown;
+  /** 検証のメッセージに使う場所（例 Spawner.waves、$enemies.basic.hp） */
+  at: string;
+  /** 変更のあった文書 */
+  key: string;
+  /** フィールドの値をまるごと書く */
+  write(top: unknown): void;
+}
+
+/** フィールドの中を sub に沿って進む。ない場所は、どこが違うかを示して止める */
+function walk(at: string, top: Field, topValue: unknown, sub: (string | number)[]): { field: Field; value: unknown } {
+  let f = top, v = topValue, where = at;
+  for (const seg of sub) {
+    if (f.type === 'list') {
+      if (typeof seg !== 'number') throw new Error(`${where} はリストです。中は [番号] で指します（例 ${where}[0]）`);
+      const n = Array.isArray(v) ? v.length : 0;
+      if (seg >= n) throw new Error(`${where}[${seg}] は範囲外です（${n} 個、0から数えます）`);
+      f = f.of; v = (v as unknown[])[seg]; where += `[${seg}]`;
+    } else if (f.type === 'struct') {
+      if (typeof seg !== 'string' || !f.fields[seg]) throw new Error(`${where} に ${seg} という項目はありません${suggest(String(seg), Object.keys(f.fields))}（ある項目: ${Object.keys(f.fields).join(', ')}）`);
+      f = f.fields[seg]; v = (v as Record<string, unknown> | undefined)?.[seg] ?? defaultOf(f); where += `.${seg}`;
+    } else if (f.type === 'oneOf') {
+      const kind = (v as { kind?: string } | undefined)?.kind ?? Object.keys(f.variants)[0];
+      if (seg === 'kind') { f = { type: 'enum', options: Object.keys(f.variants), default: kind }; v = kind; where += '.kind'; continue; }
+      const vf = f.variants[kind]?.fields ?? {};
+      if (typeof seg !== 'string' || !vf[seg]) throw new Error(`${where}（種類 ${kind}）に ${seg} という項目はありません${suggest(String(seg), Object.keys(vf))}（ある項目: kind, ${Object.keys(vf).join(', ')}）`);
+      f = vf[seg]; v = (v as Record<string, unknown> | undefined)?.[seg] ?? defaultOf(f); where += `.${seg}`;
+    } else throw new Error(`${where} は ${f.type} なので、中に ${typeof seg === 'number' ? `[${seg}]` : '.' + seg} はありません`);
+  }
+  return { field: f, value: v };
+}
+
+function tableOf(docs: Docs, reg: Registry, name: string): TableDoc {
+  reg.table(name);
+  let t = docs.tables.get(name);
+  if (!t) { t = { name, rows: [] }; docs.tables.set(name, t); }
+  return t;
+}
+
+function slotOf(docs: Docs, reg: Registry, a: Address, path: string): Slot {
+  if (a.kind === 'table') {
+    if (!a.entity || !a.field) throw new Error(`表の値は $表.行.列 で指します（例 $enemies.basic.hp）。受け取った値: ${path}`);
+    const def = reg.table(a.doc);
+    const t = tableOf(docs, reg, a.doc);
+    const row = t.rows.find((r) => r.id === a.entity);
+    if (!row) throw new Error(`表 ${a.doc} に行 ${a.entity} はありません${suggest(a.entity, t.rows.map((r) => r.id))}`);
+    if (a.field === 'id') throw new Error(`行の ID は renameRow で変えます（その行を指している値も書き換わります）`);
+    const top = def.columns[a.field];
+    if (!top) throw new Error(`表 ${a.doc} に列 ${a.field} はありません${suggest(a.field, Object.keys(def.columns))}（ある列: id, ${Object.keys(def.columns).join(', ')}）`);
+    const has = a.field in row;
+    const topValue = has ? row[a.field] : defaultOf(top);
+    const at = `$${a.doc}.${a.entity}.${a.field}`;
+    return { top, topValue, isDefault: !has, sub: a.sub, ...walk(at, top, topValue, a.sub), at, key: `table:${a.doc}`, write: (v) => { row[a.field!] = v; } };
+  }
+  if (!a.component || !a.field) throw new Error(`フィールドまでのアドレスが必要です（例: main#player.Mover.speed）。受け取った値: ${path}`);
+  const { holder, key } = holderOf(docs, a);
+  const comp = holder.components[a.component];
+  if (!comp) throw new Error(`${path}: コンポーネント ${a.component} が付いていません${suggest(a.component, Object.keys(holder.components))}`);
+  const def = reg.component(a.component);
+  const top = def.fields[a.field];
+  if (!top) throw new Error(`${a.component} に ${a.field} はありません${suggest(a.field, Object.keys(def.fields))}`);
+  const has = a.field in comp;
+  const topValue = has ? comp[a.field] : defaultOf(top);
+  const at = `${a.component}.${a.field}`;
+  return { top, topValue, isDefault: !has, sub: a.sub, ...walk(at, top, topValue, a.sub), at, key, write: (v) => { comp[a.field!] = v; } };
+}
+
 /** 値を読む。フィールドが省略されていれば既定値を返す（isDefault=true）。 */
 export function getValue(docs: Docs, reg: Registry, path: string): { value: unknown; isDefault: boolean } {
   if (path.startsWith('sheet:')) {
@@ -90,20 +184,39 @@ export function getValue(docs: Docs, reg: Registry, path: string): { value: unkn
     return { value: docs.sheets.get(image) ?? null, isDefault: false };
   }
   const a = parseAddress(path);
+  if (a.kind === 'table') {
+    if (a.field) { const s = slotOf(docs, reg, a, path); return { value: filled(s.field, s.value), isDefault: s.isDefault && !s.sub.length }; }
+    reg.table(a.doc);
+    const t = docs.tables.get(a.doc) ?? { name: a.doc, rows: [] };
+    if (!a.entity) return { value: t, isDefault: false };
+    const row = t.rows.find((r) => r.id === a.entity);
+    if (!row) throw new Error(`表 ${a.doc} に行 ${a.entity} はありません${suggest(a.entity, t.rows.map((r) => r.id))}`);
+    return { value: row, isDefault: false };
+  }
+  if (a.field) { const s = slotOf(docs, reg, a, path); return { value: filled(s.field, s.value), isDefault: s.isDefault && !s.sub.length }; }
   const { holder } = holderOf(docs, a);
   if (!a.component) return { value: holder, isDefault: false };
   const comp = holder.components[a.component];
   if (!comp) throw new Error(`${path}: コンポーネント ${a.component} が付いていません${suggest(a.component, Object.keys(holder.components))}`);
-  if (!a.field) return { value: comp, isDefault: false };
-  const def = reg.component(a.component);
-  const f = def.fields[a.field];
-  if (!f) throw new Error(`${a.component} に ${a.field} はありません${suggest(a.field, Object.keys(def.fields))}`);
-  return a.field in comp ? { value: comp[a.field], isDefault: false } : { value: f.default, isDefault: true };
+  return { value: comp, isDefault: false };
+}
+
+/** 値を直接書く（検証しない。ロックの値を戻すとき用）。書いた文書の key を返す */
+export function setValue(docs: Docs, reg: Registry, path: string, value: unknown): string {
+  if (path.startsWith('sheet:')) {
+    const image = path.slice('sheet:'.length);
+    if (value === null) docs.sheets.delete(image);
+    else docs.sheets.set(image, structuredClone(value as SheetDef));
+    return path;
+  }
+  const s = slotOf(docs, reg, parseAddress(path), path);
+  s.write(setIn(s.topValue, s.sub, structuredClone(value)));
+  return s.key;
 }
 
 /** 操作をまとめて適用する。1つでも失敗したら何も変えない。 */
 export function applyOps(docs: Docs, reg: Registry, ops: Op[]): PatchResult {
-  const work: Docs = { scenes: structuredClone(docs.scenes), prefabs: structuredClone(docs.prefabs), sheets: structuredClone(docs.sheets) };
+  const work: Docs = { scenes: structuredClone(docs.scenes), prefabs: structuredClone(docs.prefabs), sheets: structuredClone(docs.sheets), tables: structuredClone(docs.tables) };
   const changes: Change[] = [];
   const dirty = new Set<string>();
   ops.forEach((op, i) => {
@@ -119,6 +232,7 @@ export function applyOps(docs: Docs, reg: Registry, ops: Op[]): PatchResult {
     const kind = k.slice(0, i), name = k.slice(i + 1);
     if (kind === 'scene') docs.scenes.set(name, work.scenes.get(name)!);
     else if (kind === 'prefab') docs.prefabs.set(name, work.prefabs.get(name)!);
+    else if (kind === 'table') docs.tables.set(name, work.tables.get(name)!);
     else if (work.sheets.has(name)) docs.sheets.set(name, work.sheets.get(name)!);
     else docs.sheets.delete(name);
   }
@@ -129,46 +243,124 @@ function applyOne(docs: Docs, reg: Registry, op: Op, changes: Change[], dirty: S
   switch (op.op) {
     case 'set': {
       const a = parseAddress(op.path);
-      if (!a.component || !a.field) throw new Error(`set にはフィールドまでのアドレスが必要です（例: main#player.Mover.speed）。受け取った値: ${op.path}`);
-      const { holder, key } = holderOf(docs, a);
-      const comp = holder.components[a.component];
-      if (!comp) throw new Error(`${op.path}: コンポーネント ${a.component} が付いていません。先に addComponent が必要です`);
-      const def = reg.component(a.component);
-      const f = def.fields[a.field];
-      if (!f) throw new Error(`${a.component} に ${a.field} はありません${suggest(a.field, Object.keys(def.fields))}`);
-      const err = checkValue(a.component, a.field, f, op.value);
+      const sl = slotOf(docs, reg, a, op.path);
+      const newTop = setIn(sl.topValue, sl.sub, op.value);
+      const err = checkAt(sl.at, sl.top, newTop);
       if (err) throw new Error(err);
-      if (f.type === 'prefab' && op.value !== '' && !docs.prefabs.has(op.value as string)) {
+      if (sl.field.type === 'prefab' && op.value !== '' && !docs.prefabs.has(op.value as string)) {
         throw new Error(`プレハブ ${op.value} はありません${suggest(String(op.value), [...docs.prefabs.keys()])}`);
       }
-      const from = a.field in comp ? comp[a.field] : f.default;
+      const from = sl.sub.length ? sl.value : sl.isDefault ? defaultOf(sl.top) : sl.topValue;
       if (JSON.stringify(from) === JSON.stringify(op.value)) return;
-      comp[a.field] = structuredClone(op.value);
+      sl.write(structuredClone(newTop));
       changes.push({ path: op.path, from, to: op.value });
-      dirty.add(key);
+      dirty.add(sl.key);
       return;
     }
     case 'setCells': {
       const a = parseAddress(op.path);
-      if (!a.component || !a.field) throw new Error(`setCells にはフィールドまでのアドレスが必要です: ${op.path}`);
-      const { holder, key } = holderOf(docs, a);
-      const comp = holder.components[a.component];
-      if (!comp) throw new Error(`${op.path}: コンポーネント ${a.component} が付いていません`);
-      const def = reg.component(a.component);
-      const f = def.fields[a.field];
-      if (!f) throw new Error(`${a.component} に ${a.field} はありません${suggest(a.field, Object.keys(def.fields))}`);
+      const sl = slotOf(docs, reg, a, op.path);
+      const f = sl.field;
       if (f.type !== 'matrix') throw new Error(`${op.path} は行列ではありません（${f.type}）。set を使ってください`);
-      const m = structuredClone((a.field in comp ? comp[a.field] : f.default) as CellValue[][]);
+      const m = structuredClone(sl.value as CellValue[][]);
+      let changed = false;
       for (const [r, c, v] of op.cells) {
         if (!m[r] || c < 0 || c >= m[r].length) throw new Error(`${op.path}[${r},${c}] は範囲外です（大きさ ${m.length}x${m[0]?.length ?? 0}、0から数えます）`);
-        const err = checkCell(`${a.component}.${a.field}`, f, r, c, v);
+        const err = checkCell(sl.at + formatSub(sl.sub), f, r, c, v);
         if (err) throw new Error(err);
         if (m[r][c] === v) continue;
         changes.push({ path: `${op.path}[${r},${c}]`, from: m[r][c], to: v });
         m[r][c] = v;
-        dirty.add(key);
+        changed = true;
       }
-      comp[a.field] = m;
+      if (changed) { sl.write(setIn(sl.topValue, sl.sub, m)); dirty.add(sl.key); }
+      return;
+    }
+    case 'insert': {
+      const a = parseAddress(op.path);
+      const sl = slotOf(docs, reg, a, op.path);
+      if (sl.field.type !== 'list') throw new Error(`${op.path} はリストではありません（${sl.field.type}）`);
+      const list = [...((sl.value as unknown[]) ?? [])];
+      const i = op.index ?? list.length;
+      if (!Number.isInteger(i) || i < 0 || i > list.length) throw new Error(`insert の index=${i} は範囲外です（0〜${list.length}）`);
+      const value = op.value === undefined ? defaultOf(sl.field.of) : structuredClone(op.value);
+      list.splice(i, 0, value);
+      const newTop = setIn(sl.topValue, sl.sub, list);
+      const err = checkAt(sl.at, sl.top, newTop);
+      if (err) throw new Error(err);
+      sl.write(newTop);
+      changes.push({ path: `${op.path}[${i}]`, from: undefined, to: 'added' });
+      dirty.add(sl.key);
+      return;
+    }
+    case 'removeItem':
+    case 'moveItem': {
+      const { list: listPath, index } = splitItem(op.path);
+      const a = parseAddress(listPath);
+      const sl = slotOf(docs, reg, a, listPath);
+      if (sl.field.type !== 'list') throw new Error(`${listPath} はリストではありません（${sl.field.type}）`);
+      const list = [...((sl.value as unknown[]) ?? [])];
+      if (index >= list.length) throw new Error(`${op.path} は範囲外です（${list.length} 個、0から数えます）`);
+      const [item] = list.splice(index, 1);
+      if (op.op === 'moveItem') {
+        if (!Number.isInteger(op.to) || op.to < 0 || op.to > list.length) throw new Error(`moveItem の to=${op.to} は範囲外です（0〜${list.length}）`);
+        if (op.to === index) return;
+        list.splice(op.to, 0, item);
+      }
+      const newTop = setIn(sl.topValue, sl.sub, list);
+      const err = checkAt(sl.at, sl.top, newTop);
+      if (err) throw new Error(err);
+      sl.write(newTop);
+      changes.push(op.op === 'removeItem' ? { path: op.path, from: item, to: 'removed' } : { path: op.path, from: `[${index}]`, to: `moved:[${op.to}]` });
+      dirty.add(sl.key);
+      return;
+    }
+    case 'addRow': {
+      const def = reg.table(op.table);
+      const t = tableOf(docs, reg, op.table);
+      const id = op.row?.id;
+      if (typeof id !== 'string' || !ROW_ID.test(id)) throw new Error(`行の id "${id}" には英数字・_・- だけが使えます`);
+      if (t.rows.some((r) => r.id === id)) throw new Error(`表 ${op.table} に行 ${id} はすでにあります`);
+      const { id: _id, ...cols } = op.row;
+      for (const [k, v] of Object.entries(cols)) {
+        const f = def.columns[k];
+        if (!f) throw new Error(`表 ${op.table} に列 ${k} はありません${suggest(k, Object.keys(def.columns))}（ある列: ${Object.keys(def.columns).join(', ')}）`);
+        const err = checkAt(`$${op.table}.${id}.${k}`, f, v);
+        if (err) throw new Error(err);
+      }
+      const i = op.index ?? t.rows.length;
+      if (!Number.isInteger(i) || i < 0 || i > t.rows.length) throw new Error(`addRow の index=${i} は範囲外です（0〜${t.rows.length}）`);
+      t.rows.splice(i, 0, structuredClone(op.row));
+      changes.push({ path: `$${op.table}.${id}`, to: 'added' });
+      dirty.add(`table:${op.table}`);
+      return;
+    }
+    case 'removeRow':
+    case 'moveRow': {
+      const t = tableOf(docs, reg, op.table);
+      const i = t.rows.findIndex((r) => r.id === op.id);
+      if (i < 0) throw new Error(`表 ${op.table} に行 ${op.id} はありません${suggest(op.id, t.rows.map((r) => r.id))}`);
+      const [row] = t.rows.splice(i, 1);
+      if (op.op === 'moveRow') {
+        if (!Number.isInteger(op.to) || op.to < 0 || op.to > t.rows.length) throw new Error(`moveRow の to=${op.to} は範囲外です（0〜${t.rows.length}）`);
+        t.rows.splice(op.to, 0, row);
+        if (op.to === i) return;
+        changes.push({ path: `$${op.table}.${op.id}`, from: `#${i}`, to: `#${op.to}` });
+      } else changes.push({ path: `$${op.table}.${op.id}`, from: row, to: 'removed' });
+      dirty.add(`table:${op.table}`);
+      return;
+    }
+    case 'renameRow': {
+      const t = tableOf(docs, reg, op.table);
+      const row = t.rows.find((r) => r.id === op.id);
+      if (!row) throw new Error(`表 ${op.table} に行 ${op.id} はありません${suggest(op.id, t.rows.map((r) => r.id))}`);
+      if (!ROW_ID.test(op.to)) throw new Error(`行の id "${op.to}" には英数字・_・- だけが使えます`);
+      if (op.to === op.id) return;
+      if (t.rows.some((r) => r.id === op.to)) throw new Error(`表 ${op.table} に行 ${op.to} はすでにあります`);
+      row.id = op.to;
+      changes.push({ path: `$${op.table}.${op.id}`, from: op.id, to: `renamed:${op.to}` });
+      dirty.add(`table:${op.table}`);
+      renameRowRefs(docs, reg, op.table, op.id, op.to, changes, dirty);
       return;
     }
     case 'addEntity': {
@@ -318,7 +510,49 @@ function applyOne(docs: Docs, reg: Registry, op: Op, changes: Change[], dirty: S
       return;
     }
     default:
-      throw new Error(`未知の操作 ${(op as { op: string }).op}。使えるのは set / setCells / addEntity / removeEntity / addComponent / removeComponent / rename / setSheet / setFrame / setClip`);
+      throw new Error(`未知の操作 ${(op as { op: string }).op}。使えるのは set / setCells / insert / removeItem / moveItem / addEntity / removeEntity / addComponent / removeComponent / rename / addRow / removeRow / moveRow / renameRow / setSheet / setFrame / setClip`);
+  }
+}
+
+/** "…waves[2]" → { list: "…waves", index: 2 } */
+export function splitItem(path: string): { list: string; index: number } {
+  const m = path.match(/^(.*)\[(\d+)\]$/);
+  if (!m) throw new Error(`リストの要素の住所が必要です（例 main#spawner.Spawner.waves[2]）。受け取った値: ${path}`);
+  return { list: m[1], index: Number(m[2]) };
+}
+
+/** 行の ID を変えたとき、その行を指している値（row 型。入れ子の中も）を書き換える */
+function renameRowRefs(docs: Docs, reg: Registry, table: string, from: string, to: string, changes: Change[], dirty: Set<string>): void {
+  const fix = (f: Field, v: unknown) => (f.type === 'row' && f.table === table && v === from ? to : undefined);
+  const fixHolder = (base: string, comps: Record<string, Record<string, unknown>>, key: string) => {
+    for (const [cname, values] of Object.entries(comps)) {
+      const def = reg.components.get(cname);
+      if (!def) continue;
+      for (const [k, f] of Object.entries(def.fields)) {
+        if (!(k in values)) continue;
+        const next = mapLeaves(f, values[k], fix);
+        if (JSON.stringify(next) === JSON.stringify(values[k])) continue;
+        changes.push({ path: `${base}.${cname}.${k}`, from: values[k], to: next, auto: true });
+        values[k] = next;
+        dirty.add(key);
+      }
+    }
+  };
+  for (const s of docs.scenes.values()) for (const e of s.entities) fixHolder(`${s.name}#${e.id}`, e.components, `scene:${s.name}`);
+  for (const p of docs.prefabs.values()) fixHolder(`@${p.name}`, p.components, `prefab:${p.name}`);
+  for (const t of docs.tables.values()) {
+    const def = reg.tables.get(t.name);
+    if (!def) continue;
+    for (const r of t.rows) {
+      for (const [k, f] of Object.entries(def.columns)) {
+        if (!(k in r)) continue;
+        const next = mapLeaves(f, r[k], fix);
+        if (JSON.stringify(next) === JSON.stringify(r[k])) continue;
+        changes.push({ path: `$${t.name}.${r.id}.${k}`, from: r[k], to: next, auto: true });
+        r[k] = next;
+        dirty.add(`table:${t.name}`);
+      }
+    }
   }
 }
 
@@ -431,5 +665,24 @@ export function diffDocs(before: Docs, after: Docs): Change[] {
     diffHolder(`@${name}`, before.prefabs.get(name), after.prefabs.get(name));
   }
   for (const image of new Set([...before.sheets.keys(), ...after.sheets.keys()])) out.push(...diffSheet(image, before.sheets.get(image), after.sheets.get(image)));
+  for (const name of new Set([...before.tables.keys(), ...after.tables.keys()])) out.push(...diffTable(name, before.tables.get(name), after.tables.get(name)));
+  return out;
+}
+
+/** 2つの表の違いを、行・セルの単位で求める */
+export function diffTable(name: string, a: TableDoc | undefined, b: TableDoc | undefined): Change[] {
+  const out: Change[] = [];
+  const ra = new Map((a?.rows ?? []).map((r) => [r.id, r])), rb = new Map((b?.rows ?? []).map((r) => [r.id, r]));
+  for (const [id, r] of rb) {
+    const o = ra.get(id);
+    if (!o) { out.push({ path: `$${name}.${id}`, to: 'added' }); continue; }
+    for (const k of new Set([...Object.keys(o), ...Object.keys(r)])) {
+      if (k === 'id') continue;
+      if (JSON.stringify(o[k]) !== JSON.stringify(r[k])) out.push({ path: `$${name}.${id}.${k}`, from: o[k], to: r[k] });
+    }
+  }
+  for (const [id, r] of ra) if (!rb.has(id)) out.push({ path: `$${name}.${id}`, from: r, to: 'removed' });
+  const order = (t?: TableDoc) => (t?.rows ?? []).map((r) => r.id).filter((id) => ra.has(id) && rb.has(id)).join('\u0000');
+  if (a && b && order(a) !== order(b)) out.push({ path: `$${name}`, from: '並び', to: '並べ替え' });
   return out;
 }

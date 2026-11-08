@@ -23,6 +23,7 @@ async function state() {
     touched: await readTouched(project.dir),
     locks: await project.effectiveLocks(),
     sheets: Object.fromEntries(project.registry.sheets),
+    tables: Object.fromEntries(project.docs.tables),
     assets: project.assets,
     issues: project.validate(),
     lockReport: project.lockReport,

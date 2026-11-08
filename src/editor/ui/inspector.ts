@@ -2,7 +2,9 @@
 // 各フィールドに 🔒（AIが変更できないロック）を付けられる。人が触った値には ★ が付く。
 import type { App } from '../app.ts';
 import type { Field } from '../../core/schema.ts';
-import { brief, matrixSize } from '../../core/schema.ts';
+import { brief, defaultOf, matrixSize, typeOf, variantDefault, type ListField, type OneOfField, type StructField } from '../../core/schema.ts';
+import { formatSub, getIn, setIn } from '../../core/docs.ts';
+import type { Op } from '../../core/patch.ts';
 import { h, clear, time, modal } from './dom.ts';
 import { findFrame, frameLabel, listFrames, type FrameRef, type SheetDef } from '../../core/sheet.ts';
 import type { Panel } from './layout.ts';
@@ -58,7 +60,7 @@ export function inspectorPanel(app: App): Panel {
       const rows = visible.map(([fname, f]) => {
         const path = `${base}.${cname}.${fname}`;
         const has = fname in values;
-        const value = has ? values[fname] : f.default;
+        const value = has ? values[fname] : defaultOf(f);
         const lock = app.state.locks[path];
         const touched = app.state.touched[path];
         const commit = (v: unknown, final: boolean) => {
@@ -70,9 +72,21 @@ export function inspectorPanel(app: App): Panel {
             app.patch([{ op: 'set', path, value: v }]);
           }
         };
+        const wctx = { comp: cname, field: fname, holder: holder!.components };
+        // リスト・構造体・どれか1つ: 中まで並べて編集する。変更は中の場所ごとの操作で送る（操作ログが細かく残る）
+        const nestedEmit = (op: NestedOp) => {
+          if (playing) {
+            const e = app.play!.game.world.get(sel.kind === 'scene' ? sel.id : '');
+            if (!e?.c[cname]) return;
+            e.c[cname][fname] = applyNested(e.c[cname][fname], op);
+            if (savable) app.play!.edits.set(path, structuredClone(e.c[cname][fname]));
+            render();
+          } else app.patch([toOp(path, op)]);
+        };
         const w = f.type === 'matrix'
           ? matrixWidget(app, path, value, f.cell ?? 'number')
-          : widget(app, f, value, commit, { comp: cname, field: fname, holder: holder!.components });
+          : isNested(f) ? { el: nestedWidget(app, f, value, path, [], nestedEmit, wctx), set: () => {} }
+          : widget(app, f, value, commit, wctx);
         const lockBtn = h('button', {
           class: `icon lockbtn ${lock ? 'on' : ''}`,
           title: lock ? `🔒 ロック中（${lock.who} ${time(lock.t)}）${lock.note ? '\n' + lock.note : ''}\nAIはこの値を変更できません。クリックで解除` : 'ロックする（AIが変更できなくなります）',
@@ -80,7 +94,7 @@ export function inspectorPanel(app: App): Panel {
           onclick: () => app.setLock([path], !lock),
         }, lock ? '🔒' : '🔓');
         const row = h('div', {
-          class: `field ${has ? '' : 'default'} ${touched ? 'touched' : ''} ${lock ? 'locked' : ''}`,
+          class: `field ${isNested(f) ? 'wide' : ''} ${has ? '' : 'default'} ${touched ? 'touched' : ''} ${lock ? 'locked' : ''}`,
         }, h('label', { title: `${fname}: ${brief(f)}${f.desc ? '\n' + f.desc : ''}${touched ? `\n★ ${touched.who} が ${time(touched.t)} に調整` : ''}${has ? '' : '\n（省略中: 既定値）'}` }, fname), w.el, lockBtn);
         live.push({ path, comp: cname, field: fname, set: w.set, el: row });
         return row;
@@ -127,7 +141,7 @@ export function inspectorPanel(app: App): Panel {
   return { id: 'inspector', title: 'インスペクタ', el, render };
 }
 
-interface Ctx { comp: string; field: string; holder: Record<string, Record<string, unknown>> }
+export interface Ctx { comp: string; field: string; holder: Record<string, Record<string, unknown>> }
 
 /** 同じ物の Sprite の画像に付いているスプライトシート */
 function sheetOfHolder(app: App, holder: Ctx['holder']): { image: string; sheet: SheetDef; w: number; h: number } | null {
@@ -139,7 +153,7 @@ function sheetOfHolder(app: App, holder: Ctx['holder']): { image: string; sheet:
   return { image, sheet, w: info.w, h: info.h };
 }
 
-function widget(app: App, f: Field, value: unknown, commit: (v: unknown, final: boolean) => void, ctx: Ctx): { el: HTMLElement; set(v: unknown): void } {
+export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, final: boolean) => void, ctx: Ctx): { el: HTMLElement; set(v: unknown): void } {
   // 標準の Sprite.frame はシートの絵から選べる。Animator.clip はシートの動き一覧から選べる
   if (ctx.comp === 'Sprite' && ctx.field === 'frame') {
     const s = sheetOfHolder(app, ctx.holder);
@@ -238,6 +252,17 @@ function widget(app: App, f: Field, value: unknown, commit: (v: unknown, final: 
       }
       return { el: wrap, set: (v) => { sel.value = String(v ?? ''); show(String(v ?? '')); } };
     }
+    case 'row': {
+      // 表の行から選ぶ
+      const ids = (app.registry.tableData.get(f.table)?.rows ?? []).map((r) => r.id);
+      const cur = String(value ?? '');
+      const options = [...(f.default === '' ? [''] : []), ...ids];
+      if (!options.includes(cur)) options.push(cur);
+      const sel = h('select', { title: `表 ${f.table} の行` }, options.map((o) => h('option', { value: o, selected: o === cur }, o === '' ? '（なし）' : ids.includes(o) ? o : `${o}（表にありません）`))) as HTMLSelectElement;
+      sel.addEventListener('change', () => commit(sel.value, true));
+      wrap.append(sel, h('button', { class: 'icon row-open', title: `表 ${f.table} を開く`, onclick: () => app.emit('openTable', { name: f.table, row: sel.value }) }, '▦'));
+      return { el: wrap, set: (v) => { sel.value = String(v); } };
+    }
     case 'frame': {
       // シートがない画像: 番号か名前を直接入れる。切り方の画面へも行ける
       const t = h('input', { type: 'text', value: String(value ?? 0), style: 'width:80px' }) as HTMLInputElement;
@@ -312,3 +337,83 @@ function frameWidget(app: App, s: { image: string; sheet: SheetDef; w: number; h
 }
 
 const round = (v: number) => (Number.isInteger(v) ? v : Math.round(v * 1000) / 1000);
+
+// ---------- リスト・構造体・どれか1つ ----------
+
+/** 入れ子の値への操作（sub はフィールドの中の場所） */
+export type NestedOp =
+  | { kind: 'set'; sub: (string | number)[]; value: unknown }
+  | { kind: 'insert'; sub: (string | number)[]; value?: unknown }
+  | { kind: 'remove'; sub: (string | number)[] }
+  | { kind: 'move'; sub: (string | number)[]; to: number };
+
+export const isNested = (f: Field): f is ListField | StructField | OneOfField => f.type === 'list' || f.type === 'struct' || f.type === 'oneOf';
+
+export function toOp(path: string, op: NestedOp): Op {
+  const at = path + formatSub(op.sub);
+  if (op.kind === 'set') return { op: 'set', path: at, value: op.value };
+  if (op.kind === 'insert') return { op: 'insert', path: at, ...(op.value !== undefined ? { value: op.value } : {}) };
+  if (op.kind === 'remove') return { op: 'removeItem', path: at };
+  return { op: 'moveItem', path: at, to: op.to };
+}
+
+/** 実行中の値に、その場で操作を当てる */
+export function applyNested(top: unknown, op: NestedOp): unknown {
+  if (op.kind === 'set') return setIn(top, op.sub, op.value);
+  if (op.kind === 'insert') return setIn(top, op.sub, [...((getIn(top, op.sub) as unknown[]) ?? []), op.value]);
+  const listSub = op.sub.slice(0, -1), i = op.sub[op.sub.length - 1] as number;
+  const list = [...((getIn(top, listSub) as unknown[]) ?? [])];
+  const [item] = list.splice(i, 1);
+  if (op.kind === 'move') list.splice(op.to, 0, item);
+  return setIn(top, listSub, list);
+}
+
+/** 開いているリスト（描き直しても閉じないよう覚えておく） */
+const opened = new Set<string>();
+
+/** 表のセルなどに出す短い要約 */
+export const valueSummary = (f: Field, v: unknown): string => {
+  if (f.type === 'list') return `${Array.isArray(v) ? v.length : 0}件`;
+  if (f.type === 'oneOf') return String((v as { kind?: string } | null)?.kind ?? '');
+  if (f.type === 'struct') return '';
+  const s = JSON.stringify(v) ?? '';
+  return s.length > 24 ? s.slice(0, 22) + '…' : s;
+};
+
+/** リスト・構造体・どれか1つを、中まで編集する部品（入れ子にもなる） */
+export function nestedWidget(app: App, f: Field, value: unknown, path: string, sub: (string | number)[], emit: (op: NestedOp) => void, ctx: Ctx): HTMLElement {
+  const key = path + formatSub(sub);
+  const leaf = (lf: Field, lv: unknown, lsub: (string | number)[]): HTMLElement => {
+    if (isNested(lf)) return nestedWidget(app, lf, lv, path, lsub, emit, ctx);
+    if (lf.type === 'matrix') return h('span', { class: 'muted' }, `行列${matrixSize(lv)}（JSON で編集）`);
+    return widget(app, lf, lv, (v, final) => { if (final) emit({ kind: 'set', sub: lsub, value: v }); }, ctx).el;
+  };
+  const row = (label: string, title: string, el: HTMLElement, ...tools: (HTMLElement | null)[]) =>
+    h('div', { class: 'nest-row' }, h('span', { class: 'nest-label', title }, label), h('div', { class: 'nest-val' }, el), ...tools);
+
+  if (f.type === 'list') {
+    const list = Array.isArray(value) ? value : [];
+    const open = opened.has(key) || list.length <= 3;
+    const toggle = h('button', { class: 'icon', title: open ? '閉じる' : '開く', onclick: () => { if (opened.has(key)) opened.delete(key); else opened.add(key); app.emit('select'); } }, open ? '▾' : '▸');
+    const add = h('button', { class: 'icon', title: `最後に足す（${typeOf(f.of)}）`, disabled: f.max !== undefined && list.length >= f.max, onclick: () => emit({ kind: 'insert', sub, value: defaultOf(f.of) }) }, '＋');
+    const items = open ? list.map((v, i) => row(`[${i}]`, `${key}[${i}]`, leaf(f.of, v, [...sub, i]),
+      h('button', { class: 'icon tiny', title: '上へ', disabled: i === 0, onclick: () => emit({ kind: 'move', sub: [...sub, i], to: i - 1 }) }, '↑'),
+      h('button', { class: 'icon tiny', title: '下へ', disabled: i === list.length - 1, onclick: () => emit({ kind: 'move', sub: [...sub, i], to: i + 1 }) }, '↓'),
+      h('button', { class: 'icon tiny', title: '消す', disabled: f.min !== undefined && list.length <= f.min, onclick: () => emit({ kind: 'remove', sub: [...sub, i] }) }, '×'))) : [];
+    const t = typeOf(f.of);
+    return h('div', { class: 'nest' }, h('div', { class: 'nest-head', title: `${list.length}件 list<${t}>` }, toggle, h('span', { class: 'muted' }, `${list.length}件${t.length <= 20 ? ' ' + t : ''}`), add), items);
+  }
+  if (f.type === 'struct') {
+    const obj = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
+    return h('div', { class: 'nest' }, Object.entries(f.fields).map(([k, sf]) => row(k, `${k}: ${typeOf(sf)}${sf.desc ? '\n' + sf.desc : ''}`, leaf(sf, k in obj ? obj[k] : defaultOf(sf), [...sub, k]))));
+  }
+  // どれか1つ: 種類を選ぶと、その種類の既定値に入れ替わる
+  const o = f as OneOfField;
+  const obj = (value && typeof value === 'object' ? value : defaultOf(o)) as Record<string, unknown>;
+  const kind = String(obj.kind ?? Object.keys(o.variants)[0]);
+  const pick = h('select', {}, Object.entries(o.variants).map(([k, v]) => h('option', { value: k, selected: k === kind, title: v.desc ?? '' }, k))) as HTMLSelectElement;
+  pick.addEventListener('change', () => emit({ kind: 'set', sub, value: variantDefault(pick.value, o.variants[pick.value].fields) }));
+  const fields = o.variants[kind]?.fields ?? {};
+  return h('div', { class: 'nest' }, row('kind', o.variants[kind]?.desc ?? '種類', pick),
+    Object.entries(fields).map(([k, sf]) => row(k, `${k}: ${typeOf(sf)}${sf.desc ? '\n' + sf.desc : ''}`, leaf(sf, k in obj ? obj[k] : defaultOf(sf), [...sub, k]))));
+}

@@ -53,6 +53,13 @@ export function hierarchyPanel(app: App): Panel {
             class: `item ${sel?.kind === 'prefab' && sel.name === p.name ? 'sel' : ''}`,
             onclick: () => app.select({ kind: 'prefab', name: p.name }),
           }, '@' + p.name, h('span', { class: 'muted' }, p.desc ?? ''), n ? h('span', { style: 'color:var(--lock)' }, '🔒' + n) : null);
+        }),
+        app.registry?.tables.size ? h('div', { class: 'folder' }, `表（${app.registry.tables.size}）`) : null,
+        [...(app.registry?.tables.values() ?? [])].map((t) => {
+          const n = lockCount(`$${t.name}`);
+          const rows = s.tables?.[t.name]?.rows.length ?? 0;
+          return h('div', { class: 'item', onclick: () => app.emit('openTable', { name: t.name }), title: '表のエディタで開く' },
+            '$' + t.name, h('span', { class: 'muted' }, `${rows}行 ${t.desc ?? ''}`), n ? h('span', { style: 'color:var(--lock)' }, '🔒' + n) : null);
         })),
     );
   };
@@ -93,7 +100,7 @@ export function projectPanel(app: App, openText: (path: string) => void): Panel 
         class: 'item',
         title: `${f.path}（${f.size} bytes）`,
         // 画像は「切り方」で開く（コマ・基準点・動きを決められる）
-        onclick: () => TEXT_EXT.test(f.path) ? openText(f.path) : IMAGE_EXT.test(f.path) ? app.emit('openSprite', f.path) : window.open(`/project@${app.state.version}/${f.path}`),
+        onclick: () => /^data\/.+\.table\.json$/.test(f.path) ? app.emit('openTable', { name: f.path.slice(5, -'.table.json'.length) }) : TEXT_EXT.test(f.path) ? openText(f.path) : IMAGE_EXT.test(f.path) ? app.emit('openSprite', f.path) : window.open(`/project@${app.state.version}/${f.path}`),
       }, f.path.split('/').pop()!, h('span', { class: 'muted' }, kb(f.size)))),
     ])));
   };
@@ -154,7 +161,7 @@ export function logPanel(app: App): Panel {
   const fmt = (v: unknown) => (v === undefined ? '' : typeof v === 'string' ? v : JSON.stringify(v));
   const render = async () => {
     try {
-      type E = { t: string; who: string; kind: string; win?: string; op: string; path: string; from?: unknown; to?: unknown };
+      type E = { t: string; who: string; kind: string; win?: string; op: string; path: string; from?: unknown; to?: unknown; auto?: boolean };
       const raw = await app.api<E[]>('/api/log?limit=300');
       // 同じ操作での画像の切り方の変更（コマごとに記録される）は、1行にまとめて見せる
       const entries: E[] = [];
@@ -167,8 +174,15 @@ export function logPanel(app: App): Panel {
       clear(el, entries.length ? entries.reverse().map((e) => h('div', { class: 'line' },
         h('span', { class: 'muted' }, time(e.t), ' '),
         h('span', { class: `who-${e.kind}` }, `${e.who}`), h('span', { class: 'muted' }, `(${e.win ?? e.kind}) `),
-        `${e.path} `, h('span', { class: 'muted' }, e.from !== undefined && typeof e.from !== 'object' ? `${fmt(e.from)} → ` : ''), fmt(e.to))) : h('div', { class: 'pad muted' }, 'まだ編集はありません'));
+        `${e.path} `, ...shownChange(e))) : h('div', { class: 'pad muted' }, 'まだ編集はありません'));
     } catch { /* 起動直後など */ }
+  };
+  /** 変更の見せ方（ID の変更・リストの並べ替えは言葉で） */
+  const shownChange = (e: { from?: unknown; to?: unknown; auto?: boolean }) => {
+    const auto = e.auto ? h('span', { class: 'muted' }, '（自動）') : null;
+    if (typeof e.to === 'string' && e.to.startsWith('renamed:')) return [h('span', { class: 'muted' }, 'ID を '), e.to.slice(8), h('span', { class: 'muted' }, ' に変更')];
+    if (typeof e.to === 'string' && e.to.startsWith('moved:')) return [h('span', { class: 'muted' }, `${fmt(e.from)} → `), e.to.slice(6), h('span', { class: 'muted' }, ' へ移動')];
+    return [h('span', { class: 'muted' }, e.from !== undefined && typeof e.from !== 'object' ? `${fmt(e.from)} → ` : ''), fmt(e.to), auto];
   };
   app.on('change', render);
   return { id: 'log', title: '操作ログ', el, render };

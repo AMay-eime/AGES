@@ -1,5 +1,6 @@
 // コンポーネント・システム・プレハブの登録簿。
-import { checkComponent, defaultsOf, suggest, type ComponentDef } from './schema.ts';
+import { checkComponent, defaultOf, defaultsOf, suggest, type ComponentDef } from './schema.ts';
+import type { Row, TableDef, TableDoc, TableView } from './table.ts';
 import type { PrefabDoc } from './docs.ts';
 import type { SheetDef } from './sheet.ts';
 import { STD_COMPONENTS } from '../std/components.ts';
@@ -28,6 +29,8 @@ export function defineSystem<T extends SystemDef>(def: T): T {
 export interface GameModule {
   components: ComponentDef[];
   systems: SystemDef[];
+  /** 表の形（defineTable）。中身は data/<名前>.table.json */
+  tables?: TableDef[];
 }
 
 export class Registry {
@@ -36,6 +39,11 @@ export class Registry {
   prefabs = new Map<string, PrefabDoc>();
   /** スプライトシート（定義ファイルの場所 → 中身） */
   sheets = new Map<string, SheetDef>();
+  /** 表の形 */
+  tables = new Map<string, TableDef>();
+  /** 表の中身（名前 → 行の並び） */
+  tableData = new Map<string, TableDoc>();
+  private views = new WeakMap<TableDoc, TableView>();
   /** 画像の大きさ（場所 → 幅・高さ）。格子のシートのコマを求めるのに使う */
   images = new Map<string, { w: number; h: number }>();
   /** 標準のコンポーネントの名前 */
@@ -58,6 +66,12 @@ export class Registry {
       }
       r.systems.push(s);
     }
+    for (const t of mod.tables ?? []) {
+      if (r.tables.has(t.name)) throw new Error(`表 ${t.name} が2回定義されています`);
+      if (!/^[A-Za-z0-9_-]+$/.test(t.name)) throw new Error(`表の名前 "${t.name}" には英数字・_・- だけが使えます`);
+      if ('id' in t.columns) throw new Error(`表 ${t.name}: 列 id は自動で付くので、columns に書かないでください`);
+      r.tables.set(t.name, t);
+    }
     // 標準のシステムはゲームのシステムの後に動く
     for (const s of STD_SYSTEMS) r.systems.push(s);
     for (const p of prefabs) r.prefabs.set(p.name, p);
@@ -68,6 +82,37 @@ export class Registry {
     const c = this.components.get(name);
     if (!c) throw new Error(`コンポーネント ${name} はありません${suggest(name, [...this.components.keys()])}`);
     return c;
+  }
+
+  table(name: string): TableDef {
+    const t = this.tables.get(name);
+    if (!t) throw new Error(`表 ${name} はありません${suggest(name, [...this.tables.keys()])}`);
+    return t;
+  }
+
+  /** ゲームのコードから読む表（省いた列は既定値で埋め、変えられないようにしてある） */
+  tableView(name: string): TableView {
+    const def = this.table(name);
+    const doc = this.tableData.get(name) ?? { name, rows: [] };
+    let v = this.views.get(doc);
+    if (!v) {
+      const rows = doc.rows.map((r) => deepFreeze({ ...Object.fromEntries(Object.entries(def.columns).map(([k, f]) => [k, defaultOf(f)])), ...structuredClone(r) }) as Row);
+      const byId = new Map(rows.map((r) => [r.id, r]));
+      const ids = Object.freeze(rows.map((r) => r.id));
+      v = {
+        name,
+        rows: Object.freeze(rows),
+        ids,
+        has: (id) => byId.has(id),
+        get: (id) => {
+          const r = byId.get(id);
+          if (!r) throw new Error(`表 ${name} に行 "${id}" はありません${suggest(String(id), [...ids])}`);
+          return r;
+        },
+      };
+      this.views.set(doc, v);
+    }
+    return v;
   }
 
   prefab(name: string): PrefabDoc {
@@ -83,4 +128,12 @@ export class Registry {
     if (errs.length) throw new Error(`${where ? where + ': ' : ''}${errs.join(' / ')}`);
     return { ...defaultsOf(def), ...structuredClone(data) };
   }
+}
+
+function deepFreeze<T>(v: T): T {
+  if (v && typeof v === 'object' && !Object.isFrozen(v)) {
+    Object.freeze(v);
+    for (const x of Object.values(v as Record<string, unknown>)) deepFreeze(x);
+  }
+  return v;
 }

@@ -6,6 +6,7 @@ import type { Registry } from './registry.ts';
 import type { SceneDoc, ProjectConfig } from './docs.ts';
 import { DEFAULT_SOUND, isSoundPath, playCmd, type AudioCmd, type BusDef, type SoundApi, type SoundSettings } from './audio.ts';
 import { suggest } from './schema.ts';
+import type { RowOf, TableDef, TableView } from './table.ts';
 
 export interface Ctx {
   world: World;
@@ -25,6 +26,12 @@ export interface Ctx {
   shake(amount: number, camera?: string): void;
   /** 音を鳴らす・止める（例: ctx.sound.play('shot')）。画面なしの実行でも、何が何回鳴ったかが記録される */
   sound: SoundApi;
+  /**
+   * 表を読む。中身は変えられない。表の形（defineTable）を渡すと、行が型付きになる
+   * 例: ctx.table(enemies).get('basic').hp　／　ctx.table('enemies').get('basic').hp
+   */
+  table<T extends TableDef>(def: T): TableView<RowOf<T>>;
+  table(name: string): TableView;
 }
 
 export interface GameEvent {
@@ -105,6 +112,7 @@ export class Game {
         }
       },
       sound: this.makeSoundApi(),
+      table: ((def: string | TableDef) => this.registry.tableView(typeof def === 'string' ? def : def.name)) as Ctx['table'],
       emit: (name, data) => {
         this.counts.set(name, (this.counts.get(name) ?? 0) + 1);
         const ev: GameEvent = { frame: this.frame, name, data };

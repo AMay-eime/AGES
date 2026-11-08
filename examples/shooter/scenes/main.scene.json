@@ -119,6 +119,13 @@
               0,
               0
             ]
+          ],
+          "kinds": [
+            "basic",
+            "basic",
+            "fast",
+            "basic",
+            "tough"
           ]
         }
       }

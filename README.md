@@ -36,7 +36,9 @@ npm run check                                  # 事前に npm install が必要
 node bin/ages.js init ../my-game --name my-game  # 新しいプロジェクト（エディタ計画書つき）
 node bin/ages.js map examples/shooter            # プロジェクトの地図
 node bin/ages.js get examples/shooter main#player # 値を見る
-node bin/ages.js set examples/shooter main#player.Mover.speed 5
+node bin/ages.js set examples/shooter main#player.Player.speed 5
+node bin/ages.js table examples/shooter enemies  # 表を見る（$enemies.basic.hp のように住所で読み書き）
+node bin/ages.js sheet examples/shooter assets/kenney-pixel-shmup/ships.png  # 画像の切り方
 node bin/ages.js run examples/shooter --frames 600 --watch main#player.Health.hp
 node bin/ages.js log examples/shooter            # 前回からの編集の要約
 ```
@@ -51,14 +53,18 @@ claude mcp add ages -- node /path/to/AGES/src/mcp/server.ts --project /path/to/m
 
 使用者のPC上で動く小さなプログラムで、ネット上のサーバーは要りません。
 
-## エディタでできること（段階1）
+## エディタでできること
 
 - 階層・プロジェクト（ファイル一覧、ドロップで assets/ に追加）・インスペクタ・ゲーム・テキスト・操作ログ・Git
 - インスペクタはコンポーネントの宣言から自動生成。各値に 🔒 ロック（AIは変更不可）を付けられる。「🔒を隠す」でロック済みの値を非表示にできる
 - 2次元行列のパラメータは専用の行列エディタで編集（表計算ソフトからの貼り付け、別ウインドウ表示に対応）
+- リスト・構造体・どれか1つ（命令の列など）は、インスペクタの中でそのまま編集（足す・消す・並べ替え）
+- 表（武器・敵・カードなど同じ形の行が並ぶデータ）は表のエディタで。セルの直接編集、表計算ソフトからの貼り付け、CSV の書き出し・読み込み、セル・行ごとのロック
+- 画像の切り方（スプライトエディタ）: 格子・数・自動で切る、矩形の編集、基準点、動き
+- 標準の部品: 画像・アニメーション・図形・文字・カメラ（追いかけ・揺れ・複数）・音（区分・BGM の重ね）
 - 再生・一時停止・1フレーム送り。実行中に変えた値は、停止時に保存するか選べる
 - 「記録して再生」で入力を recordings/ に保存。AIは `ages run --input` で同じ操作を再現できる
-- ゲーム画面でクリックして選択、ドラッグで移動
+- ゲーム画面でクリックして選択（重なっていれば同じ場所をもう一度クリックで奥へ）、ドラッグで移動。カメラの視点と自由な視点、画面の形の切り替え
 - タブはドラッグで別の場所へ移動でき、境界線で大きさを変えられる（配置は .ages/layout.json に保存）
 - プロジェクト独自のウインドウ（`editor/*.window.ts`）を追加できる
 - 外部（別のエディタやAI）でファイルが書き換えられると即座に反映。ロックされた値は自動で元に戻る
@@ -72,8 +78,11 @@ claude mcp add ages -- node /path/to/AGES/src/mcp/server.ts --project /path/to/m
 ## フォルダ構成
 
 ```
-src/core/     エンジンの核（ブラウザでもNodeでも動く）
-src/render/   描画（Canvas 2D）
+src/core/     エンジンの核（ブラウザでもNodeでも動く）: 型・住所・差分編集・表・シート・カメラ・音の命令
+src/std/      標準の部品（Transform / Sprite / Animator / Shape / Text / Camera / Sound / AudioBus）
+src/render/   描画（WebGL2）
+src/audio/    音を鳴らす側（Web Audio。ブラウザ専用）
+src/mcp/      MCP サーバー
 src/project/  プロジェクトの読み書き・操作ログ・ロック・地図（Node専用）
 src/cli/      AI向けCLI
 src/editor/   エディタ（サーバーとブラウザ側）

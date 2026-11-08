@@ -27,6 +27,9 @@ AGESに足りない機能（画像・音・物理など。docs/PLAN.md の段階
 
 - シーン・プレハブの値は `ages set` / `ages patch` で変える。JSONを直接書き換えない（検証とログが通らない）
 - 行列（matrix）はセル単位で変える: `ages set <dir> 住所[行,列] 値`、まとめてなら patch の `setCells`。行列全体を送り直さない
+- リストの中は `住所[番号]`、構造体・どれか1つの中は `住所.名前` で直接変える。足す・消す・動かすは patch の `insert` / `removeItem` / `moveItem`
+- 同じ形の行がたくさん並ぶデータ（武器・敵・カードなど）は表にする（`defineTable` と `data/<表>.table.json`）。住所は `$表.行.列`、読むのは `ages table <dir> <表>`、行は `addRow` / `removeRow` / `moveRow` / `renameRow`。ゲームのコードは `ctx.table(形).get(ID)`
+- 表を CSV にしたいとき・CSV から移すときは `ages table --export` / `--import`
 - `🔒` ロックされた値は変更できない（`--force` でも不可）。変えるべき理由があれば、人に提案する
 - `.ages/locks.json`・`.ages/locks.seal` は決して触らない。書き換えると封印と合わなくなり、人が確認するまでAIの編集はすべて止まる
 - `★` 人が調整した値は、変える前に人へ確認し、了承を得てから `--force`

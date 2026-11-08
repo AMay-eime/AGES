@@ -8,7 +8,10 @@ import { Project } from '../project/project.ts';
 import { renderMap } from '../project/map.ts';
 import { readCursor, readLog, readTouched, summarize, writeCursor, type Actor } from '../project/oplog.ts';
 import { getValue, parseLiteral, splitCell, type Op } from '../core/patch.ts';
-import { brief, matrixSize, suggest } from '../core/schema.ts';
+import { brief, defaultOf, matrixSize, suggest, typeOf } from '../core/schema.ts';
+import { parseAddress } from '../core/docs.ts';
+import { cellsToRows, formatDelimited, importOps, parseDelimited, tableToCells } from '../core/csv.ts';
+import type { Row, TableDoc } from '../core/table.ts';
 import { InputPlayback, type InputEvent } from '../core/input.ts';
 import { GameError, type Game } from '../core/game.ts';
 import { baseNameOf, frameCount, listFrames, type SheetDef } from '../core/sheet.ts';
@@ -20,9 +23,12 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   init   <dir> [--name 名前]          新しいプロジェクトを作る（EDITOR-PLAN.md 付き。ゲームの企画を受けたら最初にこれ）
   map    <dir>                       プロジェクトの地図（作業のたびに最初に読む）
   schema <dir> [Component ...]       コンポーネントの詳細（型・範囲・説明）
-  get    <dir> <addr> [addr ...]     値を見る（例: main#player / main#player.Player.speed / @enemy）
+  get    <dir> <addr> [addr ...]     値を見る（例: main#player / main#player.Player.speed / @enemy / $enemies.basic）
   set    <dir> <addr> <value> [--force]  行列のセルは addr[行,列]（例 main#spawner.Spawner.formation[2,3] 1）
-  patch  <dir> <ops.json | -> [--force]   操作の配列（set/setCells/addEntity/removeEntity/addComponent/removeComponent/rename/setSheet/setFrame/setClip）
+  patch  <dir> <ops.json | -> [--force]   操作の配列（set/setCells/insert/removeItem/moveItem/addEntity/removeEntity/addComponent/removeComponent/rename/
+               addRow/removeRow/moveRow/renameRow/setSheet/setFrame/setClip）
+  table  <dir> <表> [--cols a,b] [--rows id1,id2]   表を見る（1行1行）
+               [--export x.csv] [--import x.csv [--force]]   表計算ソフトとの行き来（読み込みは表をまるごと置き換える）
   run    <dir> [--frames 600] [--scene main] [--seed 1] [--keys "0-120:ArrowLeft+KeyZ;120-200:ArrowRight"]
                [--input recordings/x.input.json] [--watch player.Health.hp,...] [--every 60] [--until gameOver] [--twice] [--dump]
   log    <dir> [--all] [--peek]      前回からの編集の要約（--peek は既読にしない）
@@ -32,7 +38,8 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
                [--spacing n] [--margin n] [--skip-empty] [--alpha 1] [--min 2] [--gap 0] [--pad 0] [--pivot 0.5,1] [--dry] [--force]
   コマ1つ・動き1つの変更は patch の setFrame / setClip（例 {"op":"setFrame","image":"assets/x.png","frame":"x_3","name":"hero_idle","pivot":[0.5,1]}）
 
-アドレス: シーン#ID.コンポーネント.フィールド（例 main#player.Player.speed）、プレハブは @名前.コンポーネント.フィールド
+アドレス: シーン#ID.コンポーネント.フィールド（例 main#player.Player.speed）、プレハブは @名前.コンポーネント.フィールド、表は $表.行.列
+          リストの中は [番号]、構造体・どれか1つの中は .名前（例 main#spawner.Spawner.waves[2].count）
 印: 🔒=ロック（AIは変更不可）  ★=人が調整した値（変更前に人へ確認し、--force）`;
 
 export const AI_ACTOR: Actor = { who: process.env.AGES_AGENT ?? 'ai', kind: 'ai', win: 'cli' };
@@ -137,8 +144,22 @@ export async function cmdInit(dir: string, name?: string): Promise<string> {
 
 export async function cmdSchema(dir: string, names: string[]): Promise<string> {
   const p = await Project.load(dir);
-  const defs = names.length ? names.map((n) => p.registry.component(n)) : [...p.registry.components.values()];
-  return defs.map((d) => [`${d.name}: ${d.desc}`, ...Object.entries(d.fields).map(([k, f]) => `  ${k} ${brief(f)}${f.desc ? ' — ' + f.desc : ''}`)].join('\n')).join('\n');
+  const field = (k: string, f: import('../core/schema.ts').Field) => `  ${k} ${brief(f)}${f.desc ? ' — ' + f.desc : ''}${nested(f, '    ')}`;
+  const out: string[] = [];
+  const comps = names.length ? names.filter((n) => !n.startsWith('$')) : [...p.registry.components.keys()];
+  const tables = names.length ? names.filter((n) => n.startsWith('$')).map((n) => n.slice(1)) : [...p.registry.tables.keys()];
+  for (const n of comps) { const d = p.registry.component(n); out.push(`${d.name}: ${d.desc}`, ...Object.entries(d.fields).map(([k, f]) => field(k, f))); }
+  for (const n of tables) { const t = p.registry.table(n); out.push(`$${t.name}: ${t.desc ?? ''}（表。列 id は行の名前）`, ...Object.entries(t.columns).map(([k, f]) => field(k, f))); }
+  return out.join('\n');
+}
+
+/** 構造体・どれか1つの中の項目の説明（あるものだけ） */
+function nested(f: import('../core/schema.ts').Field, pad: string): string {
+  const inner = f.type === 'list' ? f.of : f;
+  const lines: string[] = [];
+  if (inner.type === 'struct') for (const [k, sf] of Object.entries(inner.fields)) if (sf.desc) lines.push(`${pad}${k} ${typeOf(sf)} — ${sf.desc}`);
+  if (inner.type === 'oneOf') for (const [k, v] of Object.entries(inner.variants)) lines.push(`${pad}${k}: ${v.desc ?? ''}${Object.entries(v.fields).map(([fk, sf]) => ` ${fk}:${typeOf(sf)}${sf.desc ? `（${sf.desc}）` : ''}`).join('')}`);
+  return lines.length ? '\n' + lines.join('\n') : '';
 }
 
 export async function cmdGet(dir: string, addrs: string[]): Promise<string> {
@@ -146,27 +167,31 @@ export async function cmdGet(dir: string, addrs: string[]): Promise<string> {
   const touched = await readTouched(p.dir);
   const locks = await p.effectiveLocks();
   const mark = (path: string) => (locks[path] ? '🔒' : touched[path] ? '★' : '');
+  const show = (v: unknown) => (isMatrix(v) ? `行列${matrixSize(v)}` : fmt(v));
   const out: string[] = [];
   for (const addr of addrs) {
+    const a = parseAddress(addr);
     const { value, isDefault } = getValue(p.docs, p.registry, addr);
-    const parts = addr.split('.');
-    if (parts.length === 3) {
+    if (a.kind === 'table' && !a.entity) { out.push(renderTable(p, a.doc, (value as TableDoc).rows, undefined, locks, touched)); continue; }
+    if (a.kind === 'table' && !a.field) {
+      const def = p.registry.table(a.doc);
+      const row = value as Row;
+      out.push(`${addr} { ${Object.keys(def.columns).map((k) => (k in row ? `${k}:${show(row[k])}${mark(`${addr}.${k}`)}` : `${k}:${show(defaultOf(def.columns[k]))}°`)).join(' ')} }`);
+      continue;
+    }
+    if (a.field) {
       if (isMatrix(value)) out.push(`${addr} = 行列 ${matrixSize(value)}${isDefault ? '（既定値）' : ''}${mark(addr)}\n${grid(value)}`);
       else out.push(`${addr} = ${fmt(value)}${isDefault ? '（既定値）' : ''}${mark(addr)}`);
-    } else if (parts.length === 2) {
+    } else if (a.component) {
       const comp = value as Record<string, unknown>;
-      const fields = Object.keys(p.registry.component(parts[1]).fields).map((k) => {
-        const path = `${addr}.${k}`;
-        const v = k in comp ? comp[k] : p.registry.component(parts[1]).fields[k].default;
-        const shown = isMatrix(v) || (Array.isArray(v) && p.registry.component(parts[1]).fields[k].type === 'matrix') ? `行列${matrixSize(v)}` : fmt(v);
-        return k in comp ? `${k}:${shown}${mark(path)}` : `${k}:${shown}°`;
-      });
+      const def = p.registry.component(a.component);
+      const fields = Object.entries(def.fields).map(([k, f]) => (k in comp ? `${k}:${show(comp[k])}${mark(`${addr}.${k}`)}` : `${k}:${show(defaultOf(f))}°`));
       out.push(`${addr} { ${fields.join(' ')} }`);
     } else {
       const h = value as { name?: string; tags?: string[]; components: Record<string, Record<string, unknown>> };
       out.push(`${addr}${h.name ? ` "${h.name}"` : ''}${h.tags?.length ? ' tags:' + h.tags.join(',') : ''}`);
       for (const [cn, cv] of Object.entries(h.components)) {
-        const fields = Object.entries(cv).map(([k, v]) => `${k}:${isMatrix(v) ? `行列${matrixSize(v)}` : fmt(v)}${mark(`${addr}.${cn}.${k}`)}`).join(' ');
+        const fields = Object.entries(cv).map(([k, v]) => `${k}:${show(v)}${mark(`${addr}.${cn}.${k}`)}`).join(' ');
         out.push(`  ${cn} { ${fields} }`);
       }
     }
@@ -175,12 +200,49 @@ export async function cmdGet(dir: string, addrs: string[]): Promise<string> {
   return withLockReport(p, out.join('\n'));
 }
 
+/** 表を1行1行で（タブ区切り。入れ子の値は JSON）。🔒★ は最後にまとめる */
+function renderTable(p: Project, name: string, rows: Row[], cols: string[] | undefined, locks: Record<string, unknown>, touched: Record<string, unknown>): string {
+  const def = p.registry.table(name);
+  const cells = tableToCells(def, rows, cols);
+  const lk = Object.keys(locks).filter((k) => k.startsWith(`$${name}.`));
+  const tc = Object.keys(touched).filter((k) => k.startsWith(`$${name}.`) && !locks[k]);
+  return [`$${name} ${rows.length}行${def.desc ? ' — ' + def.desc : ''}`, ...cells.map((r) => r.join('\t')),
+    lk.length ? `🔒 ${lk.map((k) => k.slice(name.length + 2)).join(' ')}` : '', tc.length ? `★ ${tc.map((k) => k.slice(name.length + 2)).join(' ')}` : ''].filter(Boolean).join('\n');
+}
+
+export async function cmdTable(dir: string, name: string, flags: Record<string, string | true>): Promise<string> {
+  const p = await Project.load(dir);
+  const def = p.registry.table(name);
+  const doc = p.docs.tables.get(name) ?? { name, rows: [] };
+  const list = (v: string | true | undefined) => (typeof v === 'string' ? v.split(',').map((x) => x.trim()).filter(Boolean) : undefined);
+  if (typeof flags.import === 'string') {
+    const cells = parseDelimited(await readFile(resolve(flags.import), 'utf8'));
+    const ops = importOps(def, doc.rows, cellsToRows(def, cells));
+    if (!ops.length) return '変更なし（読み込んだ内容と同じです）';
+    const r = await p.apply(ops, AI_ACTOR, { force: flags.force === true });
+    const n = (k: string) => r.changes.filter((c) => (k === 'add' ? c.to === 'added' : k === 'rm' ? c.to === 'removed' : c.to !== 'added' && c.to !== 'removed')).length;
+    return `ok $${name} を読み込みました（行の追加 ${n('add')}・削除 ${n('rm')}・値の変更 ${n('set')}）`;
+  }
+  const cols = list(flags.cols);
+  for (const c of cols ?? []) if (!def.columns[c]) throw new Error(`表 ${name} に列 ${c} はありません${suggest(c, Object.keys(def.columns))}`);
+  const only = list(flags.rows);
+  const rows = only ? doc.rows.filter((r) => only.includes(r.id)) : doc.rows;
+  if (typeof flags.export === 'string') {
+    const path = resolve(flags.export);
+    await writeFile(path, formatDelimited(tableToCells(def, rows, cols), path.endsWith('.tsv') ? '\t' : ','));
+    return `ok $${name} を ${flags.export} に書き出しました（${rows.length}行）`;
+  }
+  return withLockReport(p, renderTable(p, name, rows, cols, await p.effectiveLocks(), await readTouched(p.dir)));
+}
+
 export async function cmdPatch(dir: string, ops: Op[], force: boolean): Promise<string> {
   const p = await Project.load(dir);
   const r = await p.apply(ops, AI_ACTOR, { force });
   if (!r.changes.length) return '変更なし（すでに同じ値です）';
   const show = (v: unknown) => (isMatrix(v) ? `行列${matrixSize(v)}` : fmt(v));
-  return r.changes.map((c) => (c.to === 'added' || c.to === 'removed' ? `ok ${c.path} ${c.to === 'added' ? '追加' : '削除'}` : `ok ${c.path} ${show(c.from)} → ${show(c.to)}`)).join('\n');
+  return r.changes.map((c) => (c.to === 'added' || c.to === 'removed' ? `ok ${c.path} ${c.to === 'added' ? '追加' : '削除'}`
+    : typeof c.to === 'string' && c.to.startsWith('renamed:') ? `ok ${c.path} → ${c.path.replace(/[^.]+$/, c.to.slice('renamed:'.length))}（ID の変更）`
+    : `ok ${c.path} ${show(c.from)} → ${show(c.to)}${c.auto ? '（自動）' : ''}`)).join('\n');
 }
 
 /** "0-120:ArrowLeft+KeyZ;120-200:ArrowRight" を入力の記録に変換する */
@@ -406,6 +468,7 @@ async function main(argv: string[]): Promise<void> {
     case 'check': out = await cmdCheck(dir); break;
     case 'sheet': out = await cmdSheet(dir, need(a.pos[1], '画像の場所（例 assets/hero.png）')); break;
     case 'slice': out = await cmdSlice(dir, need(a.pos[1], '画像の場所（例 assets/hero.png）'), a.flags); break;
+    case 'table': out = await cmdTable(dir, need(a.pos[1], '表の名前（例 enemies）').replace(/^\$/, ''), a.flags); break;
     default: throw new Error(`未知のコマンド ${cmd}。ages help で一覧を表示します`);
   }
   console.log(out);
