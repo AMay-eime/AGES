@@ -62,6 +62,8 @@ AGESに足りない機能（画像・音・物理など。docs/PLAN.md の段階
 - 音は Sound の付いたプレハブ（例 `@se_shot`）を作り、`ctx.sound.play('se_shot')` で鳴らす。音量などの調整値はプレハブに置き、コードに書かない。BGM・環境音は物に Sound（playOnStart）を付ける
 - 音量の区分はゲームに合わせて AudioBus のプレハブで作る（例 `@bgm` exclusive、`@se`）。どんな区分にするかは EDITOR-PLAN.md で使用者と決める
 - 鳴ったかどうかは `ages run` の `sounds:` と ⚠ で確かめる（音を聞かなくてよい）
+- アセットの一覧と使っている所は `ages assets <dir>`（`--unused` で使っていないもの、`--refs 場所` で使っている所）。画像を開いて確かめない
+- アセットの場所を変える・消すときは、ファイルを直接動かさず `patch` の `moveAsset` / `removeAsset`（使っている値と切り方も直る。使われているものは消せない）。新しいファイルは assets/ の下に置くだけでよい
 - 入力は操作の名前で読む（`ctx.input.isDown('fire')` / `pressed` / `value('move_x')`）。キーの名前をコードに書かない。操作と既定の割り当ては標準の表 `$actions`（`ages table <dir> actions`）に行を足す
 - キーコンフィグの画面はゲームのスクリプトで作る: `ctx.input.bind(操作, { keys: [...] })` / `resetBindings()` / `lastPressed()` / `usedBy(ボタン)` / `label(ボタン)`。セーブには `exportBindings()` を入れ、読み込みで `importBindings()`
 - マウス・タッチの位置は `ctx.input.pointer`（画面の座標）か `ctx.pointerWorld()`（ワールドの座標）

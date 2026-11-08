@@ -169,6 +169,38 @@
   table.matrix input[type=checkbox] { width: 18px; height: 18px; margin: 3px 14px; }
   body.solo #work { display: flex; flex-direction: column; }
   body.solo #work > .panel { display: flex; flex-direction: column; flex: 1; background: var(--panel); }
+  /* アセット */
+  .assets { outline: none; }
+  .assets .crumbs a { cursor: pointer; color: var(--accent); }
+  .asset-body { flex: 1; display: flex; min-height: 0; }
+  .asset-tree { width: 170px; flex: none; overflow: auto; border-right: 1px solid var(--line); padding: 4px 0; }
+  .tree-item { white-space: nowrap; cursor: pointer; padding: 1px 6px; overflow: hidden; text-overflow: ellipsis; }
+  .tree-item:hover { background: var(--panel2); }
+  .tree-item.on { background: #2d4a6e; }
+  .tree-item .twisty { display: inline-block; width: 12px; color: var(--dim); }
+  .asset-grid { flex: 1; overflow: auto; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 6px; padding: 6px; }
+  .asset-grid .empty { padding: 16px; }
+  .tile { width: 84px; border: 1px solid transparent; border-radius: 4px; padding: 3px; cursor: pointer; text-align: center; }
+  .tile:hover { background: var(--panel2); }
+  .tile.on { border-color: var(--accent); background: #26354a; }
+  .tile.unused .tile-name { opacity: .7; }
+  .tile-pic { height: 60px; display: flex; align-items: center; justify-content: center; background: repeating-conic-gradient(#2b2f39 0% 25%, #23262e 0% 50%) 50% / 12px 12px; border-radius: 3px; position: relative; }
+  .tile.folder .tile-pic { background: none; }
+  .tile-pic img { max-width: 100%; max-height: 100%; }
+  .tile-icon { font-size: 22px; }
+  .tile-play { position: absolute; right: 2px; bottom: 2px; font-size: 11px; }
+  .tile-name { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+  .tile-meta { font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .asset-side { width: 240px; flex: none; overflow: auto; border-left: 1px solid var(--line); padding: 6px 8px; }
+  .side-pic { height: 110px; display: flex; align-items: center; justify-content: center; background: repeating-conic-gradient(#2b2f39 0% 25%, #23262e 0% 50%) 50% / 12px 12px; border-radius: 3px; margin-bottom: 4px; }
+  .side-pic img { max-width: 100%; max-height: 100%; }
+  .side-path { font: var(--mono); word-break: break-all; }
+  .font-sample { font-size: 20px; padding: 6px; border: 1px solid var(--line); border-radius: 3px; outline: none; }
+  ul.refs { margin: 4px 0; padding-left: 16px; font: var(--mono); font-size: 11px; }
+  ul.refs a { cursor: pointer; color: var(--accent); }
+  .drop-on { outline: 2px dashed var(--accent); outline-offset: -2px; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { border-color: var(--bad); color: var(--bad); }
   .drop-hint { border: 1px dashed var(--line); margin: 8px; padding: 10px; text-align: center; color: var(--dim); border-radius: 4px; }
   .drop-hint.over { border-color: var(--accent); color: var(--text); }
 </style>

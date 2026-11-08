@@ -5,10 +5,12 @@ import type { Field } from '../../core/schema.ts';
 import { brief, defaultOf, matrixSize, typeOf, variantDefault, type ListField, type OneOfField, type StructField } from '../../core/schema.ts';
 import { formatSub, getIn, setIn } from '../../core/docs.ts';
 import type { Op } from '../../core/patch.ts';
-import { h, clear, time, modal } from './dom.ts';
+import { h, clear, time, modal, toast } from './dom.ts';
 import { findFrame, frameLabel, listFrames, type FrameRef, type SheetDef } from '../../core/sheet.ts';
 import { buttonLabel } from '../../core/input.ts';
 import { captureNext } from '../../input/devices.ts';
+import { ASSET_MIME } from './assets.ts';
+import { kindOf } from '../../core/assets.ts';
 import type { Panel } from './layout.ts';
 
 interface Live { path: string; comp: string; field: string; set(v: unknown): void; el: HTMLElement }
@@ -236,8 +238,10 @@ export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, 
       const cur = String(value ?? '');
       const options = ['', ...files];
       if (cur && !files.includes(cur)) options.splice(1, 0, cur);
-      const sel = h('select', { style: 'min-width:0;flex:1' }, options.map((o) => h('option', { value: o, selected: o === cur },
-        o === '' ? '（なし）' : files.includes(o) ? o : `${o}（見つかりません）`))) as HTMLSelectElement;
+      // 名前を先に見せる（長い場所は欄に収まらないので）
+      const label = (o: string) => (o.includes('/') ? `${o.slice(o.lastIndexOf('/') + 1)} — ${o.slice(0, o.lastIndexOf('/'))}` : o);
+      const sel = h('select', { style: 'min-width:0;flex:1', title: cur }, options.map((o) => h('option', { value: o, selected: o === cur },
+        o === '' ? '（なし）' : files.includes(o) ? label(o) : `${label(o)}（見つかりません）`))) as HTMLSelectElement;
       const thumb = h('img', { class: 'asset-thumb', alt: '' }) as HTMLImageElement;
       const show = (v: string) => {
         if (f.kind === 'image' && v && files.includes(v)) { thumb.src = app.assetUrl(v); thumb.style.display = ''; } else thumb.style.display = 'none';
@@ -246,6 +250,24 @@ export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, 
       sel.addEventListener('change', () => { show(sel.value); commit(sel.value, true); });
       thumb.addEventListener('click', () => { if (sel.value) app.emit('openSprite', sel.value); });
       wrap.append(thumb, sel);
+      // アセットの画面からドラッグして入れられる（種類が合うものだけ）
+      wrap.addEventListener('dragover', (e) => {
+        if (!e.dataTransfer?.types.includes(ASSET_MIME)) return;
+        e.preventDefault();
+        wrap.classList.add('drop-on');
+      });
+      wrap.addEventListener('dragleave', () => wrap.classList.remove('drop-on'));
+      wrap.addEventListener('drop', (e) => {
+        wrap.classList.remove('drop-on');
+        const path = e.dataTransfer?.getData(ASSET_MIME);
+        if (!path) return;
+        e.preventDefault();
+        if (kindOf(path) !== f.kind) return toast(`${path} は${({ image: '画像', sound: '音', font: 'フォント' })[f.kind]}ではありません`, 'bad');
+        sel.value = path;
+        show(path);
+        commit(path, true);
+      });
+      wrap.append(h('button', { class: 'icon', title: 'アセットの画面で見る（使っている所・名前の変更・移動）', onclick: () => { if (sel.value) app.emit('revealAsset', sel.value); } }, '◎'));
       if (f.kind === 'image') wrap.append(h('button', { class: 'icon', title: 'この画像の切り方（コマ・基準点・動き）を開く', onclick: () => { if (sel.value) app.emit('openSprite', sel.value); } }, '✂'));
       if (f.kind === 'sound') {
         thumb.remove();

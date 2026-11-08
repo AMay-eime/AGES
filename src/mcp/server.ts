@@ -5,7 +5,7 @@
 import { createInterface } from 'node:readline';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { cmdCheck, cmdGet, cmdInit, cmdLog, cmdMap, cmdPatch, cmdRun, cmdSchema, cmdSheet, cmdSlice, cmdTable } from '../cli/ages.ts';
+import { cmdAssets, cmdCheck, cmdGet, cmdInit, cmdLog, cmdMap, cmdPatch, cmdRun, cmdSchema, cmdSheet, cmdSlice, cmdTable } from '../cli/ages.ts';
 import { parseLiteral, splitCell, type Op } from '../core/patch.ts';
 
 process.removeAllListeners('warning');
@@ -25,6 +25,7 @@ const INSTRUCTIONS = `AGES は、AIと人が一緒に速くゲームを作るた
 - ゲームのコードは入力を操作の名前で読む（ctx.input.isDown('fire') / value('move_x')）。操作は標準の表 $actions に行を足す。キーコンフィグは ctx.input.bind / exportBindings
 - 音は Sound の付いたプレハブを作り ctx.sound.play('名前') で鳴らす。鳴ったかは ages_run の sounds: と ⚠ で確かめる（音を聞かなくてよい）
 - 画像の切り方（スプライトシート）は ages_sheet で見て、ages_slice（格子・数・自動）か ages_patch の setFrame / setClip で変える。画像を開いて確かめない
+- アセットの一覧と使っている所は ages_assets。場所の変更・削除はファイルを直接動かさず ages_patch の moveAsset / removeAsset（使っている値と切り方も一緒に直る。使われているものは消せない）
 - 面白さの核・手触り・個性は人が決める。AIが出すものは「案」と明記する
 詳しくはプロジェクトの AGENTS.md。`;
 
@@ -75,7 +76,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'ages_patch',
-    description: '複数の操作をまとめて行う（すべて成功するか、何も変えないか）。op: set{path,value} / setCells{path,cells:[[行,列,値]]} / addEntity{scene,entity:{id,name?,tags?,components?}} / removeEntity{scene,id} / addComponent{target,component,values?} / removeComponent{target,component} / rename{target,name} / insert{path,value?,index?}（リストに足す） / removeItem{path:"…[2]"} / moveItem{path:"…[2]",to} / addRow{table,row:{id,...},index?} / removeRow{table,id} / moveRow{table,id,to} / renameRow{table,id,to}（参照も直る） / setFrame{image,frame(番号か名前),name?,rect?:[x,y,w,h],pivot?:[x,y]|null,remove?}（ない名前に rect で追加。名前を変えると参照も直る） / setClip{image,clip,frames?,fps?,loop?,remove?} / setSheet{image,sheet|null}',
+    description: '複数の操作をまとめて行う（すべて成功するか、何も変えないか）。op: set{path,value} / setCells{path,cells:[[行,列,値]]} / addEntity{scene,entity:{id,name?,tags?,components?}} / removeEntity{scene,id} / addComponent{target,component,values?} / removeComponent{target,component} / rename{target,name} / insert{path,value?,index?}（リストに足す） / removeItem{path:"…[2]"} / moveItem{path:"…[2]",to} / addRow{table,row:{id,...},index?} / removeRow{table,id} / moveRow{table,id,to} / renameRow{table,id,to}（参照も直る） / setFrame{image,frame(番号か名前),name?,rect?:[x,y,w,h],pivot?:[x,y]|null,remove?}（ない名前に rect で追加。名前を変えると参照も直る） / setClip{image,clip,frames?,fps?,loop?,remove?} / setSheet{image,sheet|null} / moveAsset{from,to}（ファイルかフォルダの場所を変える。使っている値も直る） / removeAsset{path}（使っていないものだけ）',
     inputSchema: { type: 'object', properties: { ...dirProp, ops: { type: 'array', items: { type: 'object' } }, force: { type: 'boolean' } }, required: ['ops'] },
     run: (a, dir) => cmdPatch(dir, a.ops as Op[], !!a.force),
   },
@@ -115,6 +116,21 @@ const TOOLS: Tool[] = [
       if (a.force) flags.force = true;
       return cmdTable(dir, String(a.table).replace(/^\$/, ''), flags);
     },
+  },
+  {
+    name: 'ages_assets',
+    description: 'アセット（画像・音・フォント）の一覧。フォルダごと、大きさ・長さ・使っている所の数。refs で、そのファイル（かフォルダ）を使っている所。unused で使っていないものだけ',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ...dirProp,
+        folder: { type: 'string', description: 'このフォルダの中だけ（例 assets/ships）' },
+        kind: { type: 'string', enum: ['image', 'sound', 'font'] },
+        unused: { type: 'boolean' },
+        refs: { type: 'string', description: '使っている所を見るファイルかフォルダ' },
+      },
+    },
+    run: (a, dir) => cmdAssets(dir, a.folder, { ...(a.kind ? { kind: a.kind } : {}), ...(a.unused ? { unused: true } : {}), ...(a.refs ? { refs: a.refs } : {}) }),
   },
   {
     name: 'ages_sheet',

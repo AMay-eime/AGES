@@ -2,6 +2,8 @@
 import type { App } from '../app.ts';
 import { h, clear, modal, toast, time } from './dom.ts';
 import type { Layout, Panel } from './layout.ts';
+import { importFiles } from './assets.ts';
+import { kindOf } from '../../core/assets.ts';
 
 // ---------- 階層 ----------
 export function hierarchyPanel(app: App): Panel {
@@ -73,7 +75,6 @@ export function hierarchyPanel(app: App): Panel {
 
 // ---------- プロジェクト（ファイル） ----------
 const TEXT_EXT = /\.(json|ts|js|md|txt|css|html)$/;
-const IMAGE_EXT = /\.(png|jpe?g|webp|gif)$/i;
 
 export function projectPanel(app: App, openText: (path: string) => void): Panel {
   const el = h('div', {});
@@ -90,11 +91,8 @@ export function projectPanel(app: App, openText: (path: string) => void): Panel 
     drop.addEventListener('drop', async (e) => {
       e.preventDefault();
       drop.classList.remove('over');
-      for (const file of [...(e.dataTransfer?.files ?? [])]) {
-        await app.api(`/api/upload?path=${encodeURIComponent('assets/' + file.name)}`, { raw: file });
-        toast(`追加しました: assets/${file.name}`);
-      }
-      await app.refresh();
+      const done = await importFiles(app, [...(e.dataTransfer?.files ?? [])], 'assets');
+      if (done.length) app.emit('revealAsset', done[done.length - 1]);
     });
     clear(el, drop, h('div', { class: 'list' }, [...groups.entries()].map(([dir, files]) => [
       h('div', { class: 'folder' }, dir),
@@ -102,7 +100,7 @@ export function projectPanel(app: App, openText: (path: string) => void): Panel 
         class: 'item',
         title: `${f.path}（${f.size} bytes）`,
         // 画像は「切り方」で開く（コマ・基準点・動きを決められる）
-        onclick: () => /^data\/.+\.table\.json$/.test(f.path) ? app.emit('openTable', { name: f.path.slice(5, -'.table.json'.length) }) : TEXT_EXT.test(f.path) ? openText(f.path) : IMAGE_EXT.test(f.path) ? app.emit('openSprite', f.path) : window.open(`/project@${app.state.version}/${f.path}`),
+        onclick: () => /^data\/.+\.table\.json$/.test(f.path) ? app.emit('openTable', { name: f.path.slice(5, -'.table.json'.length) }) : TEXT_EXT.test(f.path) ? openText(f.path) : kindOf(f.path) ? app.emit('revealAsset', f.path) : window.open(`/project@${app.state.version}/${f.path}`),
       }, f.path.split('/').pop()!, h('span', { class: 'muted' }, kb(f.size)))),
     ])));
   };
@@ -180,8 +178,12 @@ export function logPanel(app: App): Panel {
     } catch { /* 起動直後など */ }
   };
   /** 変更の見せ方（ID の変更・リストの並べ替えは言葉で） */
-  const shownChange = (e: { from?: unknown; to?: unknown; auto?: boolean }) => {
+  const shownChange = (e: { path?: string; from?: unknown; to?: unknown; auto?: boolean }) => {
     const auto = e.auto ? h('span', { class: 'muted' }, '（自動）') : null;
+    if (e.path?.startsWith('file:')) {
+      const word: Record<string, string> = { added: '取り込み', replaced: '差し替え', removed: '削除' };
+      return typeof e.to === 'string' && word[e.to] ? [h('span', { class: 'muted' }, word[e.to])] : [h('span', { class: 'muted' }, '場所を '), fmt(e.to), h('span', { class: 'muted' }, ' に変更')];
+    }
     if (typeof e.to === 'string' && e.to.startsWith('renamed:')) return [h('span', { class: 'muted' }, 'ID を '), e.to.slice(8), h('span', { class: 'muted' }, ' に変更')];
     if (typeof e.to === 'string' && e.to.startsWith('moved:')) return [h('span', { class: 'muted' }, `${fmt(e.from)} → `), e.to.slice(6), h('span', { class: 'muted' }, ' へ移動')];
     return [h('span', { class: 'muted' }, e.from !== undefined && typeof e.from !== 'object' ? `${fmt(e.from)} → ` : ''), fmt(e.to), auto];

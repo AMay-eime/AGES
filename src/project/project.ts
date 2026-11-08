@@ -1,6 +1,6 @@
 // プロジェクト（フォルダ）の読み込みと保存。Node 側専用。
-import { readFile, writeFile, readdir, mkdir, rm } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { readFile, writeFile, readdir, mkdir, rm, rename } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { registerHooks } from 'node:module';
 import { formatJson, type PrefabDoc, type ProjectConfig, type SceneDoc } from '../core/docs.ts';
@@ -10,9 +10,10 @@ import { parseAddress } from '../core/docs.ts';
 import { Game } from '../core/game.ts';
 import { checkAt, suggest, visit, type Field } from '../core/schema.ts';
 import { ROW_ID, type TableDoc } from '../core/table.ts';
-import { appendLog, localTime, lockedHits, markTouched, readLocks as readLockFile, readLog, readTouched, writeLocks, type Actor, type LockMark } from './oplog.ts';
+import { appendLog, localTime, lockedHits, markTouched, moveTouched, readLocks as readLockFile, readLog, readTouched, writeLocks, type Actor, type LockMark } from './oplog.ts';
 import { lockDiff, verifyLocks, type LockIntegrity } from './seal.ts';
 import { scanAssets, type AssetInfo } from './assets.ts';
+import { codeRefs, isUnder } from '../core/assets.ts';
 import { FIT_MODES } from '../core/camera.ts';
 import { KNOWN_AXES, KNOWN_BUTTONS } from '../core/input.ts';
 import { checkSheet, checkSheetImage, findFrame, frameCount, sheetPathOf, type SheetDef } from '../core/sheet.ts';
@@ -56,7 +57,7 @@ export class Project {
     }
     this.config = JSON.parse(raw);
     const scan = await scanAssets(this.dir);
-    this.docs = { ...(await readDocs(this.dir)), sheets: scan.sheets };
+    this.docs = { ...(await readDocs(this.dir)), sheets: scan.sheets, files: new Set(scan.files) };
     const prefabs = this.docs.prefabs;
     hookAgesImport();
     const url = pathToFileURL(join(this.dir, this.config.game)).href;
@@ -67,7 +68,7 @@ export class Project {
     this.assetIssues = scan.issues;
     this.registry.sheets = this.docs.sheets;
     this.registry.tableData = this.docs.tables;
-    this.registry.images = new Map(scan.assets.filter((a) => a.w && a.h).map((a) => [a.path, { w: a.w!, h: a.h! }]));
+    this.registry.images = imagesOf(scan.assets);
     this.integrity = await verifyLocks(this.dir);
     this.lockReport = await this.enforceLocks();
     if (!this.integrity.ok) {
@@ -342,6 +343,12 @@ export class Project {
         : op.op === 'setSheet' || op.op === 'setFrame' || op.op === 'setClip' ? `sheet:${op.image}`
         : op.op === 'removeRow' || op.op === 'renameRow' ? `$${op.table}.${op.id}`
         : null;
+    // アセットの移動・削除で一緒に動く画像の切り方（sheet:<画像>）
+    const assetSheets = (op: Op) => {
+      if (op.op !== 'moveAsset' && op.op !== 'removeAsset') return [];
+      const from = (op.op === 'moveAsset' ? op.from : op.path).replace(/\/+$/, '');
+      return [...this.docs.sheets.keys()].filter((img) => img === from || isUnder(img, from)).map((img) => `sheet:${img}`);
+    };
     if (actor.kind === 'ai' && !this.integrity.ok) {
       throw new Error(`🔒 ロックの記録が人の封印と一致しないため、AIからの編集を止めています（${this.integrity.reason}）。ユーザーにエディタでの確認を頼んでください`);
     }
@@ -351,8 +358,8 @@ export class Project {
       if (hits.length) this.requireIntegrity();
     }
     if (actor.kind === 'ai') {
-      // ロックは --force でも越えられない
-      const hits = ops.flatMap((op) => { const t = targetOf(op); return t ? lockedHits(locks, t) : []; });
+      // ロックは --force でも越えられない（ロックされた切り方の画像は、場所も変えられない）
+      const hits = ops.flatMap((op) => { const t = targetOf(op); return [...(t ? lockedHits(locks, t) : []), ...assetSheets(op).filter((k) => locks[k])]; });
       if (hits.length) {
         throw new Error(`🔒 ロックされた値は変更できません: ${hits.join(', ')}。この値は人が決めるものです。変えるべき理由があれば、ユーザーに提案してください`);
       }
@@ -373,18 +380,44 @@ export class Project {
     }
     // 編集で新しい問題（ないファイル・ないアニメーション・範囲外のコマなど）が増えるなら、保存せずに止める
     const before = new Set(this.validate());
-    const backup: Docs = { scenes: new Map(this.docs.scenes), prefabs: new Map(this.docs.prefabs), sheets: new Map(this.docs.sheets), tables: new Map(this.docs.tables) };
+    const backup: Docs = { scenes: new Map(this.docs.scenes), prefabs: new Map(this.docs.prefabs), sheets: new Map(this.docs.sheets), tables: new Map(this.docs.tables), files: new Set(this.docs.files) };
+    const backupAssets = this.assets;
+    // コードの中で場所を書いているアセットは、消すと動かなくなる
+    const code = ops.some((o) => o.op === 'moveAsset' || o.op === 'removeAsset') ? await this.codeRefs() : new Map<string, string[]>();
     const result = applyOps(this.docs, this.registry, ops);
     const rollback = (message: string): never => {
       this.docs.scenes = backup.scenes;
       this.docs.prefabs = backup.prefabs;
       this.docs.sheets = backup.sheets;
       this.docs.tables = backup.tables;
+      this.docs.files = backup.files;
       this.registry.prefabs = backup.prefabs;
       this.registry.sheets = backup.sheets;
       this.registry.tableData = backup.tables;
+      this.assets = backupAssets;
+      this.registry.images = imagesOf(backupAssets);
       throw new Error(message);
     };
+    // ファイルの移動・削除を、検証の前に一覧へ反映する（ファイルそのものは検証が通ってから動かす）
+    const warnings: string[] = [];
+    if (result.files.length) {
+      const moved = (path: string): string | null | undefined => {
+        let p: string | null = path;
+        for (const f of result.files) {
+          if (p === null) break;
+          if (p === f.from || (f.dir && isUnder(p, f.from))) p = f.to === null ? null : f.to + p.slice(f.from.length);
+        }
+        return p === path ? undefined : p;
+      };
+      this.assets = this.assets.flatMap((a) => { const to = moved(a.path); return to === null ? [] : to === undefined ? [a] : [{ ...a, path: to }]; });
+      this.registry.images = imagesOf(this.assets);
+      for (const [asset, at] of code) {
+        const to = moved(asset);
+        if (to === undefined) continue;
+        if (to === null) rollback(`${asset} はコードの中で使われているので消せません: ${at.join(', ')}。先にコードを直してください`);
+        warnings.push(`${asset} はコードの中にも書かれています（${at.join(', ')}）。コードは直していないので、${to} に書き換えてください`);
+      }
+    }
     // 操作の結果として連動して変わる値（コマの名前の変更で書き換わる参照など）にも、ロックは効く
     if (actor.kind === 'ai') {
       const hits = [...new Set(result.changes.flatMap((c) => lockedHits(locks, sheetRoot(c.path.replace(/\[\d+,\s*\d+\]$/, '')))))];
@@ -392,6 +425,15 @@ export class Project {
     }
     const introduced = this.validate().filter((e) => !before.has(e));
     if (introduced.length) rollback(introduced.join(' / '));
+    for (const f of result.files) {
+      try {
+        const from = join(this.dir, f.from);
+        if (f.to === null) await rm(from, { recursive: f.dir, force: true });
+        else { await mkdir(dirname(join(this.dir, f.to)), { recursive: true }); await rename(from, join(this.dir, f.to)); }
+      } catch (e) {
+        rollback(`ファイルを${f.to === null ? '消せません' : '動かせません'}（${f.from}）: ${(e as Error).message}`);
+      }
+    }
     await this.saveDirty(result.dirty);
     const opName = ops.length === 1 ? ops[0].op : 'batch';
     await appendLog(this.dir, actor, opName, result.changes);
@@ -401,6 +443,7 @@ export class Project {
       let changed = false;
       for (const c of result.changes) {
         const path = sheetRoot(c.path.replace(/\[\d+,\s*\d+\]$/, ''));
+        if (c.path.startsWith('file:')) continue;
         const renamed = typeof c.to === 'string' && c.to.startsWith('renamed:') ? c.path.replace(/[^.]+$/, c.to.slice('renamed:'.length)) : null;
         for (const p of Object.keys(locks)) {
           if (renamed && (p === c.path || p.startsWith(c.path + '.'))) {
@@ -416,9 +459,38 @@ export class Project {
           }
         }
       }
+      // 動かした画像の切り方のロックも付け替える
+      for (const f of result.files) {
+        for (const k of Object.keys(locks)) {
+          const img = k.startsWith('sheet:') ? k.slice('sheet:'.length).split('|')[0] : null;
+          if (!img || !(img === f.from || (f.dir && isUnder(img, f.from)))) continue;
+          if (f.to !== null) locks['sheet:' + f.to + k.slice('sheet:'.length + f.from.length)] = locks[k];
+          delete locks[k];
+          changed = true;
+        }
+      }
       if (changed) await writeLocks(this.dir, actor, locks);
     }
+    if (result.files.length) await moveTouched(this.dir, result.files);
+    if (warnings.length) result.warnings = warnings;
     return result;
+  }
+
+  /** コードの中で、アセットの場所を文字列で書いている所 */
+  async codeRefs(): Promise<Map<string, string[]>> {
+    const files: [string, string][] = [];
+    const walk = async (rel: string): Promise<void> => {
+      let names: import('node:fs').Dirent[];
+      try { names = await readdir(join(this.dir, rel), { withFileTypes: true }); } catch { return; }
+      for (const d of names) {
+        const r = `${rel}/${d.name}`;
+        if (d.isDirectory()) await walk(r);
+        else if (/\.(ts|js|mjs)$/.test(d.name)) files.push([r, await readFile(join(this.dir, r), 'utf8')]);
+      }
+    };
+    await walk('game');
+    await walk('editor');
+    return codeRefs(files, this.assets.map((a) => a.path));
   }
 
   /** このプロセスが書いたファイルと内容（エディタが「外部からの編集」と区別するため） */
@@ -576,3 +648,5 @@ async function list(dir: string, suffix: string): Promise<string[]> {
     return [];
   }
 }
+
+const imagesOf = (assets: AssetInfo[]) => new Map(assets.filter((a) => a.w && a.h).map((a) => [a.path, { w: a.w!, h: a.h! }]));
