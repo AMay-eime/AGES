@@ -13,12 +13,16 @@ import { resolve, join, relative, extname, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { summarize, readLog } from '../project/oplog.ts';
 import { checkAssetPath, freeName } from '../core/assets.ts';
+import type { Op } from '../core/patch.ts';
 
 process.removeAllListeners('warning');
 
 const args = process.argv.slice(2);
 const projectDir = resolve(args.find((a) => !a.startsWith('--')) ?? '.');
 const port = Number(args[args.indexOf('--port') + 1]) || 5170;
+/** ロックマネージャー（人だけが使う専用の画面）のポート。エディタとは別のオリジンなので、エディタや拡張のコードからは操作できない */
+const lockPort = Number(args[args.indexOf('--lock-port') + 1]) || port + 1;
+const LOCK_ORIGINS = new Set([`http://localhost:${lockPort}`, `http://127.0.0.1:${lockPort}`]);
 const SRC_DIR = fileURLToPath(new URL('..', import.meta.url));
 const EDITOR_DIR = fileURLToPath(new URL('.', import.meta.url));
 
@@ -234,26 +238,18 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
     req.on('close', () => clients.delete(res));
     return;
   }
-  if (p === '/api/state') return json(res, { ...(await call('state')), version, files: await listFiles(), dirs: await listDirs() });
+  if (p === '/api/state') return json(res, { ...(await call('state')), version, files: await listFiles(), dirs: await listDirs(), lockManager: `http://${(req.headers.host ?? 'localhost').split(':')[0]}:${lockPort}` });
   if (p === '/api/log') return json(res, await call('log', Number(url.searchParams.get('limit') ?? 200)));
 
   if (m === 'POST' && p === '/api/patch') {
     const { ops, win } = JSON.parse((await body(req)).toString('utf8'));
+    if (win === 'lock-manager') return json(res, { error: 'ロックマネージャーとしての編集は、ロックマネージャーの画面からだけ受け付けます' }, 403);
     const r = await call('apply', ops, human(req, win ?? 'inspector'));
     broadcast({ type: 'docs', by: human(req, '').who, changes: r.changes });
     return json(res, r);
   }
-  if (m === 'POST' && (p === '/api/locks/approve' || p === '/api/locks/restore')) {
-    await call(p.endsWith('approve') ? 'approveLocks' : 'restoreLocks', human(req, 'lock-check'));
-    lastLockOk = true;
-    broadcast({ type: 'locks', integrity: true });
-    return json(res, { ok: true });
-  }
-  if (m === 'POST' && (p === '/api/lock' || p === '/api/unlock')) {
-    const { paths, note, win } = JSON.parse((await body(req)).toString('utf8'));
-    await call(p === '/api/lock' ? 'lock' : 'unlock', paths, human(req, win ?? 'inspector'), note);
-    broadcast({ type: 'locks' });
-    return json(res, { ok: true });
+  if (p === '/api/lock' || p === '/api/unlock' || p.startsWith('/api/locks/')) {
+    return json(res, { error: `ロックの操作は、ロックマネージャー（http://localhost:${lockPort}）でだけできます` }, 403);
   }
   if (p === '/api/file') {
     const rel = url.searchParams.get('path') ?? '';
@@ -285,6 +281,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
     const exists = (r: string) => existsSync(inside(projectDir, r));
     const data = await body(req);
     const had = exists(rel);
+    if (had && (await call<boolean>('fileLocked', rel))) return json(res, { error: `🔒 ${rel} はロックされたファイルです。差し替えるならロックマネージャーで` }, 423);
     if (had && mode === 'new') return json(res, { error: `${rel} はすでにあります`, exists: true, free: freeName(rel, exists) }, 409);
     if (had && mode === 'keep') rel = freeName(rel, exists);
     const abs = inside(projectDir, rel);
@@ -320,8 +317,6 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
       return json(res, { out: add + '\n' + (await git(['commit', '-m', message || (await gitDraft())])) });
     }
     if (m === 'POST' && op === 'pull') {
-      // 人が自分で取り込んだロックの変更は、一覧で知らせて自動で承認する。
-      // ただし、プルの前からロックの記録が確認待ちだったとき（AIの書き換えなど）は承認しない
       const lockFile = join(projectDir, '.ages', 'locks.json');
       const okBefore = (await call<{ integrity?: { ok: boolean } }>('state')).integrity?.ok !== false;
       const before = await readFile(lockFile, 'utf8').catch(() => null);
@@ -334,12 +329,9 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
         if (before !== after) {
           await call('recheckLocks');
           const st = await call<{ integrity?: { ok: boolean; diff: unknown } }>('state');
-          if (okBefore && st.integrity && !st.integrity.ok) {
-            await call('approveLocks', human(req, 'git-pull'));
-            locks = { approved: true, diff: st.integrity.diff };
-            lastLockOk = true;
-          } else if (st.integrity && !st.integrity.ok) {
-            locks = { approved: false, diff: st.integrity.diff };
+          // 取り込んだロックの変更は、ロックマネージャーで人が確認するまで AI を止める（エディタからは承認しない）
+          if (st.integrity && !st.integrity.ok) {
+            locks = { approved: false, before: okBefore, diff: st.integrity.diff };
             lastLockOk = false;
           }
         }
@@ -354,6 +346,52 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
   json(res, { error: `見つかりません: ${m} ${p}` }, 404);
 }
 
+// ---------- ロックマネージャー（別のポート = 別のオリジン） ----------
+// ロックを付ける・外す・ロックされた値を変える・記録を確かめるのは、ここからだけ。
+// ブラウザは送り元（Origin）を偽れないので、エディタの画面や拡張のコードからの依頼は通らない
+const keeper = (req: http.IncomingMessage) => ({ ...human(req, 'lock-manager'), win: 'lock-manager' });
+async function lockRoute(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const url = new URL(req.url ?? '/', 'http://x');
+  const p = url.pathname;
+  const m = req.method ?? 'GET';
+  if (p === '/' || p === '/index.html') return serveFile(res, join(EDITOR_DIR, 'locks.html'));
+  if (p === '/locks.ts') return serveFile(res, join(EDITOR_DIR, 'locks.ts'));
+  const proj = p.match(/^\/project@\d+\/(.*)$/);
+  if (proj) return serveFile(res, inside(projectDir, proj[1]));
+  if (p === '/api/events') {
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
+    res.write('data: {"type":"hello"}\n\n');
+    clients.add(res);
+    req.on('close', () => clients.delete(res));
+    return;
+  }
+  if (m === 'GET' && p === '/api/state') return json(res, { ...(await call('lockState')), version });
+  if (m === 'GET' && p === '/api/describe') return json(res, await call('describe', url.searchParams.get('path') ?? ''));
+  if (m === 'GET' && p === '/api/candidates') return json(res, await call('lockCandidates', url.searchParams.get('q') ?? ''));
+  if (m !== 'POST') return json(res, { error: `見つかりません: ${m} ${p}` }, 404);
+  if (!LOCK_ORIGINS.has(String(req.headers.origin ?? ''))) return json(res, { error: 'ロックの操作は、ロックマネージャーの画面からだけ受け付けます' }, 403);
+  const who = keeper(req);
+  const done = (data: unknown = { ok: true }) => { broadcast({ type: 'locks' }); broadcast({ type: 'docs', by: who.who, changes: [] }); return json(res, data); };
+  if (p === '/api/replace') {
+    await call('replaceLockedFile', url.searchParams.get('path') ?? '', new Uint8Array(await body(req)), who);
+    return done();
+  }
+  const b = JSON.parse((await body(req)).toString('utf8') || '{}');
+  if (p === '/api/lock') { await call('lock', b.paths, who, b.note); return done(); }
+  if (p === '/api/unlock') { await call('unlock', b.paths, who); return done(); }
+  if (p === '/api/approve' || p === '/api/restore') {
+    await call(p === '/api/approve' ? 'approveLocks' : 'restoreLocks', who);
+    lastLockOk = true;
+    return done();
+  }
+  if (p === '/api/set') {
+    const path = String(b.path ?? '');
+    const op: Op = path.startsWith('sheet:') ? { op: 'setSheet', image: path.slice(6), sheet: b.value } : { op: 'set', path, value: b.value };
+    return done(await call('apply', [op], who));
+  }
+  json(res, { error: `見つかりません: ${m} ${p}` }, 404);
+}
+
 await startWorker();
 http
   .createServer((req, res) => {
@@ -361,4 +399,11 @@ http
   })
   .listen(port, () => {
     console.log(`AGES エディタ: http://localhost:${port}  （プロジェクト: ${relative(process.cwd(), projectDir) || '.'}）`);
+  });
+http
+  .createServer((req, res) => {
+    lockRoute(req, res).catch((e) => json(res, { error: (e as Error).message }, (e as { status?: number }).status ?? 400));
+  })
+  .listen(lockPort, () => {
+    console.log(`ロックマネージャー: http://localhost:${lockPort}  （ロックの操作は、ここからだけ）`);
   });

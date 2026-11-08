@@ -87,10 +87,13 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
   const cell = (r: Row, k: string, f: Field, lock: unknown, touched: unknown) => {
     const v = k in r ? r[k] : defaultOf(f);
     const cls = `${k in r ? '' : 'default'} ${touched ? 'touched' : ''} ${lock ? 'locked' : ''}`;
+    // ロックされたセルは見るだけ（設定で隠すこともできる）。変えるのはロックマネージャーで
+    if (lock && !app.showLocked) return h('td', { class: `cplx ${cls}`, title: '🔒 ロック中（設定で隠しています）', 'data-row': r.id, 'data-col': k }, '🔒');
     if (!SIMPLE.has(f.type)) return h('td', { class: `cplx ${cls}`, title: '行を選ぶと右で編集できます' }, valueSummary(f, v), lock ? ' 🔒' : '');
     const commit = (nv: unknown, final: boolean) => { if (final && JSON.stringify(nv) !== JSON.stringify(v)) patch([{ op: 'set', path: addr(r.id, k), value: nv }]); };
     const w = widget(app, f, v, commit, { comp: '', field: k, holder: {} });
-    const td = h('td', { class: cls, 'data-row': r.id, 'data-col': k }, w.el, lock ? h('span', { class: 'lockmark', title: '🔒 AIは変更できません' }, '🔒') : null);
+    if (lock) w.el.setAttribute('inert', '');
+    const td = h('td', { class: cls, 'data-row': r.id, 'data-col': k }, w.el, lock ? h('span', { class: 'lockmark', title: '🔒 ロック中（AI もエディタも変えられません）。変えるならロックマネージャーで' }, '🔒') : null);
     td.addEventListener('focusin', () => { if (selRow !== r.id) { selRow = r.id; renderSide(); markSel(); } });
     // 表計算ソフトからの貼り付け（複数のセル）
     td.addEventListener('paste', (e) => {
@@ -138,9 +141,10 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
       const w = isNested(f) ? nestedWidget(app, f, v, path, [], emit, { comp: '', field: k, holder: {} })
         : f.type === 'matrix' ? h('span', { class: 'muted' }, '行列（ages set で編集）')
         : widget(app, f, v, (nv, final) => { if (final) patch([{ op: 'set', path, value: nv }]); }, { comp: '', field: k, holder: {} }).el;
+      if (lock) { w.setAttribute('inert', ''); w.classList.add('locked-value'); }
       return h('div', { class: `field ${isNested(f) ? 'wide' : ''} ${k in r ? '' : 'default'} ${touched ? 'touched' : ''} ${lock ? 'locked' : ''}` },
         h('label', { title: `${k}: ${typeOf(f)}${f.desc ? '\n' + f.desc : ''}${touched ? `\n★ ${touched.who} が ${time(touched.t)} に調整` : ''}` }, k), w,
-        h('button', { class: `icon lockbtn ${lock ? 'on' : ''}`, title: lock ? `🔒 ロック中（${lock.who}）。クリックで解除` : 'ロックする（AIが変更できなくなります）', onclick: () => app.setLock([path], !lock, undefined, 'table') }, lock ? '🔒' : '🔓'));
+        h('button', { class: `icon lockbtn ${lock ? 'on' : ''}`, title: lock ? `🔒 ロック中（${lock.who}）。クリックでロックマネージャーを開く（外す・値を変える）` : 'ロックする（ロックマネージャーが開きます）', onclick: () => app.openLocks(path) }, lock ? '🔒' : '🔓'));
     });
     clear(side,
       h('div', { class: 'pad', style: 'border-bottom:1px solid var(--line)' },
@@ -149,7 +153,7 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
           h('button', { class: 'icon', title: '上へ', disabled: i === 0, onclick: () => patch([{ op: 'moveRow', table: name, id: r.id, to: i - 1 }]) }, '↑'),
           h('button', { class: 'icon', title: '下へ', disabled: i === rows().length - 1, onclick: () => patch([{ op: 'moveRow', table: name, id: r.id, to: i + 1 }]) }, '↓'),
           h('button', { onclick: () => duplicate(r), title: 'この行を複製して、すぐ下に置く' }, '複製'),
-          h('button', { onclick: () => app.setLock(allPaths, !allLocked, undefined, 'table'), title: 'この行の全部の列をロック／解除' }, allLocked ? '🔒 行の解除' : '🔒 行をロック'),
+          h('button', { onclick: () => app.openLocks(`$${name}.${r.id}`), title: 'この行の値をまとめてロック／解除する（ロックマネージャーが開きます）' }, allLocked ? '🔒 行のロック' : '🔒 行をロック'),
           h('button', { style: 'color:var(--bad)', onclick: () => { if (confirm(`$${name}.${r.id} を消しますか？`)) { selRow = ''; patch([{ op: 'removeRow', table: name, id: r.id }]); } } }, '消す'))),
       fields);
   };
@@ -204,6 +208,7 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
   });
   // リストを開く・閉じる（右の編集欄だけ描き直す）
   app.on('nestToggle', () => { if (el.isConnected) renderSide(); });
+  app.on('settings', () => render());
   render();
   return { id: 'table', title: '表', el, fill: true, area: 'center', open, render };
 }

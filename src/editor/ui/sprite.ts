@@ -365,10 +365,11 @@ export function spritePanel(app: App): Panel & { open(image: string): void } {
       h('button', { title: '画面に合わせる', onclick: () => { fit(); draw(); zoomLabel.textContent = `${Math.round(zoom * 100)}%`; } }, '合わせる'),
       h('span', { class: 'spacer' }),
       touched && !lock ? h('span', { class: 'muted', title: `${touched.who} が調整` }, '★') : null,
+      lock ? h('span', { style: 'color:var(--lock)', title: '変えるなら、ロックマネージャーで外してから' }, '🔒 ロック中（保存できません）') : null,
       image && h('button', {
         class: `icon lockbtn ${lock ? 'on' : ''}`,
-        title: lock ? `🔒 この画像の切り方はロック中（${lock.who}）。AIは変更できません。クリックで解除` : 'この画像の切り方をロックする（AIが変更できなくなります）',
-        onclick: () => app.setLock([lockPath], !lock, undefined, 'sprite'),
+        title: lock ? `🔒 この画像の切り方はロック中（${lock.who}）。AI もエディタも変えられません。クリックでロックマネージャーを開く` : 'この画像の切り方をロックする（ロックマネージャーが開きます）',
+        onclick: () => app.openLocks(lockPath),
       }, lock ? '🔒' : '🔓'),
       h('button', { onclick: () => { load(); renderAll(); }, title: '保存していない変更を捨てる' }, '元に戻す'),
       saveBtn,

@@ -15,6 +15,7 @@ import { cmdCheck, cmdMap, cmdRun } from '../src/cli/ages.ts';
 
 process.env.AGES_HOME ??= await mkdtemp(join(tmpdir(), 'ages-home-'));
 const human = { who: 'yamamoto', kind: 'human' as const, win: 'hierarchy' };
+const keeper = { who: 'yamamoto', kind: 'human' as const, win: 'lock-manager' };
 const ai = { who: 'ai', kind: 'ai' as const, win: 'cli' };
 const CONFIG: ProjectConfig = { name: 't', fps: 10, seed: 1, view: { width: 100, height: 100, background: '#000' }, startScene: 'a', game: 'game/index.ts' };
 const ent = (id: string, tags: string[] = [], x = 0) => ({ id, name: id, tags, components: { Transform: { x } } });
@@ -100,13 +101,13 @@ export const stages = defineTable({ name: 'stages', columns: { scene: { type: 's
   return dir;
 }
 
-test('シーンの出し入れ: 作る（写し）・名前を変える（開始シーン・scene 型の値・ロック・★も）・説明・開始・消す', async () => {
+test('シーンの出し入れ: 作る（写し）・名前を変える（開始シーン・scene 型の値・ロック・★も）・説明・開始・消す（ロックがあれば人も消せない）', async () => {
   const dir = await fresh();
   const p = await Project.load(dir);
   assert.deepEqual(p.validate(), []);
   await p.apply([{ op: 'addScene', name: 'stage2', copy: 'main', desc: '2面' }], ai);
   assert.equal(JSON.parse(await readFile(join(dir, 'scenes/stage2.scene.json'), 'utf8')).entities.length, p.docs.scenes.get('main')!.entities.length);
-  await p.lock(['main#player.Player.speed'], human);
+  await p.lock(['main#player.Player.speed'], keeper);
   await p.apply([{ op: 'set', path: 'main#spawner.Spawner.interval', value: 30 }], human);
   await assert.rejects(p.apply([{ op: 'renameScene', name: 'main', to: 'stage1' }], ai), /🔒 ロックされた値は変更できません: main#player\.Player\.speed/);
   const r = await p.apply([{ op: 'renameScene', name: 'main', to: 'stage1' }, { op: 'renameScene', name: 'result', to: 'over' }], human);
@@ -122,12 +123,13 @@ test('シーンの出し入れ: 作る（写し）・名前を変える（開始
   await assert.rejects(p.apply([{ op: 'removeScene', name: 'stage2' }], ai), /開始シーンなので消せません/);
   await assert.rejects(p.apply([{ op: 'removeScene', name: 'over' }], ai), /使われているので消せません: \$stages\.s1\.scene/);
   await assert.rejects(p.apply([{ op: 'removeScene', name: 'stage1' }], ai), /🔒 ロックされた値は変更できません: stage1#player\.Player\.speed/);
-  await p.unlock(['stage1#player.Player.speed'], human);
+  await p.unlock(['stage1#player.Player.speed'], keeper);
   await assert.rejects(p.apply([{ op: 'removeScene', name: 'stage1' }], ai), /人が調整した値に触れようとしています: stage1#spawner\.Spawner\.interval/);
-  await p.lock(['stage1#player.Player.speed'], human);
+  await p.lock(['stage1#player.Player.speed'], keeper);
+  await assert.rejects(p.apply([{ op: 'removeScene', name: 'stage1' }], human), /🔒 ロックされています: stage1#player\.Player\.speed/, 'ロックのあるシーンは、人でもエディタからは消せない');
+  await p.unlock(['stage1#player.Player.speed'], keeper);
   await p.apply([{ op: 'removeScene', name: 'stage1' }], human);
   assert.ok(!existsSync(join(dir, 'scenes/stage1.scene.json')));
-  assert.ok(!(await readLocks(dir))['stage1#player.Player.speed'], '消したシーンのロックは外れる');
   await assert.rejects(p.apply([{ op: 'addScene', name: 'stage 3' }], ai), /英数字・_・- だけ/);
   await assert.rejects(p.apply([{ op: 'addScene', name: 'over' }], ai), /すでにあります/);
   await assert.rejects(p.apply([{ op: 'set', path: '$stages.s1.scene', value: 'ovr' }], ai), /シーン ovr はありません。もしかして: over/);

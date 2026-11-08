@@ -13,6 +13,7 @@ import { cmdAssets, cmdMap } from '../src/cli/ages.ts';
 
 process.env.AGES_HOME ??= await mkdtemp(join(tmpdir(), 'ages-home-'));
 const human = { who: 'yamamoto', kind: 'human' as const, win: 'assets' };
+const keeper = { who: 'yamamoto', kind: 'human' as const, win: 'lock-manager' };
 const ai = { who: 'ai', kind: 'ai' as const, win: 'cli' };
 const SHIPS = 'assets/kenney-pixel-shmup/ships.png';
 const TILES = 'assets/kenney-pixel-shmup/tiles.png';
@@ -92,12 +93,12 @@ test('使われているものは消せない。使われていなければ切�
 test('ロック: AIは、ロックされた値や切り方に関わるアセットを動かせない。人が動かすとロックと★も付いていく', async () => {
   const dir = await fresh();
   const p = await Project.load(dir);
-  await p.lock(['main#player.Sprite.image'], human);
+  await p.lock(['main#player.Sprite.image'], keeper);
   await assert.rejects(p.apply([{ op: 'moveAsset', from: SHIPS, to: 'assets/s.png' }], ai), /🔒 この操作は、ロックされた値も変えてしまいます: main#player\.Sprite\.image/);
   assert.ok(existsSync(join(dir, SHIPS)), 'ファイルは動いていない');
   assert.equal(await player(dir), SHIPS);
-  await p.unlock(['main#player.Sprite.image'], human);
-  await p.lock([`sheet:${TILES}`], human);
+  await p.unlock(['main#player.Sprite.image'], keeper);
+  await p.lock([`sheet:${TILES}`], keeper);
   await p.apply([{ op: 'setFrame', image: SHIPS, frame: 0, name: 'hero' }], human);
   await assert.rejects(p.apply([{ op: 'moveAsset', from: 'assets/kenney-pixel-shmup', to: 'assets/k' }], ai), /🔒 ロックされた値は変更できません: sheet:assets\/kenney-pixel-shmup\/tiles\.png/);
   await p.apply([{ op: 'moveAsset', from: 'assets/kenney-pixel-shmup', to: 'assets/k' }], human);

@@ -31,6 +31,8 @@ export interface EditorState {
   codeRefs: Record<string, string[]>;
   /** フォルダの一覧（空のフォルダも） */
   dirs: string[];
+  /** ロックマネージャーの場所（別のポート） */
+  lockManager?: string;
   error?: string;
 }
 
@@ -144,13 +146,24 @@ export class App {
     }
   }
 
-  async setLock(paths: string[], locked: boolean, note?: string, win = 'inspector'): Promise<void> {
-    try {
-      await this.api(locked ? '/api/lock' : '/api/unlock', { body: { paths, note, win } });
-      await this.refresh();
-    } catch (e) {
-      toast((e as Error).message, 'bad');
-    }
+  /**
+   * ロックマネージャー（人だけが使う専用の画面。別のタブ）を開く。path を渡すと、その値を開いた状態で
+   * ロックを付ける・外す・ロックされた値を変えるのは、そこからだけ
+   */
+  openLocks(path = ''): void {
+    const base = this.state?.lockManager ?? `http://${location.hostname}:${Number(location.port || 80) + 1}`;
+    const url = `${base}/?user=${encodeURIComponent(this.user)}${path ? `&focus=${encodeURIComponent(path)}` : ''}`;
+    window.open(url, 'ages-locks');
+  }
+
+  /** ロックされた値を表示するか（人ごとにブラウザに記憶する設定） */
+  get showLocked(): boolean {
+    const v = localStorage.getItem('ages.showLocked');
+    return v === null ? localStorage.getItem('ages.hideLocked') !== '1' : v === '1';
+  }
+  set showLocked(v: boolean) {
+    localStorage.setItem('ages.showLocked', v ? '1' : '0');
+    this.emit('settings');
   }
 
   select(sel: Selection): void {

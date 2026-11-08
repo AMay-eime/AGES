@@ -76,8 +76,9 @@ const renderTop = () => {
     h('button', { title: '入力を記録しながら再生（停止時に recordings/ に保存）', onclick: () => app.startPlay(true), disabled: !!p }, '● 記録して再生'),
     h('span', { class: 'spacer' }),
     audioControls(),
-    broken ? h('button', { style: 'border-color:var(--bad);color:var(--bad)', onclick: checkLocks, title: s.integrity.reason }, '🔒⚠ ロックの記録を確認') : null,
-    h('span', { class: 'status' }, s?.error ? `⚠ ${s.error}` : `${s.issues.length ? `⚠${s.issues.length} ` : ''}🔒${locks}  v${s.version}`),
+    broken ? h('button', { style: 'border-color:var(--bad);color:var(--bad)', onclick: () => app.openLocks(), title: `${s.integrity.reason}\nロックマネージャーで確かめます` }, '🔒⚠ ロックの記録を確認') : null,
+    h('span', { class: 'status' }, s?.error ? `⚠ ${s.error}` : `${s.issues.length ? `⚠${s.issues.length} ` : ''}`, s?.error ? null : h('a', { style: 'cursor:pointer', title: 'ロックマネージャーを開く（ロックの一覧・付ける・外す）', onclick: () => app.openLocks() }, `🔒${locks}`), s?.error ? '' : `  v${s.version}`),
+    h('button', { class: 'icon', title: '設定', onclick: openSettings }, '⚙'),
     h('span', { class: 'muted' }, '名前'), userInput);
 };
 app.on('change', renderTop);
@@ -102,31 +103,17 @@ app.on('change', () => {
   soundTimes = next;
 });
 
-/** ロックの記録が人の封印と一致しないときの確認画面 */
-function checkLocks(): void {
-  const g = app.state.integrity;
+/** 設定（人ごとにブラウザに記憶する） */
+function openSettings(): void {
   modal((close) => {
-    const list = (title: string, items: string[], color: string) => items.length
-      ? h('div', { style: 'margin:8px 0' }, h('div', { style: `color:${color}` }, `${title}（${items.length}）`), items.map((i) => h('div', { style: 'font:var(--mono);padding-left:12px' }, i)))
-      : null;
-    const act = (path: string) => async () => {
-      close();
-      try { await app.api(path, { body: {} }); toast('ロックの記録を確認しました。AIからの編集を再開できます'); }
-      catch (e) { toast((e as Error).message, 'bad'); }
-      await app.refresh();
-    };
+    const show = h('input', { type: 'checkbox', checked: app.showLocked, onchange: (e: Event) => { app.showLocked = (e.target as HTMLInputElement).checked; } });
     return h('div', {},
-      h('h3', {}, '🔒⚠ ロックの記録を確認してください'),
-      h('div', { style: 'margin-bottom:8px' }, g.reason ?? ''),
-      h('div', { class: 'muted' }, 'AIからの編集はすべて止まっています。最後にあなたが封印したロックは、確認するまで引き続き有効です。'),
-      list('消されたロック', g.diff.removed, 'var(--bad)'),
-      list('増えたロック', g.diff.added, 'var(--warn)'),
-      list('値が変わったロック', g.diff.changed, 'var(--warn)'),
-      !g.diff.added.length && !g.diff.removed.length && !g.diff.changed.length ? h('div', { class: 'muted', style: 'margin:8px 0' }, '（中身の違いは見つかりません。チームの誰かがGitで送ったロックか、この端末で初めて開いたロックです）') : null,
-      h('div', { class: 'row', style: 'justify-content:flex-end;margin-top:12px' },
-        h('button', { onclick: close }, '閉じる'),
-        g.hasBackup ? h('button', { onclick: act('/api/locks/restore'), title: '最後にあなたが封印した状態に戻す' }, '前の状態に戻す') : null,
-        h('button', { class: 'on', onclick: act('/api/locks/approve'), title: '今のロックの記録を正しいものとして封印する' }, 'この内容で承認する')));
+      h('h3', {}, '設定'),
+      h('label', { class: 'row' }, show, 'ロックされた値を表示する（インスペクタ・表。表示しても、ここでは変えられません）'),
+      h('div', { class: 'muted', style: 'margin:8px 0' }, 'ロックを付ける・外す・ロックされた値を変えるのは、ロックマネージャーで。'),
+      h('div', { class: 'row', style: 'justify-content:space-between;margin-top:12px' },
+        h('button', { onclick: () => { close(); app.openLocks(); } }, '🔒 ロックマネージャーを開く'),
+        h('button', { onclick: close }, '閉じる')));
   });
 }
 
@@ -201,7 +188,7 @@ events.onmessage = async (msg) => {
     if (ev.lockReport?.length) toast(ev.lockReport.map((l: string) => '🔒 ' + l).join('\n'), 'lock', 8000);
   }
   if (ev.type === 'locks' && ev.integrity === false) {
-    toast('🔒⚠ ロックの記録がエディタ以外で書き換えられました。AIからの編集を止めています。上の「ロックの記録を確認」から確認してください', 'lock', 10000);
+    toast('🔒⚠ ロックの記録がエディタ以外で書き換えられました。AIからの編集を止めています。上の「🔒⚠ ロックの記録を確認」からロックマネージャーで確かめてください', 'lock', 10000);
   }
   if (ev.type === 'code' && app.state.version !== lastVersion) {
     lastVersion = app.state.version;
