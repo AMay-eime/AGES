@@ -6,6 +6,6 @@ import * as T from './tables.ts';
 
 export const components: GameModule['components'] = Object.values(C);
 
-export const systems: GameModule['systems'] = [S.playerControl, S.spawner, S.movement, S.lifetime, S.combat, S.hud];
+export const systems: GameModule['systems'] = [S.playerControl, S.spawner, S.movement, S.lifetime, S.combat, S.hud, S.toResult, S.resultScreen];
 
 export const tables: GameModule['tables'] = Object.values(T);

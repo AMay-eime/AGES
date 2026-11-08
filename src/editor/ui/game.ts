@@ -55,6 +55,12 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
       hud.textContent = glError;
     }
   };
+  // シーンに入る前の画像の読み込みを、この画面の描く側が受け持つ
+  app.preloaders.push((paths) => {
+    ensureRenderer();
+    const images = paths.filter((p) => kindOf(p) === 'image');
+    return renderer && images.length ? renderer.preload(images) : Promise.resolve();
+  });
   const fitMode = (): FitMode => fitOverride ?? app.state?.config?.view?.fit ?? 'contain';
   const renderFitSel = () => {
     const proj = app.state?.config?.view?.fit ?? 'contain';
@@ -330,14 +336,18 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     if (!w || !renderer) return;
     if (app.registry) renderer.opts.sheets = app.registry.sheets;
     const d = design();
-    renderer.draw(w, { background: app.state.config.view.background, design: d, view: viewMode === 'free' ? free : undefined });
+    // シーンの切り替えのフェードは、カメラの視点でだけ画面を覆う（自由な視点では様子を見られるように覆わない）
+    const overlay = p && viewMode === 'camera' ? (p.loading ? { color: p.game.transition?.color ?? '#000000', alpha: p.game.transition ? 1 : 0 } : p.game.overlay()) : null;
+    renderer.draw(w, { background: app.state.config.view.background, design: d, view: viewMode === 'free' ? free : undefined, overlay });
     drawOverlay(w);
     const cams = renderer.cams.filter((c) => c.id).length;
     const where = viewMode === 'free' ? `自由な視点 ${Math.round(free.zoom * 100)}%（ホイールで拡大・右ドラッグで移動）` : cams ? `カメラ ${cams}台` : '';
     const mouse = gameHasMouse() ? 'マウスはゲームへ（選ぶには一時停止）' : '';
     const tail = [where, mouse, hint].filter(Boolean).join('  ');
+    const tr = p?.game.transition;
+    const sceneText = p ? `シーン ${p.game.sceneName}${tr ? `（${tr.phase === 'out' ? `→ ${tr.to}` : '入るところ'}）` : ''}${p.loading ? `  読み込み中 ${p.loading.done}/${p.loading.total}` : ''}` : '';
     hud.textContent = p
-      ? `${p.paused ? '⏸' : '▶'} f${p.game.frame}  ${(p.game.frame / app.state.config.fps).toFixed(1)}s  ${w.entities.size}体${p.recorder ? '  ●REC' : ''}  ${tail}`
+      ? `${p.paused ? '⏸' : '▶'} f${p.game.frame}  ${(p.game.frame / app.state.config.fps).toFixed(1)}s  ${sceneText}  ${w.entities.size}体${p.recorder ? '  ●REC' : ''}  ${tail}`
       : `編集中  ${w.entities.size}体  クリックで選択・ドラッグで移動  ${tail}`;
   };
   requestAnimationFrame(loop);

@@ -1,7 +1,7 @@
 // コンポーネント・システム・プレハブの登録簿。
 import { checkComponent, defaultOf, defaultsOf, suggest, type ComponentDef } from './schema.ts';
 import type { Row, TableDef, TableDoc, TableView } from './table.ts';
-import type { PrefabDoc } from './docs.ts';
+import type { PrefabDoc, SceneDoc } from './docs.ts';
 import type { SheetDef } from './sheet.ts';
 import { STD_COMPONENTS } from '../std/components.ts';
 import { STD_SYSTEMS } from '../std/systems.ts';
@@ -16,10 +16,14 @@ export interface SystemDef {
   reads?: string[];
   /** 書き換えるコンポーネント */
   writes?: string[];
-  /** シーン開始時に1回 */
+  /** シーンに入ったときに1回（最初のシーンにも、goto で入ったシーンにも） */
   start?(ctx: Ctx): void;
   /** 毎フレーム */
   update(ctx: Ctx): void;
+  /** シーンを出るときに1回（goto の切り替えの直前。物はまだ残っている） */
+  exit?(ctx: Ctx): void;
+  /** このシーンでだけ動く（省くと全部のシーンで）。例 ['title'] */
+  scenes?: string[];
 }
 
 export function defineSystem<T extends SystemDef>(def: T): T {
@@ -38,6 +42,8 @@ export class Registry {
   components = new Map<string, ComponentDef>();
   systems: SystemDef[] = [];
   prefabs = new Map<string, PrefabDoc>();
+  /** シーン（名前 → 中身）。ctx.scene.goto で切り替える先 */
+  scenes = new Map<string, SceneDoc>();
   /** スプライトシート（定義ファイルの場所 → 中身） */
   sheets = new Map<string, SheetDef>();
   /** 表の形 */

@@ -288,6 +288,16 @@ export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, 
       wrap.append(sel, h('button', { class: 'icon row-open', title: `表 ${f.table} を開く`, onclick: () => app.emit('openTable', { name: f.table, row: sel.value }) }, '▦'));
       return { el: wrap, set: (v) => { sel.value = String(v); } };
     }
+    case 'scene': {
+      const names = Object.keys(app.state.scenes);
+      const cur = String(value ?? '');
+      const options = [...(f.default === '' ? [''] : []), ...names];
+      if (!options.includes(cur)) options.push(cur);
+      const sel = h('select', { title: 'シーン' }, options.map((o) => h('option', { value: o, selected: o === cur }, o === '' ? '（なし）' : names.includes(o) ? o : `${o}（ありません）`))) as HTMLSelectElement;
+      sel.addEventListener('change', () => commit(sel.value, true));
+      wrap.append(sel);
+      return { el: wrap, set: (v) => { sel.value = String(v); } };
+    }
     case 'input': {
       // ボタン・軸の名前。「押して決める」で、次に押したキー・マウス・パッドのボタン（analog なら倒した軸）が入る
       const t = h('input', { type: 'text', value: String(value ?? ''), style: 'width:110px;font:var(--mono)', title: f.analog ? '軸の名前（例 Pad.LX）' : 'ボタンの名前（例 KeyZ, Space, Mouse0, Pad.A）' }) as HTMLInputElement;

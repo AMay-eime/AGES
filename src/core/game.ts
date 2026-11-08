@@ -38,6 +38,49 @@ export interface Ctx {
    * camera を省くと、その点を映している一番手前のカメラで
    */
   pointerWorld(camera?: string): [number, number] | null;
+  /** シーン（今の名前・入ってからのフレーム・切り替え） */
+  scene: SceneApi;
+}
+
+export interface GotoOptions {
+  /** 次のシーンに渡すもの（ctx.scene.params で読む） */
+  params?: Record<string, unknown>;
+  /** 消えていく・出てくるの秒数（片道）。0 ならすぐ切り替わる */
+  fade?: number;
+  /** 覆う色（既定 #000000） */
+  color?: string;
+  /** 残す物の ID（tag keep の付いた物は、書かなくても残る） */
+  keep?: string[];
+}
+
+export interface Transition {
+  /** out: 今のシーンが消えていく / in: 次のシーンが出てくる */
+  phase: 'out' | 'in';
+  /** 0〜1 */
+  t: number;
+  from: string;
+  to: string;
+  color: string;
+}
+
+export interface SceneApi {
+  /** 今のシーンの名前 */
+  readonly name: string;
+  /** このシーンに入ってからのフレーム数（入った最初のフレームが 0） */
+  readonly frame: number;
+  /** goto で渡されたもの（最初のシーンは空） */
+  readonly params: Readonly<Record<string, unknown>>;
+  /** 切り替えの途中なら、その様子。途中でなければ null */
+  readonly transition: Readonly<Transition> | null;
+  /** シーンの名前の一覧 */
+  readonly names: readonly string[];
+  /**
+   * 別のシーンへ切り替える（そのフレームの終わりに。fade があれば消えきってから）。
+   * tag keep の付いた物と keep の ID の物は残り、次のシーンに同じ ID の物があれば、残した物のほうを使う
+   */
+  goto(name: string, opts?: GotoOptions): void;
+  /** 今のシーンを最初からやり直す（goto と同じ。params は今のまま） */
+  restart(opts?: GotoOptions): void;
 }
 
 export interface GameEvent {
@@ -92,6 +135,16 @@ export class Game {
   private lastPlayed = new Map<string, number>();
   readonly ctx: Ctx;
   private started = false;
+  /** 今のシーン */
+  sceneName: string;
+  sceneFrame = 0;
+  sceneParams: Record<string, unknown> = {};
+  /** 切り替えの途中（i: 進んだフレーム、n: 片道のフレーム） */
+  private trans: { phase: 'out' | 'in'; i: number; n: number; from: string; to: string; color: string; params: Record<string, unknown>; keep: string[] } | null = null;
+  /** シーンが切り替わったとき（from → to）。エディタはここで次のシーンの画像・音を読み込む */
+  sceneListeners: ((from: string, to: string) => void)[] = [];
+  /** これまでのシーンの移り変わり（ages run の要約に載る） */
+  sceneLog: { frame: number; name: string }[] = [];
 
   constructor(registry: Registry, config: ProjectConfig, scene: SceneDoc, seed = config.seed) {
     this.registry = registry;
@@ -99,6 +152,9 @@ export class Game {
     this.world = new World(registry);
     this.rng = new Rng(seed);
     this.dt = 1 / config.fps;
+    this.sceneName = scene.name;
+    this.sceneLog.push({ frame: 0, name: scene.name });
+    if (!registry.scenes.has(scene.name)) registry.scenes.set(scene.name, scene);
     for (const e of scene.entities) this.world.add(e);
     // 操作の名前と割り当て（標準の表 $actions）
     if (registry.tables.has('actions')) {
@@ -132,6 +188,7 @@ export class Game {
         const c = camera ? cams.find((x) => x.id === camera)! : [...cams].reverse().find((x) => p.x >= x.vx && p.y >= x.vy && p.x <= x.vx + x.vw && p.y <= x.vy + x.vh);
         return c ? screenToWorld(c, p.x, p.y) : null;
       },
+      scene: this.makeSceneApi(),
       emit: (name, data) => {
         this.counts.set(name, (this.counts.get(name) ?? 0) + 1);
         const ev: GameEvent = { frame: this.frame, name, data };
@@ -203,27 +260,98 @@ export class Game {
     };
   }
 
+  /** このシーンで動くシステム */
+  private active() {
+    return this.registry.systems.filter((s) => !s.scenes || s.scenes.includes(this.sceneName));
+  }
+
+  private makeSceneApi(): SceneApi {
+    const game = this;
+    const goto = (name: string, opts: GotoOptions = {}, keepParams = false) => {
+      if (typeof name !== 'string' || !this.registry.scenes.has(name)) {
+        throw new Error(`ctx.scene.goto: シーン ${name} はありません${suggest(String(name), [...this.registry.scenes.keys()])}`);
+      }
+      if (this.trans?.phase === 'out') return; // 切り替えの途中に重ねて呼んでも、最初のものだけ
+      const n = Math.max(0, Math.round((opts.fade ?? 0) * this.config.fps));
+      this.trans = { phase: 'out', i: 0, n, from: this.sceneName, to: name, color: opts.color ?? '#000000', params: keepParams ? this.sceneParams : { ...(opts.params ?? {}) }, keep: [...(opts.keep ?? [])] };
+    };
+    return {
+      get name() { return game.sceneName; },
+      get frame() { return game.sceneFrame; },
+      get params() { return game.sceneParams; },
+      get transition() { return game.transition; },
+      get names() { return [...game.registry.scenes.keys()]; },
+      goto: (name, opts) => goto(name, opts),
+      restart: (opts) => goto(this.sceneName, opts, opts?.params === undefined),
+    };
+  }
+
+  /** 切り替えの様子（描く側が画面を覆うのに使う） */
+  get transition(): Transition | null {
+    const t = this.trans;
+    if (!t) return null;
+    return { phase: t.phase, t: t.n ? Math.min(1, t.i / t.n) : 1, from: t.from, to: t.to, color: t.color };
+  }
+
+  /** 画面を覆う色と濃さ（0〜1）。覆っていなければ null */
+  overlay(): { color: string; alpha: number } | null {
+    const t = this.transition;
+    if (!t) return null;
+    const a = t.phase === 'out' ? t.t : 1 - t.t;
+    return a > 0 ? { color: t.color, alpha: a } : null;
+  }
+
+  /** 今のシーンを出て、次のシーンに入る（フレームの終わりに） */
+  private switchScene(): void {
+    const t = this.trans!;
+    for (const s of this.active()) {
+      if (!s.exit) continue;
+      try { s.exit(this.ctx); } catch (err) { throw new GameError(s.name + '.exit', this.frame, err); }
+    }
+    this.world.flush();
+    const keep = new Set(t.keep);
+    for (const e of this.world.entities.values()) if (!e.tags.includes('keep') && !keep.has(e.id)) this.world.destroy(e.id);
+    this.world.flush();
+    const doc = this.registry.scenes.get(t.to)!;
+    for (const e of doc.entities) if (!this.world.entities.has(e.id)) this.world.add(e);
+    this.sceneName = t.to;
+    this.sceneFrame = 0;
+    this.sceneParams = t.params;
+    this.started = false; // 次のフレームで、このシーンのシステムの start を呼ぶ
+    this.trans = t.n ? { ...t, phase: 'in', i: 0 } : null;
+    this.sceneLog.push({ frame: this.frame, name: t.to });
+    this.ctx.emit('scene', { from: t.from, to: t.to });
+    for (const l of this.sceneListeners) l(t.from, t.to);
+  }
+
   /** 1フレーム進める。input はそのフレームの入力（押されているボタンの並びだけでもよい）。 */
   step(input: Iterable<string> | FrameInput = []): void {
     this.input.setFrame(input);
+    const systems = this.active();
     if (!this.started) {
       this.started = true;
-      for (const s of this.registry.systems) {
+      for (const s of systems) {
         if (!s.start) continue;
         try { s.start(this.ctx); } catch (err) { throw new GameError(s.name + '.start', this.frame, err); }
       }
       this.world.flush();
     }
-    for (const s of this.registry.systems) {
+    for (const s of systems) {
       try { s.update(this.ctx); } catch (err) { throw new GameError(s.name, this.frame, err); }
     }
     this.world.flush();
     this.frame++;
+    this.sceneFrame++;
+    const t = this.trans;
+    if (t) {
+      if (t.phase === 'out' && ++t.i >= t.n) this.switchScene();
+      else if (t.phase === 'in' && ++t.i >= t.n) this.trans = null;
+    }
   }
 
   /** 状態のハッシュ（同じ結果になったかの比較用） */
   hash(): string {
-    const text = JSON.stringify([this.frame, this.rng.state, [...this.world.entities.values()].map((e) => [e.id, e.c])]);
+    const text = JSON.stringify([this.frame, this.rng.state, [...this.world.entities.values()].map((e) => [e.id, e.c]), this.sceneLog.length > 1 ? [this.sceneName, this.sceneFrame] : 0]);
     let h = 0x811c9dc5;
     for (let i = 0; i < text.length; i++) {
       h ^= text.charCodeAt(i);
@@ -233,6 +361,6 @@ export class Game {
   }
 
   snapshot() {
-    return { frame: this.frame, rng: this.rng.state, world: this.world.snapshot(), counts: Object.fromEntries(this.counts) };
+    return { frame: this.frame, rng: this.rng.state, world: this.world.snapshot(), counts: Object.fromEntries(this.counts), scene: { name: this.sceneName, frame: this.sceneFrame, params: this.sceneParams } };
   }
 }

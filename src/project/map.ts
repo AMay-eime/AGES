@@ -7,7 +7,7 @@ import type { Project } from './project.ts';
 import type { WindowInfo } from './windows.ts';
 import type { LockMark, TouchMark } from './oplog.ts';
 
-export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, locks: Record<string, LockMark> = {}, code = new Map<string, string[]>(), windows: WindowInfo[] = []): string {
+export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, locks: Record<string, LockMark> = {}, code = new Map<string, string[]>(), windows: WindowInfo[] = [], gotos = new Map<string, string[]>()): string {
   const c = p.config;
   const out: string[] = [];
   out.push(`# ${c.name}  fps${c.fps} seed${c.seed} view${c.view.width}x${c.view.height} start:${c.startScene} code:${c.game}`);
@@ -23,7 +23,7 @@ export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, l
   out.push('## systems（実行順。r=読む w=書く）');
   p.registry.systems.forEach((s, i) => {
     const rw = [s.reads?.length ? `r:${s.reads.join(',')}` : '', s.writes?.length ? `w:${s.writes.join(',')}` : ''].filter(Boolean).join(' ');
-    out.push(`${i + 1} ${s.name} ${s.desc}${rw ? ' ' + rw : ''}`);
+    out.push(`${i + 1} ${s.name} ${s.desc}${rw ? ' ' + rw : ''}${s.scenes ? ` シーン:${s.scenes.join(',')}だけ` : ''}`);
   });
 
   if (p.registry.tables.size) {
@@ -44,9 +44,9 @@ export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, l
     out.push(`@${pf.name}${pf.desc ? ' ' + pf.desc : ''} [${Object.keys(pf.components).join(' ')}]${tags}${marks(touched, locks, `@${pf.name}`)}`);
   }
 
-  out.push('## scenes（シーン#ID "名前" [コンポーネント]）');
+  out.push(`## scenes（シーン#ID "名前" [コンポーネント]。切り替えは ctx.scene.goto。tag keep の物は切り替えても残る）${gotos.size ? `\ngoto の行き先（コード）: ${[...gotos.keys()].join(' ')}` : ''}`);
   for (const s of p.docs.scenes.values()) {
-    out.push(`${s.name}（${s.entities.length}体）`);
+    out.push(`${s.name}（${s.entities.length}体）${s.name === c.startScene ? ' 開始' : ''}${s.desc ? ' ' + s.desc : ''}`);
     for (const e of s.entities) {
       const tags = e.tags?.length ? ` tags:${e.tags.join(',')}` : '';
       out.push(`  ${s.name}#${e.id} "${e.name}" [${Object.keys(e.components).join(' ')}]${tags}${marks(touched, locks, `${s.name}#${e.id}`)}`);

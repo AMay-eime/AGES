@@ -9,6 +9,8 @@ export interface EntityData {
 
 export interface SceneDoc {
   name: string;
+  /** 何のシーンか（1行。地図に出る） */
+  desc?: string;
   entities: EntityData[];
 }
 

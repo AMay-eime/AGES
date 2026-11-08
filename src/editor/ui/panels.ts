@@ -1,6 +1,6 @@
 // 標準のパネル: 階層 / プロジェクト / ゲーム / テキスト / ログ / Git
 import type { App } from '../app.ts';
-import { h, clear, modal, toast, time } from './dom.ts';
+import { h, clear, modal, toast, time, menu } from './dom.ts';
 import type { Layout, Panel } from './layout.ts';
 import { importFiles } from './assets.ts';
 import { kindOf } from '../../core/assets.ts';
@@ -15,8 +15,27 @@ export function hierarchyPanel(app: App): Panel {
     const lockCount = (prefix: string) => Object.keys(s.locks).filter((k) => k.startsWith(prefix + '.')).length;
     const sel = app.sel;
     const sceneSel = h('select', {
+      title: scene?.desc ?? '',
+      disabled: !!app.play,
       onchange: (e: Event) => { app.scene = (e.target as HTMLSelectElement).value; app.rebuildPreview(); app.select(null); app.emit('change'); },
-    }, Object.keys(s.scenes).map((n) => h('option', { value: n, selected: n === app.scene }, `シーン: ${n}`)));
+    }, Object.keys(s.scenes).map((n) => h('option', { value: n, selected: n === app.scene }, `シーン: ${n}${n === s.config.startScene ? '（開始）' : ''}`)));
+    // シーンを作る・複製・名前・説明・開始・消す
+    const ask = (title: string, value: string, done: (v: string) => void, placeholder = '') => modal((close) => {
+      const input = h('input', { type: 'text', value, placeholder, style: 'width:100%' }) as HTMLInputElement;
+      const ok = () => { const v = input.value.trim(); close(); done(v); };
+      input.addEventListener('keydown', (e) => e.key === 'Enter' && ok());
+      setTimeout(() => { input.focus(); input.select(); });
+      return h('div', {}, h('h3', {}, title), input, h('div', { class: 'row', style: 'justify-content:flex-end;margin-top:10px' }, h('button', { onclick: close }, 'やめる'), h('button', { class: 'on', onclick: ok }, '決める')));
+    });
+    const go = (name: string) => { app.scene = name; app.rebuildPreview(); app.select(null); app.emit('change'); };
+    const sceneMenu = (e: MouseEvent) => menu(e.clientX, e.clientY, [
+      ['新しいシーン', () => ask('新しいシーン（英数字・_・-）', '', async (v) => { if (v && await app.patch([{ op: 'addScene', name: v }], 'hierarchy')) go(v); }, '例 title')],
+      [`${app.scene} を複製`, () => ask(`${app.scene} の写しの名前`, `${app.scene}_copy`, async (v) => { if (v && await app.patch([{ op: 'addScene', name: v, copy: app.scene }], 'hierarchy')) go(v); })],
+      ['名前を変える', () => ask(`${app.scene} の新しい名前`, app.scene, async (v) => { if (v && v !== app.scene && await app.patch([{ op: 'renameScene', name: app.scene, to: v }], 'hierarchy')) go(v); })],
+      ['説明を書く', () => ask(`${app.scene} は何のシーンか（1行。地図に出ます）`, scene?.desc ?? '', (v) => app.patch([{ op: 'setScene', name: app.scene, desc: v }], 'hierarchy'))],
+      ...(app.scene !== s.config.startScene ? [['開始シーンにする', () => app.patch([{ op: 'setScene', name: app.scene, start: true }], 'hierarchy')] as [string, () => void]] : []),
+      ['消す', () => { if (confirm(`シーン ${app.scene} を消しますか？`)) app.patch([{ op: 'removeScene', name: app.scene }], 'hierarchy'); }],
+    ]);
     const addEntity = () => modal((close) => {
       const id = h('input', { type: 'text', placeholder: 'id（英数字・_・-）', style: 'width:100%' }) as HTMLInputElement;
       const ok = async () => {
@@ -36,11 +55,11 @@ export function hierarchyPanel(app: App): Panel {
     };
     clear(el,
       s.issues.length ? h('div', { class: 'issues' }, s.issues.map((i) => h('div', {}, '⚠ ' + i))) : null,
-      h('div', { class: 'toolbar' }, sceneSel, h('span', { style: 'flex:1' }),
+      h('div', { class: 'toolbar' }, sceneSel, h('button', { class: 'icon', title: 'シーンを作る・複製・名前・説明・開始・消す', onclick: sceneMenu, disabled: !!app.play }, '⚙'), h('span', { style: 'flex:1' }),
         h('button', { title: 'エンティティを追加', onclick: addEntity, disabled: !!app.play }, '＋'),
         h('button', { title: '選択中のエンティティを削除', onclick: remove, disabled: !!app.play || sel?.kind !== 'scene' }, '−')),
       h('div', { class: 'list' },
-        h('div', { class: 'folder' }, `${app.scene}（${scene?.entities.length ?? 0}）`),
+        h('div', { class: 'folder', title: scene?.desc ?? '' }, `${app.scene}（${scene?.entities.length ?? 0}）${app.play && app.play.game.sceneName === app.scene && app.play.from !== app.scene ? ' ▶実行中' : ''}`),
         (scene?.entities ?? []).map((e) => {
           const n = lockCount(`${app.scene}#${e.id}`);
           return h('div', {

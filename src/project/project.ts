@@ -10,10 +10,10 @@ import { parseAddress } from '../core/docs.ts';
 import { Game } from '../core/game.ts';
 import { checkAt, suggest, visit, type Field } from '../core/schema.ts';
 import { ROW_ID, type TableDoc } from '../core/table.ts';
-import { appendLog, localTime, lockedHits, markTouched, moveTouched, readLocks as readLockFile, readLog, readTouched, writeLocks, type Actor, type LockMark } from './oplog.ts';
+import { appendLog, localTime, lockedHits, markTouched, movePrefixTouched, moveTouched, readLocks as readLockFile, readLog, readTouched, writeLocks, type Actor, type LockMark } from './oplog.ts';
 import { lockDiff, verifyLocks, type LockIntegrity } from './seal.ts';
 import { scanAssets, type AssetInfo } from './assets.ts';
-import { codeRefs, isUnder } from '../core/assets.ts';
+import { codeRefs, codeSceneRefs, isUnder } from '../core/assets.ts';
 import { checkWindows, loadWindows, unlistedWindows, withinEdits, type WindowInfo } from './windows.ts';
 import { FIT_MODES } from '../core/camera.ts';
 import { KNOWN_AXES, KNOWN_BUTTONS } from '../core/input.ts';
@@ -58,13 +58,14 @@ export class Project {
     }
     this.config = JSON.parse(raw);
     const scan = await scanAssets(this.dir);
-    this.docs = { ...(await readDocs(this.dir)), sheets: scan.sheets, files: new Set(scan.files) };
+    this.docs = { ...(await readDocs(this.dir)), sheets: scan.sheets, files: new Set(scan.files), config: this.config };
     const prefabs = this.docs.prefabs;
     hookAgesImport();
     const url = pathToFileURL(join(this.dir, this.config.game)).href;
     const mod = (await import(url)) as GameModule;
     this.registry = Registry.from(mod, []);
     this.registry.prefabs = prefabs;
+    this.registry.scenes = this.docs.scenes;
     this.assets = scan.assets;
     this.assetIssues = scan.issues;
     this.registry.sheets = this.docs.sheets;
@@ -256,6 +257,7 @@ export class Project {
         const known = lf.analog ? KNOWN_AXES : KNOWN_BUTTONS;
         if (!known.includes(lv)) errs.push(`${lat}="${lv}": ${lf.analog ? '軸' : 'ボタン'}の名前ではありません${suggest(lv, known)}（例 ${lf.analog ? 'Pad.LX' : 'KeyZ, Space, Pad.A, Mouse0'}）`);
       }
+      if (lf.type === 'scene' && typeof lv === 'string' && lv && !this.docs.scenes.has(lv)) errs.push(`${lat}="${lv}": シーン ${lv} はありません${suggest(lv, [...this.docs.scenes.keys()])}`);
       if (lat === at) return; // フィールドそのものの prefab・asset は、下のこれまでの検証で見る
       if (lf.type === 'prefab' && typeof lv === 'string' && lv && !this.docs.prefabs.has(lv)) errs.push(`${lat}: プレハブ ${lv} はありません${suggest(lv, [...this.docs.prefabs.keys()])}`);
       if (lf.type === 'asset' && typeof lv === 'string' && lv && !assetPaths.has(lv)) errs.push(`${lat}: ファイル ${lv} がありません${suggest(lv, this.assets.filter((a) => a.kind === lf.kind).map((a) => a.path))}`);
@@ -384,6 +386,8 @@ export class Project {
         : op.op === 'setSheet' || op.op === 'setFrame' || op.op === 'setClip' ? `sheet:${op.image}`
         : op.op === 'removeRow' || op.op === 'renameRow' ? `$${op.table}.${op.id}`
         : null;
+    // シーンを消す・名前を変えると、その中のロック・★の住所も変わる
+    const sceneKeys = (op: Op, rec: Record<string, unknown>) => (op.op === 'removeScene' || op.op === 'renameScene' ? Object.keys(rec).filter((k) => k.startsWith(op.name + '#')) : []);
     // アセットの移動・削除で一緒に動く画像の切り方（sheet:<画像>）
     const assetSheets = (op: Op) => {
       if (op.op !== 'moveAsset' && op.op !== 'removeAsset') return [];
@@ -400,7 +404,7 @@ export class Project {
     }
     if (actor.kind === 'ai') {
       // ロックは --force でも越えられない（ロックされた切り方の画像は、場所も変えられない）
-      const hits = ops.flatMap((op) => { const t = targetOf(op); return [...(t ? lockedHits(locks, t) : []), ...assetSheets(op).filter((k) => locks[k])]; });
+      const hits = ops.flatMap((op) => { const t = targetOf(op); return [...(t ? lockedHits(locks, t) : []), ...assetSheets(op).filter((k) => locks[k]), ...sceneKeys(op, locks)]; });
       if (hits.length) {
         throw new Error(`🔒 ロックされた値は変更できません: ${hits.join(', ')}。この値は人が決めるものです。変えるべき理由があれば、ユーザーに提案してください`);
       }
@@ -409,7 +413,7 @@ export class Project {
     const viaWindow = actor.win?.startsWith('window:') ? actor.win.slice('window:'.length) : null;
     let windowEdits: string[] | undefined;
     if (viaWindow) {
-      const hits = ops.flatMap((op) => { const t = targetOf(op); return [...(t ? lockedHits(locks, t) : []), ...assetSheets(op).filter((k) => locks[k])]; });
+      const hits = ops.flatMap((op) => { const t = targetOf(op); return [...(t ? lockedHits(locks, t) : []), ...assetSheets(op).filter((k) => locks[k]), ...sceneKeys(op, locks)]; });
       if (hits.length) throw new Error(`🔒 ロックされた値は、ウインドウ ${viaWindow} からは変えられません: ${hits.join(', ')}。変えるならインスペクタで`);
       windowEdits = (await this.windows()).find((w) => w.id === viaWindow)?.edits;
       if (windowEdits) {
@@ -421,6 +425,7 @@ export class Project {
       const touched = await readTouched(this.dir);
       const hits: string[] = [];
       for (const op of ops) {
+        if (op.op === 'removeScene') for (const k of sceneKeys(op, touched)) hits.push(`${k}（${touched[k].who} が ${localTime(touched[k].t)} に調整）`);
         const target = targetOf(op);
         if (!target) continue;
         for (const [path, mark] of Object.entries(touched)) {
@@ -433,10 +438,11 @@ export class Project {
     }
     // 編集で新しい問題（ないファイル・ないアニメーション・範囲外のコマなど）が増えるなら、保存せずに止める
     const before = new Set(this.validate());
-    const backup: Docs = { scenes: new Map(this.docs.scenes), prefabs: new Map(this.docs.prefabs), sheets: new Map(this.docs.sheets), tables: new Map(this.docs.tables), files: new Set(this.docs.files) };
+    const backup: Docs = { scenes: new Map(this.docs.scenes), prefabs: new Map(this.docs.prefabs), sheets: new Map(this.docs.sheets), tables: new Map(this.docs.tables), files: new Set(this.docs.files), config: structuredClone(this.config) };
     const backupAssets = this.assets;
     // コードの中で場所を書いているアセットは、消すと動かなくなる
     const code = ops.some((o) => o.op === 'moveAsset' || o.op === 'removeAsset') ? await this.codeRefs() : new Map<string, string[]>();
+    const codeScenes = ops.some((o) => o.op === 'removeScene' || o.op === 'renameScene') ? codeSceneRefs(await this.codeFiles()) : new Map<string, string[]>();
     const result = applyOps(this.docs, this.registry, ops);
     const rollback = (message: string): never => {
       this.docs.scenes = backup.scenes;
@@ -444,7 +450,9 @@ export class Project {
       this.docs.sheets = backup.sheets;
       this.docs.tables = backup.tables;
       this.docs.files = backup.files;
+      Object.assign(this.config, backup.config);
       this.registry.prefabs = backup.prefabs;
+      this.registry.scenes = backup.scenes;
       this.registry.sheets = backup.sheets;
       this.registry.tableData = backup.tables;
       this.assets = backupAssets;
@@ -453,6 +461,13 @@ export class Project {
     };
     // ファイルの移動・削除を、検証の前に一覧へ反映する（ファイルそのものは検証が通ってから動かす）
     const warnings: string[] = [];
+    for (const op of ops) {
+      if (op.op !== 'removeScene' && op.op !== 'renameScene') continue;
+      const at = codeScenes.get(op.name);
+      if (!at) continue;
+      if (op.op === 'removeScene') rollback(`シーン ${op.name} はコードの中で使われているので消せません: ${at.join(', ')}。先にコードを直してください`);
+      else warnings.push(`シーン ${op.name} はコードの中にも書かれています（${at.join(', ')}）。コードは直していないので、${op.to} に書き換えてください`);
+    }
     if (result.files.length) {
       const moved = (path: string): string | null | undefined => {
         let p: string | null = path;
@@ -496,7 +511,7 @@ export class Project {
       let changed = false;
       for (const c of result.changes) {
         const path = sheetRoot(c.path.replace(/\[\d+,\s*\d+\]$/, ''));
-        if (c.path.startsWith('file:')) continue;
+        if (c.path.startsWith('file:') || c.path.startsWith('scene:') || c.path.startsWith('config.')) continue;
         const renamed = typeof c.to === 'string' && c.to.startsWith('renamed:') ? c.path.replace(/[^.]+$/, c.to.slice('renamed:'.length)) : null;
         for (const p of Object.keys(locks)) {
           if (renamed && (p === c.path || p.startsWith(c.path + '.'))) {
@@ -512,6 +527,16 @@ export class Project {
           }
         }
       }
+      // シーンの名前を変えたら、その中のロックも付け替える。消したらロックも外す
+      for (const op of ops) {
+        if (op.op !== 'removeScene' && op.op !== 'renameScene') continue;
+        for (const k of Object.keys(locks)) {
+          if (!k.startsWith(op.name + '#')) continue;
+          if (op.op === 'renameScene') locks[op.to + k.slice(op.name.length)] = locks[k];
+          delete locks[k];
+          changed = true;
+        }
+      }
       // 動かした画像の切り方のロックも付け替える
       for (const f of result.files) {
         for (const k of Object.keys(locks)) {
@@ -525,12 +550,27 @@ export class Project {
       if (changed) await writeLocks(this.dir, actor, locks);
     }
     if (result.files.length) await moveTouched(this.dir, result.files);
+    for (const op of ops) if (op.op === 'removeScene' || op.op === 'renameScene') await movePrefixTouched(this.dir, op.name + '#', op.op === 'renameScene' ? op.to + '#' : null);
     if (warnings.length) result.warnings = warnings;
     return result;
   }
 
   /** コードの中で、アセットの場所を文字列で書いている所 */
   async codeRefs(): Promise<Map<string, string[]>> {
+    return codeRefs(await this.codeFiles(), this.assets.map((a) => a.path));
+  }
+
+  /** コードの中の goto('名前') が、ないシーンを指していないか */
+  async checkCode(): Promise<string[]> {
+    const errs: string[] = [];
+    for (const [name, at] of codeSceneRefs(await this.codeFiles())) {
+      if (!this.docs.scenes.has(name)) errs.push(`${at.join(', ')}: goto('${name}') のシーン ${name} はありません${suggest(name, [...this.docs.scenes.keys()])}`);
+    }
+    return errs;
+  }
+
+  /** ゲームとエディタのコード（場所と中身） */
+  async codeFiles(): Promise<[string, string][]> {
     const files: [string, string][] = [];
     const walk = async (rel: string): Promise<void> => {
       let names: import('node:fs').Dirent[];
@@ -543,7 +583,7 @@ export class Project {
     };
     await walk('game');
     await walk('editor');
-    return codeRefs(files, this.assets.map((a) => a.path));
+    return files;
   }
 
   /** このプロセスが書いたファイルと内容（エディタが「外部からの編集」と区別するため） */
@@ -551,6 +591,13 @@ export class Project {
 
   async saveDirty(dirty: Iterable<string>): Promise<void> {
     for (const key of dirty) {
+      if (key === 'config') {
+        const path = join(this.dir, 'ages.project.json');
+        const text = JSON.stringify(this.config, null, 2) + '\n';
+        await writeFile(path, text);
+        this.written.set(path, text);
+        continue;
+      }
       if (key.startsWith('table:')) {
         const name = key.slice('table:'.length);
         const path = join(this.dir, 'data', `${name}.table.json`);
@@ -574,7 +621,9 @@ export class Project {
       }
       const [kind, name] = key.split(':');
       const path = kind === 'scene' ? this.scenePath(name) : this.prefabPath(name);
-      const text = formatJson(kind === 'scene' ? this.docs.scenes.get(name) : this.docs.prefabs.get(name));
+      const doc = kind === 'scene' ? this.docs.scenes.get(name) : this.docs.prefabs.get(name);
+      if (!doc) { await rm(path, { force: true }); this.written.set(path, ''); continue; }
+      const text = formatJson(doc);
       await mkdir(join(this.dir, kind === 'scene' ? 'scenes' : 'prefabs'), { recursive: true });
       await writeFile(path, text);
       this.written.set(path, text);
