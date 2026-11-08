@@ -79,6 +79,7 @@ export const Spawner = defineComponent({
       type: 'matrix', cell: 'int', min: 0, max: 1, cols: 8, default: [],
       desc: '出現パターン。行=波（上から順に繰り返す）、列=横の位置（8列）、1で敵を出す。空なら横位置はランダム',
     },
+    kinds: { type: 'list', of: { type: 'row', table: 'enemies', default: 'basic' }, default: ['basic'], min: 1, desc: '出す敵の種類（表 enemies の行）。波ごとに順番に繰り返す' },
   },
 });
 

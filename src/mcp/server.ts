@@ -5,7 +5,7 @@
 import { createInterface } from 'node:readline';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { cmdCheck, cmdGet, cmdInit, cmdLog, cmdMap, cmdPatch, cmdRun, cmdSchema, cmdSheet, cmdSlice } from '../cli/ages.ts';
+import { cmdCheck, cmdGet, cmdInit, cmdLog, cmdMap, cmdPatch, cmdRun, cmdSchema, cmdSheet, cmdSlice, cmdTable } from '../cli/ages.ts';
 import { parseLiteral, splitCell, type Op } from '../core/patch.ts';
 
 process.removeAllListeners('warning');
@@ -18,7 +18,8 @@ const VERSION = JSON.parse(readFileSync(new URL('../../package.json', import.met
 const INSTRUCTIONS = `AGES は、AIと人が一緒に速くゲームを作るためのゲームエンジン兼エディタ。
 - ゲームの企画を受けたら、いきなりコードを書かない。まず ages_init でプロジェクトを作り、EDITOR-PLAN.md で「どんなエディタが必要か」を使用者と決める（「一緒に決めるか、AIにおまかせか」を最初に聞く。おまかせを自分から選ばない）。合意するまでゲームのコードは書かない
 - 作業のたびに最初に ages_map（全体の地図）と ages_log（前回から人が変えたこと）を読む
-- 値は ages_set / ages_patch で変える。JSONを直接書き換えない。行列はセル単位（住所[行,列]）
+- 値は ages_set / ages_patch で変える。JSONを直接書き換えない。行列はセル単位（住所[行,列]）。リストの中は 住所[番号]、構造体の中は 住所.名前
+- 同じ形の行がたくさん並ぶデータ（武器・敵・カードなど）は表にする（defineTable と data/<表>.table.json）。住所は $表.行.列、中身は ages_table で見る
 - 🔒ロックされた値は絶対に変えない（変えられない）。変えるべき理由があれば人に提案する。★人が調整した値は、人に確認してから force
 - 変更後は ages_run で確かめる（keys で入力を指定、twice で再現性）
 - 音は Sound の付いたプレハブを作り ctx.sound.play('名前') で鳴らす。鳴ったかは ages_run の sounds: と ⚠ で確かめる（音を聞かなくてよい）
@@ -73,7 +74,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'ages_patch',
-    description: '複数の操作をまとめて行う（すべて成功するか、何も変えないか）。op: set{path,value} / setCells{path,cells:[[行,列,値]]} / addEntity{scene,entity:{id,name?,tags?,components?}} / removeEntity{scene,id} / addComponent{target,component,values?} / removeComponent{target,component} / rename{target,name} / setFrame{image,frame(番号か名前),name?,rect?:[x,y,w,h],pivot?:[x,y]|null,remove?}（ない名前に rect で追加。名前を変えると参照も直る） / setClip{image,clip,frames?,fps?,loop?,remove?} / setSheet{image,sheet|null}',
+    description: '複数の操作をまとめて行う（すべて成功するか、何も変えないか）。op: set{path,value} / setCells{path,cells:[[行,列,値]]} / addEntity{scene,entity:{id,name?,tags?,components?}} / removeEntity{scene,id} / addComponent{target,component,values?} / removeComponent{target,component} / rename{target,name} / insert{path,value?,index?}（リストに足す） / removeItem{path:"…[2]"} / moveItem{path:"…[2]",to} / addRow{table,row:{id,...},index?} / removeRow{table,id} / moveRow{table,id,to} / renameRow{table,id,to}（参照も直る） / setFrame{image,frame(番号か名前),name?,rect?:[x,y,w,h],pivot?:[x,y]|null,remove?}（ない名前に rect で追加。名前を変えると参照も直る） / setClip{image,clip,frames?,fps?,loop?,remove?} / setSheet{image,sheet|null}',
     inputSchema: { type: 'object', properties: { ...dirProp, ops: { type: 'array', items: { type: 'object' } }, force: { type: 'boolean' } }, required: ['ops'] },
     run: (a, dir) => cmdPatch(dir, a.ops as Op[], !!a.force),
   },
@@ -102,6 +103,17 @@ const TOOLS: Tool[] = [
     description: '全データの検証とロックの検査',
     inputSchema: { type: 'object', properties: { ...dirProp } },
     run: (_a, dir) => cmdCheck(dir),
+  },
+  {
+    name: 'ages_table',
+    description: '表を1行1行で見る（タブ区切り）。cols・rows で絞れる。export で CSV に書き出し、import で CSV・TSV から表をまるごと置き換える',
+    inputSchema: { type: 'object', properties: { ...dirProp, table: { type: 'string', description: '表の名前（例 enemies）' }, cols: { type: 'string', description: '列（, 区切り）' }, rows: { type: 'string', description: '行の id（, 区切り）' }, export: { type: 'string' }, import: { type: 'string' }, force: { type: 'boolean' } }, required: ['table'] },
+    run: (a, dir) => {
+      const flags: Record<string, string | true> = {};
+      for (const k of ['cols', 'rows', 'export', 'import']) if (a[k] !== undefined) flags[k] = String(a[k]);
+      if (a.force) flags.force = true;
+      return cmdTable(dir, String(a.table).replace(/^\$/, ''), flags);
+    },
   },
   {
     name: 'ages_sheet',

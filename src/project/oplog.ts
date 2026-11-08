@@ -74,10 +74,17 @@ export async function markTouched(root: string, actor: Actor, changes: Change[])
     if (raw.auto) continue; // 自動で直した参照は、人が調整した値ではない
     // 行列のセルの変更（...formation[2,3]）は行列全体への印に、切り方の変更（sheet:x.png|コマ.rect）はシート全体への印にする
     const sheetPart = raw.path.startsWith('sheet:') && raw.path.includes('|');
-    const base = sheetPart ? raw.path.split('|')[0] : raw.path.replace(/\[\d+,\s*\d+\]$/, '');
+    // リストの中の変更はリスト全体への印にする（要素の番号は並べ替えで変わるため）
+    const inList = !sheetPart && /\[\d+\]/.test(raw.path);
+    const base = sheetPart ? raw.path.split('|')[0] : raw.path.replace(/\[\d+,\s*\d+\]$/, '').replace(/\[\d+\].*$/, '');
     // コマを1つ消しても、シートの印は消さない
-    const c = { ...raw, path: base, to: sheetPart ? 'changed' : raw.to };
-    if (c.to === 'removed') {
+    const c = { ...raw, path: base, to: sheetPart || inList ? 'changed' : raw.to };
+    if (typeof raw.to === 'string' && raw.to.startsWith('renamed:')) {
+      // 行の ID を変えた: 印も付け替え、行に印を付ける
+      const to = raw.path.replace(/[^.]+$/, raw.to.slice('renamed:'.length));
+      for (const k of Object.keys(touched)) if (k === raw.path || k.startsWith(raw.path + '.')) { touched[to + k.slice(raw.path.length)] = touched[k]; delete touched[k]; }
+      touched[to] = { who: actor.who, t };
+    } else if (c.to === 'removed') {
       for (const k of Object.keys(touched)) if (k === c.path || k.startsWith(c.path + '.')) delete touched[k];
     } else {
       touched[c.path] = { who: actor.who, t };
@@ -133,8 +140,11 @@ export function summarize(entries: LogEntry[]): string {
       // 行列のセルの変更は行列ごとに、画像の切り方の変更は画像ごとにまとめる
       const cell = /\[\d+,\s*\d+\]$/.test(e.path);
       const sheet = e.path.startsWith('sheet:') && e.path.includes('|');
+      // リストの中の変更・リストの並べ替えは、リストごとにまとめる（番号は動くので、1件ずつ並べると分かりにくい）
+      const list = !cell && !sheet && (/\[\d+\]/.test(e.path) || e.op === 'insert' || e.op === 'removeItem' || e.op === 'moveItem');
       const k = cell ? `${e.path.replace(/\[\d+,\s*\d+\]$/, '')}\u0000cells`
         : sheet ? `${e.path.split('|')[0]}\u0000sheet`
+        : list ? `${e.path.replace(/\[\d+\].*$/, '')}\u0000list`
         : `${e.path}\u0000${e.op === 'lock' || e.op === 'unlock' ? 'lock' : 'value'}`;
       byPath.set(k, [...(byPath.get(k) ?? []), e]);
     }
@@ -156,13 +166,25 @@ export function summarize(entries: LogEntry[]): string {
         lines.push(`  ${path} 切り方 ${es.length}件変更（追加${added}・削除${removed}・変更${es.length - added - removed}: ${sample}${parts.length > 4 ? ' …' : ''}）。全体は ages sheet で確認`);
         continue;
       }
+      if (kind === 'list') {
+        const what = (e: LogEntry) => {
+          const at = e.path.slice(path.length) || '';
+          if (e.to === 'added') return `${at} 追加`;
+          if (e.to === 'removed') return `${at} 削除`;
+          if (typeof e.to === 'string' && e.to.startsWith('moved:')) return `${at}→${e.to.slice('moved:'.length)} 移動`;
+          return `${at} ${short(e.from)}→${short(e.to)}`;
+        };
+        lines.push(`  ${path} リスト ${es.length}件変更（${es.slice(0, 3).map(what).join(', ')}${es.length > 3 ? ' …' : ''}）。全体は ages get で確認`);
+        continue;
+      }
       const a = es[0];
       const b = es[es.length - 1];
       const n = es.length > 1 ? ` ×${es.length}` : '';
       if (b.op === 'lock' || b.op === 'unlock') lines.push(`  ${path} ${b.op === 'lock' ? '🔒ロック' : 'ロック解除'}`);
       else if (b.to === 'added' || b.to === 'removed') lines.push(`  ${path} ${b.to === 'added' ? '追加' : '削除'}${n}`);
       else if (a.op === 'file') lines.push(`  ${path} ファイル編集${n}`);
-      else lines.push(`  ${path} ${short(a.from)}→${short(b.to)}${n}${b.auto ? '（切り方に合わせて自動）' : ''}`);
+      else if (typeof b.to === 'string' && b.to.startsWith('renamed:')) lines.push(`  ${path} ID を ${b.to.slice('renamed:'.length)} に変更`);
+      else lines.push(`  ${path} ${short(a.from)}→${short(b.to)}${n}${b.auto ? '（自動）' : ''}`);
     }
   }
   return lines.join('\n');
@@ -197,6 +219,8 @@ export async function writeLocks(root: string, actor: Actor, locks: Record<strin
 }
 
 /** パスがロック対象か（ロックされたパスそのもの、またはその親を消す操作） */
+/** target を変えると影響するロック（同じ値・target の中のロック・target を含むロック） */
 export function lockedHits(locks: Record<string, LockMark>, target: string): string[] {
-  return Object.keys(locks).filter((p) => p === target || p.startsWith(target + '.'));
+  const inside = (a: string, b: string) => a.startsWith(b + '.') || a.startsWith(b + '[');
+  return Object.keys(locks).filter((p) => p === target || inside(p, target) || inside(target, p));
 }

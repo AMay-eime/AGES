@@ -86,6 +86,45 @@
   .toast { background: var(--panel2); border: 1px solid var(--line); border-left: 3px solid var(--accent); padding: 8px 12px; border-radius: 4px; max-width: 440px; box-shadow: 0 4px 16px #0006; white-space: pre-wrap; }
   .toast.bad { border-left-color: var(--bad); }
   .toast.lock { border-left-color: var(--lock); }
+  /* 表のエディタ */
+  .table-bar { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-bottom: 1px solid var(--line); flex: none; flex-wrap: wrap; }
+  .table-bar .spacer { flex: 1; }
+  .table-body { flex: 1; display: flex; min-height: 0; }
+  .table-grid { flex: 1; overflow: auto; min-width: 0; }
+  .table-grid table { border-collapse: collapse; font-size: 12px; }
+  .table-grid th { position: sticky; top: 0; background: var(--panel2); color: var(--dim); font-weight: 600; text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); cursor: pointer; white-space: nowrap; z-index: 1; }
+  .table-grid td { border-bottom: 1px solid #2c3039; border-right: 1px solid #2c3039; padding: 1px 3px; vertical-align: middle; white-space: nowrap; position: relative; }
+  .table-grid tr.sel td { background: #2f4a6b55; }
+  .table-grid td.default { opacity: 0.6; }
+  .table-grid td.touched { box-shadow: inset 2px 0 0 var(--warn); }
+  .table-grid td.locked { box-shadow: inset 2px 0 0 var(--lock); }
+  .table-grid td .ctl { margin: 0; }
+  .table-grid td input[type=number] { width: 72px; }
+  .table-grid td input[type=range] { display: none; }
+  .table-grid td input[type=text], .table-grid .cell-in { width: 110px; }
+  .table-grid td.cplx { color: var(--dim); font: var(--mono); cursor: pointer; }
+  .table-grid td.rowno { text-align: right; }
+  .table-grid .lockmark { position: absolute; right: 1px; top: 0; font-size: 9px; }
+  .table-side { width: 380px; flex: none; overflow: auto; border-left: 1px solid var(--line); }
+  /* 入れ子の値（リスト・構造体・どれか1つ） */
+  .nest { border-left: 2px solid var(--line); padding-left: 6px; margin: 2px 0; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .nest-head { display: flex; align-items: center; gap: 4px; }
+  .nest-row { display: flex; align-items: flex-start; gap: 4px; min-width: 0; }
+  .nest-label { color: var(--dim); font: var(--mono); min-width: 34px; padding-top: 3px; white-space: nowrap; }
+  .nest-val { flex: 1; min-width: 0; }
+  .nest-val .ctl { margin: 0; }
+  .nest-val select { min-width: 72px; flex: 1; }
+  .nest input[type=range] { display: none; }
+  .nest input[type=number] { width: 70px; min-width: 56px; flex: none; }
+  .nest input[type=text] { min-width: 80px; }
+  .field > * { min-width: 0; }
+  /* 入れ子の値は、名前の下に幅いっぱいで並べる */
+  .field.wide { grid-template-columns: 1fr auto; }
+  .field.wide > label { grid-column: 1; grid-row: 1; }
+  .field.wide > .lockbtn { grid-column: 2; grid-row: 1; }
+  .field.wide > .nest { grid-column: 1 / -1; grid-row: 2; margin-left: 8px; }
+  .nest .row-open, .table-grid .row-open { display: none; }
+  button.icon.tiny { padding: 0 4px; font-size: 11px; min-width: 0; }
   /* 切り方（スプライトエディタ） */
   .sprite-bar { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-bottom: 1px solid var(--line); flex-wrap: wrap; flex: none; }
   .sprite-body { flex: 1; display: flex; min-height: 0; }

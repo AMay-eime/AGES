@@ -43,12 +43,15 @@ project/
 | --- | --- |
 | `main#player.Mover.speed` | シーン `main` のエンティティ `player` の `Mover.speed` |
 | `@enemy.Mover.speed` | プレハブ `enemy` の `Mover.speed` |
+| `main#spawner.Spawner.waves[2].count` | リストの2番目（0から）の `count`。リストの中は `[番号]`、構造体・どれか1つの中は `.名前` |
+| `$enemies.basic.hp` | 表 `enemies` の行 `basic` の列 `hp` |
+| `sheet:assets/ships.png` | 画像の切り方（全体） |
 
 ## 4. コンポーネントの宣言
 
 フィールドごとに型・範囲・既定値・説明を宣言する。インスペクタはここから自動生成され、AIは同じ宣言を読んで範囲外の値を入れない。
 
-型: `number` `int` `bool` `string` `enum` `color` `vec2` `ref`（エンティティID） `prefab` `asset`（画像・音・フォントのファイル） `matrix`（2次元行列）
+型: `number` `int` `bool` `string` `enum` `color` `vec2` `ref`（エンティティID） `prefab` `asset`（画像・音・フォントのファイル） `frame`（コマ） `row`（表の行） `matrix`（2次元行列） `list`（リスト） `struct`（構造体） `oneOf`（どれか1つ）
 
 ```ts
 export const Mover = defineComponent({
@@ -59,6 +62,47 @@ export const Mover = defineComponent({
   },
 });
 ```
+
+### リスト・構造体・どれか1つ
+
+どのゲームでも、データの多くは「並び」と「組」と「種類によって中身が変わるもの」でできている。入れ子にもできる。
+
+```ts
+steps: {
+  type: 'list', max: 32, desc: '敵の行動（上から順に）',
+  of: { type: 'oneOf', variants: {
+    move: { desc: '動く', fields: { dx: { type: 'number', default: 0 }, dy: { type: 'number', default: 0 } } },
+    wait: { desc: '待つ', fields: { frames: { type: 'int', default: 30, min: 1, max: 600 } } },
+  } },
+}
+// 値: [{ "kind": "move", "dx": 2 }, { "kind": "wait", "frames": 30 }]
+```
+
+- 検証は中まで見て、場所を正確に示す（例 `Script.steps[1](wait).frames=999 は最大値 600 を超えています`）
+- AIは中の値を住所で直接変えられる: `ages set <dir> main#e.Script.steps[1].frames 20`。リストは patch の `insert` / `removeItem` / `moveItem`。全体を送り直さなくてよい
+- インスペクタでは中まで並べて編集できる（足す・消す・上下・種類の切り替え）。長いリストは畳む
+- 🔒はリスト全体か、構造体の中の項目に付ける。リストの中の要素は番号が動くので、番号ではロックしない（行に名前を付けたいなら表にする）。人がリストの中を変えると、リスト全体に★が付く
+- 命令の列（タイムライン）は「リストの中にどれか1つ」で表せる。専用の仕組みは本体に入れない
+
+### 表
+
+同じ形の行がたくさん並ぶデータ（武器・敵・アイテム・カードなど）。形（列）はゲームのコードで、中身は `data/<名前>.table.json` に1行1行で置く。
+
+```ts
+// game/tables.ts（game/index.ts で export const tables = Object.values(T)）
+export const enemies = defineTable({ name: 'enemies', desc: '敵の種類', columns: {
+  hp: { type: 'int', default: 2, min: 1, max: 100 },
+  speed: { type: 'number', default: 1 },
+} });
+// ゲームのコード: ctx.table(enemies).get('basic').hp（形を渡すと型が付く。中身は変えられない）
+// ほかの値から行を指す: kind: { type: 'row', table: 'enemies', default: 'basic' }
+```
+
+- 行には ID がある（並べ替えても変わらない）。住所は `$表.行.列`。🔒・★はセルごと（行の🔒はその行の全部のセル）
+- 行の操作は patch の `addRow` / `removeRow` / `moveRow` / `renameRow`。ID を変えると、その行を指している値（`row` 型。リストの中も）を書き換える。指されている行は消せない（検証で止まる）
+- AIは `ages table <dir> <表>` でタブ区切りの1行1行を読む。`--cols` `--rows` で絞れる
+- 表計算ソフトとの行き来: `ages table --export x.csv` / `--import x.csv`（表をまるごと置き換える。値が同じセルは触らないので、ロック・★・操作ログが余計に動かない）。エディタでは CSV の書き出し・読み込みと、コピーした範囲の貼り付け
+- 表のエディタ: セルを直接書き換える。行を選ぶと右に全部の列（入れ子の値も）が出る。複製・並べ替え・ID の変更・行のロック。列の名前をクリックで並べて見られる（データの並びは変わらない）
 
 ### 2次元行列（matrix）
 

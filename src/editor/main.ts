@@ -7,6 +7,7 @@ import { hierarchyPanel, projectPanel, textPanel, logPanel, gitPanel } from './u
 import { gamePanel } from './ui/game.ts';
 import { matrixPanel } from './ui/matrix.ts';
 import { spritePanel } from './ui/sprite.ts';
+import { tablePanel } from './ui/table.ts';
 import type { EditorApi, EditorWindow } from './window-api.ts';
 import type { Op } from '../core/patch.ts';
 import { parseAddress } from '../core/docs.ts';
@@ -19,18 +20,18 @@ await app.refresh();
 // 別ウインドウで1つのパネルだけを開く（例: /?solo=matrix&path=main%23spawner.Spawner.formation）
 const params = new URLSearchParams(location.search);
 const solo = params.get('solo');
-if (solo === 'matrix' || solo === 'sprite') {
+if (solo === 'matrix' || solo === 'sprite' || solo === 'table') {
   document.body.classList.add('solo');
-  const m = solo === 'matrix' ? matrixPanel(app) : spritePanel(app);
+  const m = solo === 'matrix' ? matrixPanel(app) : solo === 'sprite' ? spritePanel(app) : tablePanel(app);
   m.el.classList.add('panel', 'active');
   document.getElementById('work')!.replaceChildren(m.el);
-  const target = (solo === 'matrix' ? params.get('path') : params.get('image')) ?? '';
+  const target = (solo === 'matrix' ? params.get('path') : solo === 'sprite' ? params.get('image') : params.get('name')) ?? '';
   m.open(target);
-  document.title = `${solo === 'matrix' ? '行列' : '切り方'} ${target} — AGES`;
+  document.title = `${solo === 'matrix' ? '行列' : solo === 'sprite' ? '切り方' : '表'} ${target} — AGES`;
   const top = document.getElementById('top')!;
   const user = h('input', { type: 'text', value: app.user, style: 'width:110px', title: '操作ログに残るあなたの名前' }) as HTMLInputElement;
   user.addEventListener('change', () => app.setUser(user.value));
-  top.replaceChildren(h('span', { class: 'title' }, 'AGES', h('small', {}, solo === 'matrix' ? '行列エディタ' : '切り方')), h('span', { class: 'spacer' }), h('span', { class: 'muted' }, '名前'), user);
+  top.replaceChildren(h('span', { class: 'title' }, 'AGES', h('small', {}, solo === 'matrix' ? '行列エディタ' : solo === 'sprite' ? '切り方' : '表')), h('span', { class: 'spacer' }), h('span', { class: 'muted' }, '名前'), user);
   new EventSource('/api/events').onmessage = (msg) => { if (JSON.parse(msg.data).type !== 'hello') app.refresh(); };
 } else {
   await startEditor();
@@ -49,9 +50,11 @@ const text = textPanel(app, () => layout);
 const game = gamePanel(app);
 const matrix = matrixPanel(app);
 const sprite = spritePanel(app);
-for (const p of [hierarchyPanel(app), projectPanel(app, (path) => text.open(path)), game, matrix, sprite, text, logPanel(app), gitPanel(app), inspectorPanel(app)]) layout.add(p);
+const table = tablePanel(app);
+for (const p of [hierarchyPanel(app), projectPanel(app, (path) => text.open(path)), game, matrix, sprite, table, text, logPanel(app), gitPanel(app), inspectorPanel(app)]) layout.add(p);
 app.on('openMatrix', (path) => { matrix.open(path as string); layout.show('matrix'); });
 app.on('openSprite', (image) => { sprite.open(image as string); layout.show('sprite'); sprite.render?.(); });
+app.on('openTable', (t) => { const { name, row } = t as { name: string; row?: string }; table.open(name, row); layout.show('table'); });
 
 // ---------- 上のバー ----------
 const top = document.getElementById('top')!;

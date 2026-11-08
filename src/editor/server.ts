@@ -118,7 +118,7 @@ async function handleChanges(paths: string[]): Promise<void> {
   if (!fresh.length) return;
   const code = fresh.some((p) => p.endsWith('.ts') || p === 'ages.project.json');
   // 画像の切り方（.sheet.json）もシーン・プレハブと同じ扱い（外からの編集を記録し、ロックを戻す）
-  const docs = fresh.some((p) => /^(scenes|prefabs)\/.+\.json$/.test(p) || p.endsWith('.sheet.json'));
+  const docs = fresh.some((p) => /^(scenes|prefabs)\/.+\.json$/.test(p) || /^data\/.+\.table\.json$/.test(p) || p.endsWith('.sheet.json'));
   const assets = fresh.some((p) => /\.(png|jpe?g|webp|gif|wav|mp3|ogg|m4a|ttf|otf|woff2?)$/i.test(p));
   if (code) {
     version++;
@@ -252,7 +252,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
       await writeFile(abs, text);
       known.set(abs, text);
       const who = human(req, 'text');
-      if (/^(scenes|prefabs)\/.+\.json$/.test(rel) || rel.endsWith('.sheet.json')) {
+      if (/^(scenes|prefabs)\/.+\.json$/.test(rel) || /^data\/.+\.table\.json$/.test(rel) || rel.endsWith('.sheet.json')) {
         const r = await call('humanTextEdit', who);
         broadcast({ type: 'docs', by: who.who, changes: r.changes });
       } else if (rel.endsWith('.ts') || rel === 'ages.project.json') {

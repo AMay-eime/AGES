@@ -1,0 +1,8 @@
+{
+  "name": "enemies",
+  "rows": [
+    {"id":"basic","hp":2,"score":100,"frame":18},
+    {"id":"fast","hp":1,"speed":1.6,"score":150,"frame":21,"tint":"#ffd0a0"},
+    {"id":"tough","hp":5,"speed":0.7,"score":300,"frame":14,"tint":"#c0d8ff"}
+  ]
+}

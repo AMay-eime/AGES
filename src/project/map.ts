@@ -23,6 +23,18 @@ export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, l
     out.push(`${i + 1} ${s.name} ${s.desc}${rw ? ' ' + rw : ''}`);
   });
 
+  if (p.registry.tables.size) {
+    out.push('## tables（$表.行.列 で参照。中身は ages table <dir> <表>）');
+    for (const def of p.registry.tables.values()) {
+      const rows = p.docs.tables.get(def.name)?.rows ?? [];
+      const ids = rows.map((r) => r.id);
+      const lk = Object.keys(locks).filter((k) => k.startsWith(`$${def.name}.`)).length;
+      const tc = Object.keys(touched).filter((k) => k.startsWith(`$${def.name}.`)).length;
+      const cols = Object.entries(def.columns).map(([k, f]) => `${k}:${brief(f)}`).join(' ');
+      out.push(`$${def.name} ${rows.length}行${def.desc ? ' ' + def.desc : ''} | ${cols} | 行: ${ids.slice(0, 8).join(' ')}${ids.length > 8 ? ' …' : ''}${lk ? ` 🔒${lk}` : ''}${tc ? ` ★${tc}` : ''}`);
+    }
+  }
+
   out.push('## prefabs（@名前 で参照）');
   for (const pf of p.docs.prefabs.values()) {
     const tags = pf.tags?.length ? ` tags:${pf.tags.join(',')}` : '';
