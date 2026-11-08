@@ -186,6 +186,7 @@ export const PostEffect = defineComponent({
     params: { type: 'params', of: 'shader', desc: 'シェーダーの調整できる値（uniform）' },
     enabled: { type: 'bool', default: true, desc: 'かけるかどうか' },
     order: { type: 'int', default: 0, min: -1000, max: 1000, desc: 'かける順番（小さい順）' },
+    camera: { type: 'ref', default: null, desc: 'このカメラ（Camera の付いた物の ID）を描いた直後に、そのカメラの範囲にだけかける。後から描くカメラ（UI など）にはかからない。null なら全部のカメラを描いた後に、ゲームの画面全体へ' },
   },
 });
 

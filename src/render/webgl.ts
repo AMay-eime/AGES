@@ -184,9 +184,10 @@ export class Renderer {
     this.resW = W; this.resH = H;
     this.shapes = [];
     this.cams = o.view ? [o.view] : camerasOf(world, W, H, o.design?.width ?? W, o.design?.height ?? H);
-    // 画面全体の後処理があれば、いったん画面の外（テクスチャ）に描く
-    const passes = o.view || o.post === false ? [] : this.postPasses(world, W, H);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, passes.length ? this.target(W, H, 0) : null);
+    // 後処理があれば、いったん画面の外（テクスチャ）に描く。camera を決めた後処理は、そのカメラを描いた直後に、その範囲にかける
+    const passes = o.view || o.post === false ? new Map<number, Mat[]>() : this.postPasses(world, W, H);
+    let cur = 0;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, passes.size ? this.target(W, H, cur) : null);
     const [r, g, b] = this.rgb(o.background);
     gl.disable(gl.SCISSOR_TEST);
     gl.clearColor(r, g, b, 1);
@@ -214,9 +215,21 @@ export class Renderer {
         else this.text(d.e);
       }
       this.flush();
+      const here = passes.get(i);
+      if (here) {
+        // このカメラの後処理: かけた結果に、残りのカメラ（UI など）を重ねる
+        gl.disable(gl.SCISSOR_TEST);
+        cur = this.applyPost(here, cur, W, H, false);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.target(W, H, cur));
+        gl.enable(gl.SCISSOR_TEST);
+      }
     });
     gl.disable(gl.SCISSOR_TEST);
-    if (passes.length) this.applyPost(passes, W, H);
+    if (passes.size) {
+      const last = passes.get(-1);
+      if (last) this.applyPost(last, cur, W, H, true);
+      else this.applyPost([null], cur, W, H, true); // 画面へ写すだけ
+    }
     if (o.overlay && o.overlay.alpha > 0) {
       this.quad(this.white, 'normal', [0, 0, W, 0, W, H, 0, H], 0, 0, 1, 1, o.overlay.color, Math.min(1, o.overlay.alpha));
       this.flush();
@@ -460,19 +473,27 @@ export class Renderer {
   }
 
   /** 画面全体の後処理（順番どおり。かけられるものだけ） */
-  private postPasses(world: World, W: number, H: number): Mat[] {
+  /** 後処理を、かける所ごとに（カメラの番号 → 順番どおりの並び。-1 は全部のカメラの後） */
+  private postPasses(world: World, W: number, H: number): Map<number, Mat[]> {
     const list = [...world.entities.values()]
       .filter((e) => e.c.PostEffect && e.c.PostEffect.enabled !== false && e.c.PostEffect.shader)
       .sort((a, b) => (a.c.PostEffect.order ?? 0) - (b.c.PostEffect.order ?? 0));
-    if (!list.length) return [];
-    // frameUV はゲームの画面（カメラが映す範囲を合わせた四角）の中で 0〜1。画面の外のテクスチャは上下が逆
-    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    for (const c of this.cams) { x0 = Math.min(x0, c.vx); y0 = Math.min(y0, c.vy); x1 = Math.max(x1, c.vx + c.vw); y1 = Math.max(y1, c.vy + c.vh); }
-    const rect: Mat['rect'] = this.cams.length ? [x0 / W, 1 - y0 / H, x1 / W, 1 - y1 / H] : [0, 1, 1, 0];
-    const out: Mat[] = [];
+    const out = new Map<number, Mat[]>();
+    if (!list.length) return out;
+    // frameUV はかける範囲（そのカメラ、または全部のカメラを合わせた四角）の中で 0〜1。外はそのまま。画面の外のテクスチャは上下が逆
+    const rectOf = (cams: CameraView[]): Mat['rect'] => {
+      if (!cams.length) return [0, 1, 1, 0];
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const c of cams) { x0 = Math.min(x0, c.vx); y0 = Math.min(y0, c.vy); x1 = Math.max(x1, c.vx + c.vw); y1 = Math.max(y1, c.vy + c.vh); }
+      return [x0 / W, 1 - y0 / H, x1 / W, 1 - y1 / H];
+    };
     for (const e of list) {
       const prog = this.shaderProg(e.c.PostEffect.shader);
-      if (prog) out.push({ prog, params: e.c.PostEffect.params ?? {}, rect });
+      if (!prog) continue;
+      const ci = e.c.PostEffect.camera ? this.cams.findIndex((c) => c.id === e.c.PostEffect.camera) : -1;
+      const at = ci >= 0 ? ci : -1;
+      if (!out.has(at)) out.set(at, []);
+      out.get(at)!.push({ prog, params: e.c.PostEffect.params ?? {}, rect: rectOf(at >= 0 ? [this.cams[at]] : this.cams) });
     }
     return out;
   }
@@ -502,13 +523,12 @@ export class Renderer {
     return this.fbo.fb[i];
   }
 
-  /** 後処理を順にかけて、最後は画面へ */
-  private applyPost(passes: Mat[], W: number, H: number): void {
+  /** 後処理を順にかける（null は写すだけ）。toScreen なら最後は画面へ。結果の入った描く先の番号を返す */
+  private applyPost(passes: (Mat | null)[], src: number, W: number, H: number, toScreen: boolean): number {
     const gl = this.gl;
-    let src = 0;
     passes.forEach((m, i) => {
       const last = i === passes.length - 1;
-      gl.bindFramebuffer(gl.FRAMEBUFFER, last ? null : this.target(W, H, 1 - src));
+      gl.bindFramebuffer(gl.FRAMEBUFFER, last && toScreen ? null : this.target(W, H, 1 - src));
       const tex: Tex = { tex: this.fbo!.tex[src], w: W, h: H, ready: true };
       // 画面の外のテクスチャは上下が逆なので、左上の頂点に v=1 を当てる
       this.quad(tex, 'none', [0, 0, W, 0, W, H, 0, H], 0, 1, 1, 0, '#ffffff', 1, m);
@@ -516,6 +536,7 @@ export class Renderer {
       src = 1 - src;
     });
     this.curTex = null;
+    return src;
   }
 
 

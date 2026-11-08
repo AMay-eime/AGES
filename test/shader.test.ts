@@ -86,6 +86,9 @@ test('Effect: 選んだシェーダーの値を params.名前 で指し、範囲
   assert.deepEqual(p.docs.prefabs.get('enemy')!.components.Effect.params, {});
   assert.deepEqual(r.changes.find((c) => c.path === '@enemy.Effect.params'), { path: '@enemy.Effect.params', from: { amount: 0.5 }, to: {} });
   assert.deepEqual(p.validate(), []);
+  // 後処理をかけるカメラは Camera の付いた物
+  await p.apply([{ op: 'set', path: 'main#vignette.PostEffect.camera', value: 'camera' }], ai);
+  await assert.rejects(p.apply([{ op: 'set', path: 'main#vignette.PostEffect.camera', value: 'hud' }], ai), /hud に Camera が付いていません（カメラ: camera）/);
 });
 
 test('プロジェクトのシェーダー: assets の .frag を読み、地図・ages schema に値が1行で出る。間違いは検証で分かる', async () => {

@@ -72,7 +72,7 @@ AGESに足りない機能（画像・音・物理など。docs/PLAN.md の段階
 - キーコンフィグの画面はゲームのスクリプトで作る: `ctx.input.bind(操作, { keys: [...] })` / `resetBindings()` / `lastPressed()` / `usedBy(ボタン)` / `label(ボタン)`。セーブには `exportBindings()` を入れ、読み込みで `importBindings()`
 - マウス・タッチの位置は `ctx.input.pointer`（画面の座標）か `ctx.pointerWorld()`（ワールドの座標）
 - 値を時間で変える演出（点滅・はねる・薄くして消す）は `ctx.tween(物, { 'Sprite.alpha': 0 }, '名前')`。自分でフレームを数えない。手触り（秒数・ease・くり返し）は標準の表 `$tweens` に行を足して名前で使い、コードに数字を書かない。`'+10'` で今の値からの相対、`from` で始めの値、`destroy` / `emit` で終わったときの処理。止めるのは `ctx.stopTween`
-- 見た目の効果（光らせる・縁取り・溶かす・画面の端を暗くする）は、物に Effect（その物）か PostEffect（画面全体）を付けて `shader` を選ぶ。まず標準の `std:flash` `std:outline` `std:dissolve` `std:desaturate` `std:vignette` `std:crt` で足りるか考える。値は `params.名前`（patch の住所も `…Effect.params.amount`）。動かすのは `ctx.tween(id, { 'Effect.params.amount': 0 }, '名前')`
+- 見た目の効果（光らせる・縁取り・溶かす・画面の端を暗くする）は、物に Effect（その物）か PostEffect（画面全体）を付けて `shader` を選ぶ。まず標準の `std:flash` `std:outline` `std:dissolve` `std:desaturate` `std:vignette` `std:crt` で足りるか考える。値は `params.名前`（patch の住所も `…Effect.params.amount`）。後処理を UI のカメラにかけたくないときは `PostEffect.camera` にゲームのカメラの ID。Effect は1つの物に1つなので、重ねたい効果は1つのシェーダーにまとめて書く。動かすのは `ctx.tween(id, { 'Effect.params.amount': 0 }, '名前')`
 - 新しいシェーダーは assets/ の下に `.frag` を置く。書くのは `vec4 effect(vec4 c, vec2 uv)` と、`uniform float x; // 0..1 =0 説明` の形の宣言だけ（書き方と手本は `ages schema <dir> std:flash`）。エディタを開いていればコンパイルの結果が `ages check` に出るので、画面を見ずに直せる
 - 粒（火花・煙）は標準の Particles を物（プレハブ）に付ける（`ages schema <dir> Particles`）。現れたときに出すのは `burst`、出し続けるのは `rate`。後から出すのは `ctx.particles.burst(id)`。粒の動きは描く側で動かし、ゲームの結果には入らない。出したかどうかは `ages run` の `particles:` で確かめる
 

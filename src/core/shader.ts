@@ -142,7 +142,13 @@ vec4 pick(vec2 uv) {
 }
 #line 1
 ${def.code}
-void main() { o_color = effect(texture(u_tex, v_uv) * v_color, v_uv); }
+void main() {
+  vec4 c = texture(u_tex, v_uv) * v_color;
+  vec2 f = frameUV(v_uv);
+  // かける範囲の外（後処理で、カメラの外・画面の余白）はそのまま
+  if (f.x < -0.001 || f.y < -0.001 || f.x > 1.001 || f.y > 1.001) { o_color = c; return; }
+  o_color = effect(c, v_uv);
+}
 `;
 }
 

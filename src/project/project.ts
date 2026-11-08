@@ -452,6 +452,10 @@ export class Project {
           for (const [k, f] of Object.entries(def?.fields ?? {})) {
             const v = values[k];
             if (f.type === 'ref' && typeof v === 'string' && v && !ids.has(v)) errs.push(`${s.name}#${e.id}.${name}.${k}="${v}": シーン ${s.name} にそのIDはありません${suggest(v, all)}`);
+            // 後処理をかけるカメラは、Camera の付いた物
+            if (name === 'PostEffect' && k === 'camera' && typeof v === 'string' && v && ids.has(v) && !s.entities.find((x) => x.id === v)!.components.Camera) {
+              errs.push(`${s.name}#${e.id}.PostEffect.camera="${v}": ${v} に Camera が付いていません（カメラ: ${s.entities.filter((x) => x.components.Camera).map((x) => x.id).join(', ') || 'なし'}）`);
+            }
           }
         }
       }
