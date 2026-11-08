@@ -42,6 +42,7 @@ node bin/ages.js assets examples/shooter          # アセットの一覧（使�
 node bin/ages.js sheet examples/shooter assets/kenney-pixel-shmup/ships.png  # 画像の切り方
 node bin/ages.js run examples/shooter --frames 600 --watch main#player.Health.hp
 node bin/ages.js log examples/shooter            # 前回からの編集の要約
+node bin/ages.js undo examples/shooter           # 自分（AI）の直前の編集を元に戻す
 ```
 
 ## MCP（AIのアプリから直接使う）
@@ -67,6 +68,7 @@ claude mcp add ages -- node /path/to/AGES/src/mcp/server.ts --project /path/to/m
 - 標準の部品: 画像・アニメーション・図形・文字・カメラ（追いかけ・揺れ・複数）・音（区分・BGM の重ね）
 - シーン: ゲームのコードから切り替え（フェード・次のシーンへ渡す値・残す物・シーンごとのシステム）、画像・音の事前読み込み。階層の ⚙ でシーンを作る・複製・名前・開始
 - 入力: キーボード・マウス・タッチ・ゲームパッドを「操作の名前」で読む（割り当ては表 `$actions`。⌨ で押して決める）。キーコンフィグはゲームのスクリプトから割り当てを変えて作れる
+- 元に戻す・やり直し（Ctrl+Z / Ctrl+Shift+Z）。すべての編集が対象で、その後で別の人が同じ所を変えていれば止まる。操作ログから AI の編集を選んで戻すこともできる
 - 再生・一時停止・1フレーム送り。実行中に変えた値は、停止時に保存するか選べる
 - 「記録して再生」で入力（キー・パッドの軸・マウスの位置も）を recordings/ に保存。AIは `ages run --input` で同じ操作を再現できる
 - ゲーム画面でクリックして選択（重なっていれば同じ場所をもう一度クリックで奥へ）、ドラッグで移動。カメラの視点と自由な視点、画面の形の切り替え

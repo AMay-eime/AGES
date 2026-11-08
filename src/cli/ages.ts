@@ -35,6 +35,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   run    <dir> [--frames 600] [--scene main] [--seed 1] [--keys "0-120:ArrowLeft+KeyZ;120-200:@move_x=1;30:Mouse0+ptr=240,100"]
                [--input recordings/x.input.json] [--watch player.Health.hp,...] [--every 60] [--until gameOver | scene:result] [--twice] [--dump]
   log    <dir> [--all] [--peek]      前回からの編集の要約（--peek は既読にしない）
+  undo   <dir> [--tx id] [--force]   自分（AI）の直前の編集を元に戻す（その後で変えられた所があれば止まる）。redo <dir> でやり直す
   check  <dir>                       全データの検証とロックの検査
   assets <dir> [フォルダ] [--kind image|sound|font] [--unused] [--refs 場所]   アセットの一覧（使っている所の数）・使っている所
   sheet  <dir> <画像>                 画像の切り方（コマの名前・位置・基準点・動き）を見る
@@ -249,6 +250,15 @@ export async function cmdPatch(dir: string, ops: Op[], force: boolean): Promise<
     : typeof c.to === 'string' && c.to.startsWith('renamed:') ? `ok ${c.path} → ${c.path.replace(/[^.]+$/, c.to.slice('renamed:'.length))}（ID の変更）`
     : c.path.startsWith('file:') ? `ok ${c.path} → ${c.to}（場所の変更）`
     : `ok ${c.path} ${show(c.from)} → ${show(c.to)}${c.auto ? '（自動）' : ''}`)), ...(r.warnings ?? []).map((w) => `⚠ ${w}`)].join('\n');
+}
+
+/** 元に戻す（--redo でやり直す）。省くと AI 自身の直前の編集 */
+export async function cmdUndo(dir: string, f: Args['flags']): Promise<string> {
+  const p = await Project.load(dir);
+  const r = await p.undo(AI_ACTOR, { tx: typeof f.tx === 'string' ? f.tx : undefined, redo: !!f.redo, force: !!f.force });
+  const lines = r.changes.map((c) => `ok ${c.path} ${fmt(c.from)} → ${fmt(c.to)}${c.auto ? '（自動）' : ''}`);
+  const next = await p.undoState(AI_ACTOR);
+  return withLockReport(p, [`${f.redo ? 'やり直した' : '元に戻した'}: ${r.label}`, ...lines, ...(r.warnings ?? []).map((w) => `⚠ ${w}`), `次に戻せる: ${next.undo?.label ?? 'なし'}${next.redo ? ` ／ やり直せる: ${next.redo.label}` : ''}`].join('\n'));
 }
 
 /** アセットの一覧（フォルダごと・使っている所の数）。refs を渡すと、そのアセットを使っている所 */
@@ -487,6 +497,8 @@ async function main(argv: string[]): Promise<void> {
     case 'log': out = await cmdLog(dir, a.flags); break;
     case 'check': out = await cmdCheck(dir); break;
     case 'assets': out = await cmdAssets(dir, a.pos[1], a.flags); break;
+    case 'undo': out = await cmdUndo(dir, a.flags); break;
+    case 'redo': out = await cmdUndo(dir, { ...a.flags, redo: true }); break;
     case 'sheet': out = await cmdSheet(dir, need(a.pos[1], '画像の場所（例 assets/hero.png）')); break;
     case 'slice': out = await cmdSlice(dir, need(a.pos[1], '画像の場所（例 assets/hero.png）'), a.flags); break;
     case 'table': out = await cmdTable(dir, need(a.pos[1], '表の名前（例 enemies）').replace(/^\$/, ''), a.flags); break;

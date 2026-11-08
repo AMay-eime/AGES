@@ -24,6 +24,8 @@ export interface LogEntry {
   to?: unknown;
   /** 別の変更に合わせて自動で直したもの */
   auto?: boolean;
+  /** 1回の編集（元に戻す単位）の ID */
+  tx?: string;
 }
 
 export interface TouchMark {
@@ -33,7 +35,7 @@ export interface TouchMark {
 
 const dirOf = (root: string) => join(root, '.ages');
 
-export async function appendLog(root: string, actor: Actor, op: string, changes: Change[]): Promise<LogEntry[]> {
+export async function appendLog(root: string, actor: Actor, op: string, changes: Change[], tx?: string): Promise<LogEntry[]> {
   if (!changes.length) return [];
   await mkdir(dirOf(root), { recursive: true });
   const t = new Date().toISOString();
@@ -43,6 +45,7 @@ export async function appendLog(root: string, actor: Actor, op: string, changes:
     if (c.from !== undefined) e.from = c.from;
     if (c.to !== undefined) e.to = c.to;
     if (c.auto) e.auto = true;
+    if (tx) e.tx = tx;
     return e;
   });
   await appendFile(join(dirOf(root), 'oplog.jsonl'), entries.map((e) => JSON.stringify(e)).join('\n') + '\n');
@@ -221,7 +224,7 @@ export function summarize(entries: LogEntry[]): string {
       else if (path.startsWith('scene:') && typeof b.to === 'string' && b.to.startsWith('renamed:')) lines.push(`  ${path} 名前を ${b.to.slice('renamed:'.length)} に変更`);
       else if (path.startsWith('file:')) lines.push(`  ${path} 場所を ${b.to} に変更（使っている値も直した）`);
       else if (typeof b.to === 'string' && b.to.startsWith('renamed:')) lines.push(`  ${path} ID を ${b.to.slice('renamed:'.length)} に変更`);
-      else lines.push(`  ${path} ${short(a.from)}→${short(b.to)}${n}${b.auto ? '（自動）' : ''}`);
+      else lines.push(`  ${path} ${short(a.from)}→${short(b.to)}${n}${b.auto ? '（自動）' : ''}${b.op === 'undo' ? '（元に戻す）' : b.op === 'redo' ? '（やり直し）' : ''}`);
     }
   }
   return lines.join('\n');

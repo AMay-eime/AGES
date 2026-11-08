@@ -180,7 +180,7 @@ export function logPanel(app: App): Panel {
   const fmt = (v: unknown) => (v === undefined ? '' : typeof v === 'string' ? v : JSON.stringify(v));
   const render = async () => {
     try {
-      type E = { t: string; who: string; kind: string; win?: string; op: string; path: string; from?: unknown; to?: unknown; auto?: boolean };
+      type E = { t: string; who: string; kind: string; win?: string; op: string; path: string; from?: unknown; to?: unknown; auto?: boolean; tx?: string };
       const raw = await app.api<E[]>('/api/log?limit=300');
       // 同じ操作での画像の切り方の変更（コマごとに記録される）は、1行にまとめて見せる
       const entries: E[] = [];
@@ -190,10 +190,16 @@ export function logPanel(app: App): Panel {
         if (root && prev?.root === root && prev.t === e.t && prev.who === e.who) { prev.n = (prev.n ?? 1) + 1; prev.to = `切り方 ${prev.n}件変更`; continue; }
         entries.push(root ? { ...e, path: root, from: undefined, to: `切り方 ${e.path.split('|')[1]} ${typeof e.to === 'string' ? e.to : '変更'}`, root } as E : e);
       }
+      // 1回の編集（tx）の最初の行に「戻す」を出す（AI の編集も、人が選んで戻せる）
+      const firstOfTx = new Set<E>();
+      const seen = new Set<string>();
+      for (const e of entries) if (e.tx && !seen.has(e.tx)) { seen.add(e.tx); firstOfTx.add(e); }
       clear(el, entries.length ? entries.reverse().map((e) => h('div', { class: 'line' },
         h('span', { class: 'muted' }, time(e.t), ' '),
         h('span', { class: `who-${e.kind}` }, `${e.who}`), h('span', { class: 'muted' }, `(${e.win ?? e.kind}) `),
-        `${e.path} `, ...shownChange(e))) : h('div', { class: 'pad muted' }, 'まだ編集はありません'));
+        e.op === 'undo' ? h('span', { class: 'muted' }, '↶元に戻す ') : e.op === 'redo' ? h('span', { class: 'muted' }, '↷やり直し ') : null,
+        `${e.path} `, ...shownChange(e),
+        firstOfTx.has(e) && e.op !== 'undo' && e.kind !== 'system' ? h('button', { class: 'icon tiny undo-tx', title: 'この編集を元に戻す（その後で変えられた所があれば止まります）', onclick: () => app.undo(false, e.tx) }, '↶') : null)) : h('div', { class: 'pad muted' }, 'まだ編集はありません'));
     } catch { /* 起動直後など */ }
   };
   /** 変更の見せ方（ID の変更・リストの並べ替えは言葉で） */

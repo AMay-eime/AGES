@@ -81,6 +81,8 @@
   textarea.code { flex: 1; width: 100%; resize: none; border: 0; border-radius: 0; font: var(--mono); padding: 8px; tab-size: 2; }
   pre { font: var(--mono); margin: 0; white-space: pre-wrap; }
   .log .line { font: var(--mono); padding: 1px 8px; white-space: nowrap; }
+  .log .line .undo-tx { visibility: hidden; margin-left: 6px; }
+  .log .line:hover .undo-tx { visibility: visible; }
   .log .who-human { color: var(--good); }
   .log .who-ai { color: var(--accent); }
   .log .who-system { color: var(--lock); }

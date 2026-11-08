@@ -5,7 +5,7 @@
 import { createInterface } from 'node:readline';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { cmdAssets, cmdCheck, cmdGet, cmdInit, cmdLog, cmdMap, cmdPatch, cmdRun, cmdSchema, cmdSheet, cmdSlice, cmdTable } from '../cli/ages.ts';
+import { cmdAssets, cmdUndo, cmdCheck, cmdGet, cmdInit, cmdLog, cmdMap, cmdPatch, cmdRun, cmdSchema, cmdSheet, cmdSlice, cmdTable } from '../cli/ages.ts';
 import { parseLiteral, splitCell, type Op } from '../core/patch.ts';
 
 process.removeAllListeners('warning');
@@ -21,6 +21,7 @@ const INSTRUCTIONS = `AGES は、AIと人が一緒に速くゲームを作るた
 - 値は ages_set / ages_patch で変える。JSONを直接書き換えない。行列はセル単位（住所[行,列]）。リストの中は 住所[番号]、構造体の中は 住所.名前
 - 同じ形の行がたくさん並ぶデータ（武器・敵・カードなど）は表にする（defineTable と data/<表>.table.json）。住所は $表.行.列、中身は ages_table で見る
 - 🔒ロックされた値は絶対に変えない（変えられない）。変えるべき理由があれば人に提案する。★人が調整した値は、人に確認してから force
+- 間違えた編集は ages_undo で戻す（逆の操作を考えなくてよい）
 - 変更後は ages_run で確かめる（keys で入力を指定。操作の名前 @fire で書ける。twice で再現性）
 - ゲームのコードは入力を操作の名前で読む（ctx.input.isDown('fire') / value('move_x')）。操作は標準の表 $actions に行を足す。キーコンフィグは ctx.input.bind / exportBindings
 - 音は Sound の付いたプレハブを作り ctx.sound.play('名前') で鳴らす。鳴ったかは ages_run の sounds: と ⚠ で確かめる（音を聞かなくてよい）
@@ -117,6 +118,12 @@ const TOOLS: Tool[] = [
       if (a.force) flags.force = true;
       return cmdTable(dir, String(a.table).replace(/^\$/, ''), flags);
     },
+  },
+  {
+    name: 'ages_undo',
+    description: '自分（AI）の直前の編集を元に戻す（redo=true でやり直す）。その後で同じ所が変えられていれば止まる。間違えた編集は、逆の操作を考えずにこれで戻す',
+    inputSchema: { type: 'object', properties: { ...dirProp, redo: { type: 'boolean' }, tx: { type: 'string', description: '戻す編集の ID（省くと直前）' }, force: { type: 'boolean' } } },
+    run: (a, dir) => cmdUndo(dir, { ...(a.redo ? { redo: true } : {}), ...(a.tx ? { tx: a.tx } : {}), ...(a.force ? { force: true } : {}) }),
   },
   {
     name: 'ages_assets',

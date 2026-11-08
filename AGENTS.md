@@ -26,6 +26,7 @@ AGESに足りない機能（画像・音・物理など。docs/PLAN.md の段階
 ## 値を変える
 
 - シーン・プレハブの値は `ages set` / `ages patch` で変える。JSONを直接書き換えない（検証とログが通らない）
+- 間違えた編集は `ages undo <dir>` で戻す（逆の操作を考えなくてよい。`ages redo` でやり直す）。その後で人が同じ所を変えていれば止まる
 - 行列（matrix）はセル単位で変える: `ages set <dir> 住所[行,列] 値`、まとめてなら patch の `setCells`。行列全体を送り直さない
 - リストの中は `住所[番号]`、構造体・どれか1つの中は `住所.名前` で直接変える。足す・消す・動かすは patch の `insert` / `removeItem` / `moveItem`
 - 同じ形の行がたくさん並ぶデータ（武器・敵・カードなど）は表にする（`defineTable` と `data/<表>.table.json`）。住所は `$表.行.列`、読むのは `ages table <dir> <表>`、行は `addRow` / `removeRow` / `moveRow` / `renameRow`。ゲームのコードは `ctx.table(形).get(ID)`

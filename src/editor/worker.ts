@@ -2,8 +2,8 @@
 // ゲームコードが変わったらスレッドごと作り直す（モジュールのキャッシュを確実に捨てるため）。
 import { parentPort, workerData } from 'node:worker_threads';
 import { Project } from '../project/project.ts';
-import { appendLog, readTouched, readLog, type Actor } from '../project/oplog.ts';
-import type { Change, Op } from '../core/patch.ts';
+import { readTouched, readLog, type Actor } from '../project/oplog.ts';
+import type { Op } from '../core/patch.ts';
 
 const port = parentPort!;
 let project: Project;
@@ -38,10 +38,6 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
     const r = await project.apply(ops, actor);
     return { changes: r.changes, warnings: r.warnings };
   },
-  /** エディタからファイルを取り込んだ・差し替えたことを操作ログに残す（AIが「人が画像を足した」と分かるように） */
-  async logFiles(actor: Actor, changes: Change[]) {
-    await appendLog(project.dir, actor, 'upload', changes);
-  },
   async lock(paths: string[], actor: Actor, note?: string) {
     await project.lock(paths, actor, note);
   },
@@ -68,8 +64,15 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   async lockCandidates(text: string) {
     return project.lockCandidates(text);
   },
-  async fileLocked(rel: string) {
-    return !!(await project.effectiveLocks())[`file:${rel}`];
+  async upload(actor: Actor, rel: string, data: Uint8Array) {
+    return project.upload(rel, Buffer.from(data), actor);
+  },
+  async undo(actor: Actor, opts: { tx?: string; redo?: boolean }) {
+    const r = await project.undo(actor, opts);
+    return { changes: r.changes, label: r.label, warnings: r.warnings };
+  },
+  async undoState(actor: Actor) {
+    return project.undoState(actor);
   },
   async replaceLockedFile(rel: string, data: Uint8Array, actor: Actor) {
     await project.replaceLockedFile(rel, Buffer.from(data), actor);
