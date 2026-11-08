@@ -4,8 +4,8 @@ import { readFile } from 'node:fs/promises';
 import { Project } from '../project/project.ts';
 import { renderMap } from '../project/map.ts';
 import { readCursor, readLocks, readLog, readTouched, summarize, writeCursor, type Actor } from '../project/oplog.ts';
-import { getValue, parseLiteral, type Op } from '../core/patch.ts';
-import { brief } from '../core/schema.ts';
+import { getValue, parseLiteral, splitCell, type Op } from '../core/patch.ts';
+import { brief, matrixSize } from '../core/schema.ts';
 import { InputPlayback, type InputEvent } from '../core/input.ts';
 import { GameError, type Game } from '../core/game.ts';
 
@@ -14,8 +14,8 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   map    <dir>                       プロジェクトの地図（最初に読む）
   schema <dir> [Component ...]       コンポーネントの詳細（型・範囲・説明）
   get    <dir> <addr> [addr ...]     値を見る（例: main#player / main#player.Player.speed / @enemy）
-  set    <dir> <addr> <value> [--force]
-  patch  <dir> <ops.json | -> [--force]   操作の配列（set/addEntity/removeEntity/addComponent/removeComponent/rename）
+  set    <dir> <addr> <value> [--force]  行列のセルは addr[行,列]（例 main#spawner.Spawner.formation[2,3] 1）
+  patch  <dir> <ops.json | -> [--force]   操作の配列（set/setCells/addEntity/removeEntity/addComponent/removeComponent/rename）
   run    <dir> [--frames 600] [--scene main] [--seed 1] [--keys "0-120:ArrowLeft+KeyZ;120-200:ArrowRight"]
                [--input recordings/x.input.json] [--watch player.Health.hp,...] [--every 60] [--until gameOver] [--twice] [--dump]
   log    <dir> [--all] [--peek]      前回からの編集の要約（--peek は既読にしない）
@@ -48,6 +48,13 @@ function parseArgs(argv: string[]): Args {
 
 const fmt = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v));
 
+const isMatrix = (v: unknown): v is unknown[][] => Array.isArray(v) && v.length > 0 && v.every(Array.isArray);
+
+/** 行列は1行1行で表示する（JSONより短く、AIにも人にも読みやすい） */
+function grid(v: unknown[][]): string {
+  return v.map((row) => '  ' + row.map((c) => (typeof c === 'string' ? JSON.stringify(c) : String(c))).join(' ')).join('\n');
+}
+
 function compact(obj: Record<string, unknown>): string {
   return Object.entries(obj).map(([k, v]) => `${k}:${fmt(v)}`).join(' ');
 }
@@ -73,19 +80,22 @@ export async function cmdGet(dir: string, addrs: string[]): Promise<string> {
     const { value, isDefault } = getValue(p.docs, p.registry, addr);
     const parts = addr.split('.');
     if (parts.length === 3) {
-      out.push(`${addr} = ${fmt(value)}${isDefault ? '（既定値）' : ''}${mark(addr)}`);
+      if (isMatrix(value)) out.push(`${addr} = 行列 ${matrixSize(value)}${isDefault ? '（既定値）' : ''}${mark(addr)}\n${grid(value)}`);
+      else out.push(`${addr} = ${fmt(value)}${isDefault ? '（既定値）' : ''}${mark(addr)}`);
     } else if (parts.length === 2) {
       const comp = value as Record<string, unknown>;
       const fields = Object.keys(p.registry.component(parts[1]).fields).map((k) => {
         const path = `${addr}.${k}`;
-        return k in comp ? `${k}:${fmt(comp[k])}${mark(path)}` : `${k}:${fmt(p.registry.component(parts[1]).fields[k].default)}°`;
+        const v = k in comp ? comp[k] : p.registry.component(parts[1]).fields[k].default;
+        const shown = isMatrix(v) || (Array.isArray(v) && p.registry.component(parts[1]).fields[k].type === 'matrix') ? `行列${matrixSize(v)}` : fmt(v);
+        return k in comp ? `${k}:${shown}${mark(path)}` : `${k}:${shown}°`;
       });
       out.push(`${addr} { ${fields.join(' ')} }`);
     } else {
       const h = value as { name?: string; tags?: string[]; components: Record<string, Record<string, unknown>> };
       out.push(`${addr}${h.name ? ` "${h.name}"` : ''}${h.tags?.length ? ' tags:' + h.tags.join(',') : ''}`);
       for (const [cn, cv] of Object.entries(h.components)) {
-        const fields = Object.entries(cv).map(([k, v]) => `${k}:${fmt(v)}${mark(`${addr}.${cn}.${k}`)}`).join(' ');
+        const fields = Object.entries(cv).map(([k, v]) => `${k}:${isMatrix(v) ? `行列${matrixSize(v)}` : fmt(v)}${mark(`${addr}.${cn}.${k}`)}`).join(' ');
         out.push(`  ${cn} { ${fields} }`);
       }
     }
@@ -98,7 +108,8 @@ export async function cmdPatch(dir: string, ops: Op[], force: boolean): Promise<
   const p = await Project.load(dir);
   const r = await p.apply(ops, AI_ACTOR, { force });
   if (!r.changes.length) return '変更なし（すでに同じ値です）';
-  return r.changes.map((c) => (c.to === 'added' || c.to === 'removed' ? `ok ${c.path} ${c.to === 'added' ? '追加' : '削除'}` : `ok ${c.path} ${fmt(c.from)} → ${fmt(c.to)}`)).join('\n');
+  const show = (v: unknown) => (isMatrix(v) ? `行列${matrixSize(v)}` : fmt(v));
+  return r.changes.map((c) => (c.to === 'added' || c.to === 'removed' ? `ok ${c.path} ${c.to === 'added' ? '追加' : '削除'}` : `ok ${c.path} ${show(c.from)} → ${show(c.to)}`)).join('\n');
 }
 
 /** "0-120:ArrowLeft+KeyZ;120-200:ArrowRight" を入力の記録に変換する */
@@ -222,9 +233,13 @@ async function main(argv: string[]): Promise<void> {
     case 'schema': out = await cmdSchema(dir, a.pos.slice(1)); break;
     case 'get': out = await cmdGet(dir, a.pos.slice(1)); break;
     case 'set': {
-      const [, path, value] = a.pos;
-      if (!path || value === undefined) throw new Error('使い方: ages set <dir> <アドレス> <値>');
-      out = await cmdPatch(dir, [{ op: 'set', path, value: parseLiteral(value) }], force);
+      const [, addr, value] = a.pos;
+      if (!addr || value === undefined) throw new Error('使い方: ages set <dir> <アドレス> <値>');
+      const { path, cell } = splitCell(addr);
+      const op: Op = cell
+        ? { op: 'setCells', path, cells: [[cell[0], cell[1], parseLiteral(value) as number]] }
+        : { op: 'set', path, value: parseLiteral(value) };
+      out = await cmdPatch(dir, [op], force);
       break;
     }
     case 'patch': {

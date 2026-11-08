@@ -96,6 +96,10 @@ export const Spawner = defineComponent({
     speedMin: { type: 'number', default: 1.5, min: 0, max: 20, desc: '落ちる速さの最小(px/フレーム)' },
     speedMax: { type: 'number', default: 3, min: 0, max: 20, desc: '落ちる速さの最大(px/フレーム)' },
     margin: { type: 'number', default: 24, min: 0, max: 200, desc: '画面端からの余白(px)' },
+    formation: {
+      type: 'matrix', cell: 'int', min: 0, max: 1, cols: 8, default: [],
+      desc: '出現パターン。行=波（上から順に繰り返す）、列=横の位置（8列）、1で敵を出す。空なら横位置はランダム',
+    },
   },
 });
 

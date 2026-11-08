@@ -161,7 +161,7 @@ export class Project {
    */
   async apply(ops: Op[], actor: Actor, opts: { force?: boolean } = {}): Promise<PatchResult> {
     const targetOf = (op: Op) =>
-      op.op === 'set' ? op.path : op.op === 'removeEntity' ? `${op.scene}#${op.id}` : op.op === 'removeComponent' ? `${op.target}.${op.component}` : null;
+      op.op === 'set' || op.op === 'setCells' ? op.path : op.op === 'removeEntity' ? `${op.scene}#${op.id}` : op.op === 'removeComponent' ? `${op.target}.${op.component}` : null;
     const locks = await readLocks(this.dir);
     if (actor.kind === 'ai') {
       // ロックは --force でも越えられない
@@ -193,10 +193,11 @@ export class Project {
       // 人がロック中の値を編集したら、ロックの値も新しい値にする。消したものはロックも外す
       let changed = false;
       for (const c of result.changes) {
+        const base = c.path.replace(/\[\d+,\s*\d+\]$/, '');
         if (c.to === 'removed') {
-          for (const p of lockedHits(locks, c.path)) { delete locks[p]; changed = true; }
-        } else if (locks[c.path]) {
-          locks[c.path].value = structuredClone(c.to);
+          for (const p of lockedHits(locks, base)) { delete locks[p]; changed = true; }
+        } else if (locks[base]) {
+          locks[base].value = structuredClone(getValue(this.docs, this.registry, base).value);
           changed = true;
         }
       }

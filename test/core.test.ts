@@ -117,3 +117,33 @@ test('要約では値の変更とロックを分けて表示する', async () =>
   assert.match(s, /speed 4\.5→6/);
   assert.match(s, /speed 🔒ロック/);
 });
+
+const F = 'main#spawner.Spawner.formation';
+
+test('行列: セル単位で変更でき、範囲外・型違い・形の崩れはヒント付きで拒否される', async () => {
+  const p = await Project.load(await fresh());
+  const r = await p.apply([{ op: 'setCells', path: F, cells: [[0, 0, 1], [1, 7, 1]] }], ai);
+  assert.deepEqual(r.changes.map((c) => c.path), [`${F}[0,0]`, `${F}[1,7]`]);
+  await assert.rejects(p.apply([{ op: 'setCells', path: F, cells: [[0, 8, 1]] }], ai), /範囲外/);
+  await assert.rejects(p.apply([{ op: 'setCells', path: F, cells: [[0, 0, 2]] }], ai), /最大値 1/);
+  await assert.rejects(p.apply([{ op: 'set', path: F, value: [[0, 0, 0, 0, 0, 0, 0, 0], [0, 0]] }], ai), /列にそろえて/);
+  await assert.rejects(p.apply([{ op: 'set', path: F, value: [[0, 1]] }], ai), /8 列が必要/);
+  await assert.rejects(p.apply([{ op: 'setCells', path: 'main#spawner.Spawner.interval', cells: [[0, 0, 1]] }], ai), /行列ではありません/);
+});
+
+test('行列: ロックするとAIはセル単位でも変えられない。人のセル編集はロックの値に反映される', async () => {
+  const dir = await fresh();
+  const p = await Project.load(dir);
+  await p.lock([F], human);
+  await assert.rejects(p.apply([{ op: 'setCells', path: F, cells: [[0, 0, 1]] }], ai, { force: true }), /ロックされた値/);
+  await p.apply([{ op: 'setCells', path: F, cells: [[0, 0, 1]] }], human);
+  const again = await Project.load(dir);
+  assert.equal(again.lockReport.length, 0);
+  assert.equal((again.docs.scenes.get('main')!.entities[1].components.Spawner.formation as number[][])[0][0], 1);
+});
+
+test('行列: 人がセルを変えると行列全体に★が付き、AIは確認なしに変えられない', async () => {
+  const p = await Project.load(await fresh());
+  await p.apply([{ op: 'setCells', path: F, cells: [[2, 2, 1]] }], human);
+  await assert.rejects(p.apply([{ op: 'setCells', path: F, cells: [[3, 3, 1]] }], ai), /人が調整した値/);
+});

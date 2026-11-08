@@ -2,7 +2,7 @@
 // 各フィールドに 🔒（AIが変更できないロック）を付けられる。人が触った値には ★ が付く。
 import type { App } from '../app.ts';
 import type { Field } from '../../core/schema.ts';
-import { brief } from '../../core/schema.ts';
+import { brief, matrixSize } from '../../core/schema.ts';
 import { h, clear, time } from './dom.ts';
 import type { Panel } from './layout.ts';
 
@@ -11,6 +11,9 @@ interface Live { path: string; comp: string; field: string; set(v: unknown): voi
 export function inspectorPanel(app: App): Panel {
   const el = h('div', {});
   let live: Live[] = [];
+  // パラメータが多いとき用: ロックした値（もう人が決めた値）を隠す。人ごとにブラウザに記憶する
+  let hideLocked = localStorage.getItem('ages.hideLocked') === '1';
+  const setHide = (v: boolean) => { hideLocked = v; localStorage.setItem('ages.hideLocked', v ? '1' : '0'); render(); };
 
   const render = () => {
     live = [];
@@ -36,15 +39,22 @@ export function inspectorPanel(app: App): Panel {
       type: 'text', value: holder.name ?? '', style: 'flex:1;font-weight:600', disabled: playing,
       onchange: () => app.patch([{ op: 'rename', target: base, name: nameInput.value }]),
     });
+    const lockedHere = Object.keys(app.state.locks).filter((k) => k.startsWith(base + '.')).length;
     const head = h('div', { class: 'pad', style: 'border-bottom:1px solid var(--line)' },
-      h('div', { class: 'row' }, nameInput),
+      h('div', { class: 'row' }, nameInput,
+        h('label', { class: 'row muted', style: 'gap:4px;white-space:nowrap', title: 'ロックした値を表示しない（人が決め終えた値を画面から外して、残りに集中する）' },
+          h('input', { type: 'checkbox', checked: hideLocked, onchange: (e: Event) => setHide((e.target as HTMLInputElement).checked) }), `🔒を隠す${lockedHere ? `（${lockedHere}）` : ''}`)),
       h('div', { class: 'muted', style: 'margin-top:4px;font:var(--mono)' }, base, holder.tags?.length ? `  tags:${holder.tags.join(',')}` : '',
         playing ? '  ▶ 実行中（変更は停止時に保存するか選べます）' : ''));
 
+    let hiddenCount = 0;
     const comps = Object.entries(holder.components).map(([cname, values]) => {
       const def = app.registry.components.get(cname);
       if (!def) return h('div', { class: 'comp' }, h('div', { class: 'head' }, cname, h('span', { class: 'desc', style: 'color:var(--bad)' }, '未定義のコンポーネント')));
-      const rows = Object.entries(def.fields).map(([fname, f]) => {
+      const entries = Object.entries(def.fields);
+      const visible = hideLocked ? entries.filter(([fname]) => !app.state.locks[`${base}.${cname}.${fname}`]) : entries;
+      hiddenCount += entries.length - visible.length;
+      const rows = visible.map(([fname, f]) => {
         const path = `${base}.${cname}.${fname}`;
         const has = fname in values;
         const value = has ? values[fname] : f.default;
@@ -59,7 +69,9 @@ export function inspectorPanel(app: App): Panel {
             app.patch([{ op: 'set', path, value: v }]);
           }
         };
-        const w = widget(app, f, value, commit);
+        const w = f.type === 'matrix'
+          ? matrixWidget(app, path, value, f.cell ?? 'number')
+          : widget(app, f, value, commit);
         const lockBtn = h('button', {
           class: `icon lockbtn ${lock ? 'on' : ''}`,
           title: lock ? `🔒 ロック中（${lock.who} ${time(lock.t)}）${lock.note ? '\n' + lock.note : ''}\nAIはこの値を変更できません。クリックで解除` : 'ロックする（AIが変更できなくなります）',
@@ -72,8 +84,9 @@ export function inspectorPanel(app: App): Panel {
         live.push({ path, comp: cname, field: fname, set: w.set, el: row });
         return row;
       });
+      const allLocked = entries.length > 0 && visible.length === 0;
       return h('div', { class: 'comp' },
-        h('div', { class: 'head' }, cname, h('span', { class: 'desc', title: def.desc }, def.desc),
+        h('div', { class: 'head' }, cname, h('span', { class: 'desc', title: def.desc }, allLocked ? '（すべて🔒）' : def.desc),
           !playing && h('button', { class: 'icon', title: `${cname} を外す`, onclick: () => app.patch([{ op: 'removeComponent', target: base, component: cname }]) }, '×')),
         rows);
     });
@@ -88,7 +101,10 @@ export function inspectorPanel(app: App): Panel {
       }, h('option', { value: '' }, '＋ コンポーネントを追加…'), missing.map((n) => h('option', { value: n }, `${n} — ${app.registry.components.get(n)!.desc}`))))
       : null;
 
-    clear(el, head, comps, add);
+    const note = hiddenCount
+      ? h('div', { class: 'pad muted', style: 'font-size:12px;cursor:pointer', onclick: () => setHide(false) }, `🔒 ロック中の ${hiddenCount} 項目を隠しています（クリックで表示）`)
+      : null;
+    clear(el, head, note, comps, add);
   };
 
   // 実行中は値を画面に流し込む（入力中の欄は触らない）
@@ -168,6 +184,15 @@ function widget(app: App, f: Field, value: unknown, commit: (v: unknown, final: 
       return { el: wrap, set: (v) => { t.value = v === null ? '' : String(v); } };
     }
   }
+}
+
+/** 行列はインスペクタに直接並べず、大きさだけ表示して専用の行列エディタで開く */
+function matrixWidget(app: App, path: string, value: unknown, cell: string): { el: HTMLElement; set(v: unknown): void } {
+  const size = h('span', { class: 'muted', style: 'font:var(--mono)' }, `${matrixSize(value)} ${cell}`);
+  const wrap = h('div', { class: 'ctl' }, size,
+    h('button', { onclick: () => app.emit('openMatrix', path), title: '行列エディタで確認・編集' }, '開く'),
+    h('button', { class: 'icon', title: '別のウインドウで開く', onclick: () => window.open(`/?solo=matrix&path=${encodeURIComponent(path)}`, `ages-matrix-${path}`, 'width=900,height=640') }, '↗'));
+  return { el: wrap, set: (v) => { size.textContent = `${matrixSize(v)} ${cell}`; } };
 }
 
 const round = (v: number) => (Number.isInteger(v) ? v : Math.round(v * 1000) / 1000);

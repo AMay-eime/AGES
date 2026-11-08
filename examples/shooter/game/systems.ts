@@ -26,15 +26,25 @@ export const playerControl = defineSystem({
 
 export const spawner = defineSystem({
   name: 'spawner',
-  desc: '一定間隔で画面上端に敵を出す',
+  desc: '一定間隔で画面上端に敵を出す（出現パターンの行列があればその通りに）',
   reads: ['Spawner'],
   update({ world, rng, frame, view, spawn }) {
     for (const e of world.query('Spawner')) {
       const s = e.c.Spawner;
       if (frame % s.interval !== 0) continue;
-      spawn(s.prefab, {
-        Transform: { x: rng.range(s.margin, view.width - s.margin), y: -20 },
-        Velocity: { vy: rng.range(s.speedMin, Math.max(s.speedMin, s.speedMax)) },
+      const vy = () => rng.range(s.speedMin, Math.max(s.speedMin, s.speedMax));
+      const rows: number[][] = s.formation;
+      if (!rows.length) {
+        spawn(s.prefab, { Transform: { x: rng.range(s.margin, view.width - s.margin), y: -20 }, Velocity: { vy: vy() } });
+        continue;
+      }
+      // 出現パターン: 波ごとに1行ずつ使い、1の列に敵を出す
+      const row = rows[(frame / s.interval) % rows.length];
+      const speed = vy();
+      row.forEach((on, col) => {
+        if (!on) return;
+        const x = s.margin + ((view.width - s.margin * 2) * (col + 0.5)) / row.length;
+        spawn(s.prefab, { Transform: { x, y: -20 }, Velocity: { vy: speed } });
       });
     }
   },

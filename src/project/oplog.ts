@@ -66,7 +66,9 @@ export async function markTouched(root: string, actor: Actor, changes: Change[])
   if (actor.kind !== 'human' || !changes.length) return;
   const touched = await readTouched(root);
   const t = new Date().toISOString();
-  for (const c of changes) {
+  for (const raw of changes) {
+    // 行列のセルの変更（...formation[2,3]）は行列全体への印にする
+    const c = { ...raw, path: raw.path.replace(/\[\d+,\s*\d+\]$/, '') };
     if (c.to === 'removed') {
       for (const k of Object.keys(touched)) if (k === c.path || k.startsWith(c.path + '.')) delete touched[k];
     } else {
@@ -120,14 +122,22 @@ export function summarize(entries: LogEntry[]): string {
     // 値の変更とロック操作は別々にまとめる
     const byPath = new Map<string, LogEntry[]>();
     for (const e of list) {
-      const k = `${e.path}\u0000${e.op === 'lock' || e.op === 'unlock' ? 'lock' : 'value'}`;
+      // 行列のセルの変更は行列ごとにまとめる
+      const cell = /\[\d+,\s*\d+\]$/.test(e.path);
+      const k = cell ? `${e.path.replace(/\[\d+,\s*\d+\]$/, '')}\u0000cells` : `${e.path}\u0000${e.op === 'lock' || e.op === 'unlock' ? 'lock' : 'value'}`;
       byPath.set(k, [...(byPath.get(k) ?? []), e]);
     }
     const first = localTime(list[0].t);
     const last = localTime(list[list.length - 1].t);
     lines.push(`${who} ${list.length}件 ${first}〜${last}`);
     for (const [key, es] of byPath) {
-      const path = key.split('\u0000')[0];
+      const [path, kind] = key.split('\u0000');
+      if (kind === 'cells') {
+        const cells = new Set(es.map((e) => e.path.slice(path.length)));
+        const sample = es.slice(0, 3).map((e) => `${e.path.slice(path.length)} ${short(e.from)}→${short(e.to)}`).join(', ');
+        lines.push(`  ${path} 行列 ${cells.size}セル変更（${sample}${es.length > 3 ? ' …' : ''}）。全体は ages get で確認`);
+        continue;
+      }
       const a = es[0];
       const b = es[es.length - 1];
       const n = es.length > 1 ? ` ×${es.length}` : '';

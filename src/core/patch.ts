@@ -1,7 +1,7 @@
 // 差分編集。AIも人（エディタ）も、ファイルの変更はすべてここを通る。
 // 返り値は「何がいくつからいくつに変わったか」だけ。
 import { parseAddress, type Address, type EntityData, type PrefabDoc, type SceneDoc } from './docs.ts';
-import { checkValue, suggest } from './schema.ts';
+import { checkCell, checkValue, suggest, type CellValue } from './schema.ts';
 import type { Registry } from './registry.ts';
 
 export type Op =
@@ -10,7 +10,15 @@ export type Op =
   | { op: 'removeEntity'; scene: string; id: string }
   | { op: 'addComponent'; target: string; component: string; values?: Record<string, unknown> }
   | { op: 'removeComponent'; target: string; component: string }
-  | { op: 'rename'; target: string; name: string };
+  | { op: 'rename'; target: string; name: string }
+  /** 行列の一部のセルだけを変える（行列全体を送らずに済む）。cells は [行, 列, 値] の並び */
+  | { op: 'setCells'; path: string; cells: [number, number, CellValue][] };
+
+/** "main#spawner.Spawner.formation[2,3]" → { path: "...formation", cell: [2,3] } */
+export function splitCell(path: string): { path: string; cell?: [number, number] } {
+  const m = path.match(/^(.*)\[(\d+),\s*(\d+)\]$/);
+  return m ? { path: m[1], cell: [Number(m[2]), Number(m[3])] } : { path };
+}
 
 export interface Change {
   path: string;
@@ -110,6 +118,29 @@ function applyOne(docs: Docs, reg: Registry, op: Op, changes: Change[], dirty: S
       dirty.add(key);
       return;
     }
+    case 'setCells': {
+      const a = parseAddress(op.path);
+      if (!a.component || !a.field) throw new Error(`setCells にはフィールドまでのアドレスが必要です: ${op.path}`);
+      const { holder, key } = holderOf(docs, a);
+      const comp = holder.components[a.component];
+      if (!comp) throw new Error(`${op.path}: コンポーネント ${a.component} が付いていません`);
+      const def = reg.component(a.component);
+      const f = def.fields[a.field];
+      if (!f) throw new Error(`${a.component} に ${a.field} はありません${suggest(a.field, Object.keys(def.fields))}`);
+      if (f.type !== 'matrix') throw new Error(`${op.path} は行列ではありません（${f.type}）。set を使ってください`);
+      const m = structuredClone((a.field in comp ? comp[a.field] : f.default) as CellValue[][]);
+      for (const [r, c, v] of op.cells) {
+        if (!m[r] || c < 0 || c >= m[r].length) throw new Error(`${op.path}[${r},${c}] は範囲外です（大きさ ${m.length}x${m[0]?.length ?? 0}、0から数えます）`);
+        const err = checkCell(`${a.component}.${a.field}`, f, r, c, v);
+        if (err) throw new Error(err);
+        if (m[r][c] === v) continue;
+        changes.push({ path: `${op.path}[${r},${c}]`, from: m[r][c], to: v });
+        m[r][c] = v;
+        dirty.add(key);
+      }
+      comp[a.field] = m;
+      return;
+    }
     case 'addEntity': {
       const s = docs.scenes.get(op.scene);
       if (!s) throw new Error(`シーン ${op.scene} はありません${suggest(op.scene, [...docs.scenes.keys()])}`);
@@ -164,7 +195,7 @@ function applyOne(docs: Docs, reg: Registry, op: Op, changes: Change[], dirty: S
       return;
     }
     default:
-      throw new Error(`未知の操作 ${(op as { op: string }).op}。使えるのは set / addEntity / removeEntity / addComponent / removeComponent / rename`);
+      throw new Error(`未知の操作 ${(op as { op: string }).op}。使えるのは set / setCells / addEntity / removeEntity / addComponent / removeComponent / rename`);
   }
 }
 

@@ -4,6 +4,7 @@ import { Layout, type LayoutData, type Panel } from './ui/layout.ts';
 import { h, clear, toast } from './ui/dom.ts';
 import { inspectorPanel } from './ui/inspector.ts';
 import { hierarchyPanel, projectPanel, gamePanel, textPanel, logPanel, gitPanel } from './ui/panels.ts';
+import { matrixPanel } from './ui/matrix.ts';
 import type { EditorApi, EditorWindow } from './window-api.ts';
 import type { Op } from '../core/patch.ts';
 import { parseAddress } from '../core/docs.ts';
@@ -12,6 +13,27 @@ const app = new App();
 (window as unknown as { ages: App }).ages = app; // デバッグ・AIのブラウザ操作用
 
 await app.refresh();
+
+// 別ウインドウで1つのパネルだけを開く（例: /?solo=matrix&path=main%23spawner.Spawner.formation）
+const params = new URLSearchParams(location.search);
+if (params.get('solo') === 'matrix') {
+  document.body.classList.add('solo');
+  const m = matrixPanel(app);
+  m.el.classList.add('panel', 'active');
+  document.getElementById('work')!.replaceChildren(m.el);
+  m.open(params.get('path') ?? '');
+  document.title = `行列 ${params.get('path')} — AGES`;
+  const top = document.getElementById('top')!;
+  const user = h('input', { type: 'text', value: app.user, style: 'width:110px', title: '操作ログに残るあなたの名前' }) as HTMLInputElement;
+  user.addEventListener('change', () => app.setUser(user.value));
+  top.replaceChildren(h('span', { class: 'title' }, 'AGES', h('small', {}, '行列エディタ')), h('span', { class: 'spacer' }), h('span', { class: 'muted' }, '名前'), user);
+  new EventSource('/api/events').onmessage = (msg) => { if (JSON.parse(msg.data).type !== 'hello') app.refresh(); };
+} else {
+  await startEditor();
+}
+
+/** 通常のエディタ（全パネルとレイアウト） */
+async function startEditor(): Promise<void> {
 const savedLayout = await app.api<LayoutData | null>('/api/layout').catch(() => null);
 let saveTimer: ReturnType<typeof setTimeout>;
 const layout = new Layout(document.getElementById('work')!, savedLayout, (d) => {
@@ -21,7 +43,9 @@ const layout = new Layout(document.getElementById('work')!, savedLayout, (d) => 
 
 const text = textPanel(app, () => layout);
 const game = gamePanel(app);
-for (const p of [hierarchyPanel(app), projectPanel(app, (path) => text.open(path)), game, text, logPanel(app), gitPanel(app), inspectorPanel(app)]) layout.add(p);
+const matrix = matrixPanel(app);
+for (const p of [hierarchyPanel(app), projectPanel(app, (path) => text.open(path)), game, matrix, text, logPanel(app), gitPanel(app), inspectorPanel(app)]) layout.add(p);
+app.on('openMatrix', (path) => { matrix.open(path as string); layout.show('matrix'); });
 
 // ---------- 上のバー ----------
 const top = document.getElementById('top')!;
@@ -132,3 +156,4 @@ await mountWindows();
 layout.build();
 renderTop();
 if (app.state.lockReport?.length) toast(app.state.lockReport.map((l) => '🔒 ' + l).join('\n'), 'lock', 8000);
+}

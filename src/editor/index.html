@@ -90,6 +90,14 @@
   .menu div { padding: 4px 14px; cursor: pointer; }
   .menu div:hover { background: var(--accent); }
   .issues { color: var(--bad); font: var(--mono); padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  table.matrix { border-collapse: collapse; font: var(--mono); }
+  table.matrix th { color: var(--dim); font-weight: 400; padding: 2px 6px; text-align: center; min-width: 24px; }
+  table.matrix td { padding: 1px; border: 1px solid transparent; }
+  table.matrix td.changed { border-color: var(--warn); }
+  table.matrix input[type=text] { width: 48px; text-align: center; padding: 3px 2px; border-radius: 2px; }
+  table.matrix input[type=checkbox] { width: 18px; height: 18px; margin: 3px 14px; }
+  body.solo #work { display: flex; flex-direction: column; }
+  body.solo #work > .panel { display: flex; flex-direction: column; flex: 1; background: var(--panel); }
   .drop-hint { border: 1px dashed var(--line); margin: 8px; padding: 10px; text-align: center; color: var(--dim); border-radius: 4px; }
   .drop-hint.over { border-color: var(--accent); color: var(--text); }
 </style>
