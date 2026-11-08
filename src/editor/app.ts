@@ -156,10 +156,9 @@ export class App {
     window.open(url, 'ages-locks');
   }
 
-  /** ロックされた値を表示するか（人ごとにブラウザに記憶する設定） */
+  /** ロックされた値を表示するか（人ごとにブラウザに記憶する設定。既定は表示する） */
   get showLocked(): boolean {
-    const v = localStorage.getItem('ages.showLocked');
-    return v === null ? localStorage.getItem('ages.hideLocked') !== '1' : v === '1';
+    return localStorage.getItem('ages.showLocked') !== '0';
   }
   set showLocked(v: boolean) {
     localStorage.setItem('ages.showLocked', v ? '1' : '0');
