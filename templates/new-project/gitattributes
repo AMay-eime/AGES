@@ -1,0 +1,2 @@
+# 操作ログは追記だけなので、Gitの統合では両方の行を残す
+.ages/oplog.jsonl merge=union

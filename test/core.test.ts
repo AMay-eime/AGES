@@ -156,7 +156,7 @@ test('ages init: 手順書とエディタ計画書の入ったプロジェクト
   const dir = join(await mkdtemp(join(tmpdir(), 'ages-init-')), 'newgame');
   const out = await cmdInit(dir, 'newgame');
   assert.match(out, /EDITOR-PLAN\.md/);
-  for (const f of ['AGENTS.md', 'CLAUDE.md', 'EDITOR-PLAN.md', '.gitignore', 'ages.project.json', 'game/index.ts', 'scenes/main.scene.json']) {
+  for (const f of ['AGENTS.md', 'CLAUDE.md', 'EDITOR-PLAN.md', '.gitignore', '.gitattributes', '.mcp.json', 'ages.project.json', 'game/index.ts', 'scenes/main.scene.json']) {
     await readFile(join(dir, f), 'utf8');
   }
   assert.match(await readFile(join(dir, 'AGENTS.md'), 'utf8'), /ゲームの企画を受けたら/);
