@@ -87,3 +87,33 @@ test('人がロック中の値を編集すると、ロックの値も更新さ�
   const again = await Project.load(dir);
   assert.equal(again.lockReport.length, 0);
 });
+
+test('CLIの変更をエディタが外部編集として二重に記録しない', async () => {
+  const dir = await fresh();
+  const editor = await Project.load(dir);
+  const cli = await Project.load(dir);
+  await cli.apply([{ op: 'set', path: 'main#player.Player.fireInterval', value: 4 }], ai);
+  const r = await editor.externalEdit();
+  assert.equal(r.changes.length, 0);
+  assert.equal((await readLog(dir)).filter((e) => e.kind === 'system').length, 0);
+});
+
+test('別のエディタで書かれた変更は external として記録される', async () => {
+  const dir = await fresh();
+  const editor = await Project.load(dir);
+  const file = editor.scenePath('main');
+  await writeFile(file, (await readFile(file, 'utf8')).replace('"fireInterval": 8', '"fireInterval": 5'));
+  const r = await editor.externalEdit();
+  assert.deepEqual(r.changes.map((c) => c.path), ['main#player.Player.fireInterval']);
+});
+
+test('要約では値の変更とロックを分けて表示する', async () => {
+  const { summarize } = await import('../src/project/oplog.ts');
+  const dir = await fresh();
+  const p = await Project.load(dir);
+  await p.apply([{ op: 'set', path: 'main#player.Player.speed', value: 6 }], human);
+  await p.lock(['main#player.Player.speed'], human);
+  const s = summarize(await readLog(dir));
+  assert.match(s, /speed 4\.5→6/);
+  assert.match(s, /speed 🔒ロック/);
+});

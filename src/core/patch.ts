@@ -179,3 +179,31 @@ export function parseLiteral(text: string): unknown {
   }
   return text;
 }
+
+/** 2つの文書の違いを値の単位で求める（テキスト編集や外部からの編集をログに残すため）。 */
+export function diffDocs(before: Docs, after: Docs): Change[] {
+  const out: Change[] = [];
+  type H = { components: Record<string, Record<string, unknown>> };
+  const diffHolder = (base: string, a: H | undefined, b: H | undefined) => {
+    if (!a && b) { out.push({ path: base, to: 'added' }); return; }
+    if (a && !b) { out.push({ path: base, from: a, to: 'removed' }); return; }
+    if (!a || !b) return;
+    for (const name of new Set([...Object.keys(a.components), ...Object.keys(b.components)])) {
+      const ca = a.components[name], cb = b.components[name];
+      if (!ca) { out.push({ path: `${base}.${name}`, to: 'added' }); continue; }
+      if (!cb) { out.push({ path: `${base}.${name}`, from: ca, to: 'removed' }); continue; }
+      for (const k of new Set([...Object.keys(ca), ...Object.keys(cb)])) {
+        if (JSON.stringify(ca[k]) !== JSON.stringify(cb[k])) out.push({ path: `${base}.${name}.${k}`, from: ca[k], to: cb[k] });
+      }
+    }
+  };
+  for (const name of new Set([...before.scenes.keys(), ...after.scenes.keys()])) {
+    const sa = before.scenes.get(name), sb = after.scenes.get(name);
+    const ids = new Set([...(sa?.entities ?? []).map((e) => e.id), ...(sb?.entities ?? []).map((e) => e.id)]);
+    for (const id of ids) diffHolder(`${name}#${id}`, sa?.entities.find((e) => e.id === id), sb?.entities.find((e) => e.id === id));
+  }
+  for (const name of new Set([...before.prefabs.keys(), ...after.prefabs.keys()])) {
+    diffHolder(`@${name}`, before.prefabs.get(name), after.prefabs.get(name));
+  }
+  return out;
+}

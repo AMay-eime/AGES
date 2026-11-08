@@ -5,11 +5,11 @@ import { pathToFileURL } from 'node:url';
 import { registerHooks } from 'node:module';
 import { formatJson, type PrefabDoc, type ProjectConfig, type SceneDoc } from '../core/docs.ts';
 import { Registry, type GameModule } from '../core/registry.ts';
-import { applyOps, getValue, type Change, type Docs, type Op, type PatchResult } from '../core/patch.ts';
+import { applyOps, diffDocs, getValue, type Change, type Docs, type Op, type PatchResult } from '../core/patch.ts';
 import { parseAddress } from '../core/docs.ts';
 import { Game } from '../core/game.ts';
 import { suggest } from '../core/schema.ts';
-import { appendLog, lockedHits, markTouched, readLocks, readTouched, writeLocks, type Actor, type LockMark } from './oplog.ts';
+import { appendLog, localTime, lockedHits, markTouched, readLocks, readLog, readTouched, writeLocks, type Actor, type LockMark } from './oplog.ts';
 
 // ゲームコードの import ... from 'ages' を、どのフォルダにあるプロジェクトからでもこのエンジンに向ける
 const AGES_INDEX = new URL('../index.ts', import.meta.url).href;
@@ -49,17 +49,8 @@ export class Project {
       throw new Error(`${this.dir} に ages.project.json がありません。AGESのプロジェクトフォルダを指定してください`);
     }
     this.config = JSON.parse(raw);
-    const scenes = new Map<string, SceneDoc>();
-    for (const f of await list(join(this.dir, 'scenes'), '.scene.json')) {
-      const doc: SceneDoc = JSON.parse(await readFile(join(this.dir, 'scenes', f), 'utf8'));
-      scenes.set(doc.name, doc);
-    }
-    const prefabs = new Map<string, PrefabDoc>();
-    for (const f of await list(join(this.dir, 'prefabs'), '.prefab.json')) {
-      const doc: PrefabDoc = JSON.parse(await readFile(join(this.dir, 'prefabs', f), 'utf8'));
-      prefabs.set(doc.name, doc);
-    }
-    this.docs = { scenes, prefabs };
+    this.docs = await readDocs(this.dir);
+    const prefabs = this.docs.prefabs;
     hookAgesImport();
     const url = pathToFileURL(join(this.dir, this.config.game)).href;
     const mod = (await import(url)) as GameModule;
@@ -186,7 +177,7 @@ export class Project {
         const target = targetOf(op);
         if (!target) continue;
         for (const [path, mark] of Object.entries(touched)) {
-          if (path === target || path.startsWith(target + '.')) hits.push(`${path}（${mark.who} が ${mark.t.slice(0, 16).replace('T', ' ')} に調整）`);
+          if (path === target || path.startsWith(target + '.')) hits.push(`${path}（${mark.who} が ${localTime(mark.t)} に調整）`);
         }
       }
       if (hits.length) {
@@ -214,23 +205,79 @@ export class Project {
     return result;
   }
 
+  /** このプロセスが書いたファイルと内容（エディタが「外部からの編集」と区別するため） */
+  written = new Map<string, string>();
+
   async saveDirty(dirty: Iterable<string>): Promise<void> {
     for (const key of dirty) {
       const [kind, name] = key.split(':');
-      if (kind === 'scene') {
-        await mkdir(join(this.dir, 'scenes'), { recursive: true });
-        await writeFile(this.scenePath(name), formatJson(this.docs.scenes.get(name)));
-      } else {
-        await mkdir(join(this.dir, 'prefabs'), { recursive: true });
-        await writeFile(this.prefabPath(name), formatJson(this.docs.prefabs.get(name)));
-      }
+      const path = kind === 'scene' ? this.scenePath(name) : this.prefabPath(name);
+      const text = formatJson(kind === 'scene' ? this.docs.scenes.get(name) : this.docs.prefabs.get(name));
+      await mkdir(join(this.dir, kind === 'scene' ? 'scenes' : 'prefabs'), { recursive: true });
+      await writeFile(path, text);
+      this.written.set(path, text);
     }
+  }
+
+  /**
+   * 人がテキストで文書を書き換えた後に呼ぶ。ロック中の値を人が変えていたら、ロックの値を新しい値にしてから読み直す
+   * （人の編集が「ロックの復元」で消されないように）。変更点を返す。
+   */
+  async humanTextEdit(actor: Actor): Promise<Change[]> {
+    const before = this.docs;
+    const changes = diffDocs(before, await readDocs(this.dir));
+    const locks = await readLocks(this.dir);
+    let touchedLock = false;
+    for (const c of changes) {
+      if (locks[c.path] && c.to !== 'removed' && c.to !== 'added') { locks[c.path].value = structuredClone(c.to); touchedLock = true; }
+      if (c.to === 'removed') for (const p of lockedHits(locks, c.path)) { delete locks[p]; touchedLock = true; }
+    }
+    if (touchedLock) await writeLocks(this.dir, actor, locks);
+    await this.reload();
+    await appendLog(this.dir, actor, 'text', changes);
+    await markTouched(this.dir, actor, changes);
+    return changes;
+  }
+
+  /** 誰が書いたか分からない外部の編集（別のエディタやAIによる直接編集）の後に呼ぶ。ロックは復元される。 */
+  async externalEdit(): Promise<{ changes: Change[]; lockReport: string[] }> {
+    const before = this.docs;
+    await this.reload();
+    // AGESのCLIなど、すでにログに残っている変更は二重に記録しない
+    const recent = (await readLog(this.dir)).slice(-200).filter((e) => Date.now() - Date.parse(e.t) < 15000);
+    const changes = diffDocs(before, this.docs).filter(
+      (c) => !recent.some((e) => e.path === c.path && JSON.stringify(e.to) === JSON.stringify(c.to)),
+    );
+    await appendLog(this.dir, { who: 'external', kind: 'system', win: 'file' }, 'external', changes);
+    return { changes, lockReport: this.lockReport };
   }
 
   newGame(scene = this.config.startScene, seed = this.config.seed): Game {
     const doc = this.docs.scenes.get(scene);
     if (!doc) throw new Error(`シーン ${scene} はありません${suggest(scene, [...this.docs.scenes.keys()])}`);
     return new Game(this.registry, this.config, doc, seed);
+  }
+}
+
+async function readDocs(dir: string): Promise<Docs> {
+  const scenes = new Map<string, SceneDoc>();
+  for (const f of await list(join(dir, 'scenes'), '.scene.json')) {
+    const doc: SceneDoc = parseJson(await readFile(join(dir, 'scenes', f), 'utf8'), `scenes/${f}`);
+    scenes.set(doc.name, doc);
+  }
+  const prefabs = new Map<string, PrefabDoc>();
+  for (const f of await list(join(dir, 'prefabs'), '.prefab.json')) {
+    const doc: PrefabDoc = parseJson(await readFile(join(dir, 'prefabs', f), 'utf8'), `prefabs/${f}`);
+    prefabs.set(doc.name, doc);
+  }
+  return { scenes, prefabs };
+}
+
+function parseJson<T>(text: string, file: string): T {
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    throw new Error(`${file} のJSONが壊れています: ${(e as Error).message}`);
   }
 }
 

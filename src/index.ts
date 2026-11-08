@@ -4,3 +4,4 @@ export { defineComponent, type ComponentDef, type Field } from './core/schema.ts
 export { defineSystem, type SystemDef, type GameModule } from './core/registry.ts';
 export type { Ctx } from './core/game.ts';
 export type { Entity } from './core/world.ts';
+export { defineWindow, type EditorWindow, type EditorApi } from './editor/window-api.ts';

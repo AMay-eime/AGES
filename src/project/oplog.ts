@@ -91,6 +91,13 @@ export async function writeCursor(root: string, n: number): Promise<void> {
   await writeFile(join(dirOf(root), 'ai-cursor'), String(n));
 }
 
+/** この端末の時刻で「11/08 19:25」の形にする */
+export function localTime(iso: string): string {
+  const d = new Date(iso);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 const short = (v: unknown) => {
   if (v === undefined) return '';
   const s = typeof v === 'string' ? v : JSON.stringify(v);
@@ -110,16 +117,22 @@ export function summarize(entries: LogEntry[]): string {
   }
   const lines: string[] = [];
   for (const [who, list] of byWho) {
+    // 値の変更とロック操作は別々にまとめる
     const byPath = new Map<string, LogEntry[]>();
-    for (const e of list) byPath.set(e.path, [...(byPath.get(e.path) ?? []), e]);
-    const first = list[0].t.slice(0, 16).replace('T', ' ');
-    const last = list[list.length - 1].t.slice(0, 16).replace('T', ' ');
+    for (const e of list) {
+      const k = `${e.path}\u0000${e.op === 'lock' || e.op === 'unlock' ? 'lock' : 'value'}`;
+      byPath.set(k, [...(byPath.get(k) ?? []), e]);
+    }
+    const first = localTime(list[0].t);
+    const last = localTime(list[list.length - 1].t);
     lines.push(`${who} ${list.length}件 ${first}〜${last}`);
-    for (const [path, es] of byPath) {
+    for (const [key, es] of byPath) {
+      const path = key.split('\u0000')[0];
       const a = es[0];
       const b = es[es.length - 1];
       const n = es.length > 1 ? ` ×${es.length}` : '';
-      if (b.to === 'added' || b.to === 'removed') lines.push(`  ${path} ${b.to === 'added' ? '追加' : '削除'}${n}`);
+      if (b.op === 'lock' || b.op === 'unlock') lines.push(`  ${path} ${b.op === 'lock' ? '🔒ロック' : 'ロック解除'}`);
+      else if (b.to === 'added' || b.to === 'removed') lines.push(`  ${path} ${b.to === 'added' ? '追加' : '削除'}${n}`);
       else if (a.op === 'file') lines.push(`  ${path} ファイル編集${n}`);
       else lines.push(`  ${path} ${short(a.from)}→${short(b.to)}${n}`);
     }
