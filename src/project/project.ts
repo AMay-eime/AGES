@@ -1,0 +1,243 @@
+// プロジェクト（フォルダ）の読み込みと保存。Node 側専用。
+import { readFile, writeFile, readdir, mkdir } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { registerHooks } from 'node:module';
+import { formatJson, type PrefabDoc, type ProjectConfig, type SceneDoc } from '../core/docs.ts';
+import { Registry, type GameModule } from '../core/registry.ts';
+import { applyOps, getValue, type Change, type Docs, type Op, type PatchResult } from '../core/patch.ts';
+import { parseAddress } from '../core/docs.ts';
+import { Game } from '../core/game.ts';
+import { suggest } from '../core/schema.ts';
+import { appendLog, lockedHits, markTouched, readLocks, readTouched, writeLocks, type Actor, type LockMark } from './oplog.ts';
+
+// ゲームコードの import ... from 'ages' を、どのフォルダにあるプロジェクトからでもこのエンジンに向ける
+const AGES_INDEX = new URL('../index.ts', import.meta.url).href;
+let hooked = false;
+function hookAgesImport(): void {
+  if (hooked) return;
+  hooked = true;
+  registerHooks({
+    resolve(specifier, context, next) {
+      if (specifier === 'ages') return { url: AGES_INDEX, shortCircuit: true };
+      return next(specifier, context);
+    },
+  });
+}
+
+export class Project {
+  readonly dir: string;
+  config!: ProjectConfig;
+  registry!: Registry;
+  docs!: Docs;
+
+  constructor(dir: string) {
+    this.dir = resolve(dir);
+  }
+
+  static async load(dir: string): Promise<Project> {
+    const p = new Project(dir);
+    await p.reload();
+    return p;
+  }
+
+  async reload(): Promise<void> {
+    let raw: string;
+    try {
+      raw = await readFile(join(this.dir, 'ages.project.json'), 'utf8');
+    } catch {
+      throw new Error(`${this.dir} に ages.project.json がありません。AGESのプロジェクトフォルダを指定してください`);
+    }
+    this.config = JSON.parse(raw);
+    const scenes = new Map<string, SceneDoc>();
+    for (const f of await list(join(this.dir, 'scenes'), '.scene.json')) {
+      const doc: SceneDoc = JSON.parse(await readFile(join(this.dir, 'scenes', f), 'utf8'));
+      scenes.set(doc.name, doc);
+    }
+    const prefabs = new Map<string, PrefabDoc>();
+    for (const f of await list(join(this.dir, 'prefabs'), '.prefab.json')) {
+      const doc: PrefabDoc = JSON.parse(await readFile(join(this.dir, 'prefabs', f), 'utf8'));
+      prefabs.set(doc.name, doc);
+    }
+    this.docs = { scenes, prefabs };
+    hookAgesImport();
+    const url = pathToFileURL(join(this.dir, this.config.game)).href;
+    const mod = (await import(url)) as GameModule;
+    this.registry = Registry.from(mod, []);
+    this.registry.prefabs = prefabs;
+    this.lockReport = await this.enforceLocks();
+  }
+
+  /** 直近の読み込み時にロックの検査で見つかった問題（復元したもの・復元できないもの） */
+  lockReport: string[] = [];
+
+  /**
+   * ロックされた値がファイル上で変わっていたら元に戻す。
+   * （AIがファイルを直接書き換えた場合も、次にAGESが読み込んだ時点で必ず復元される）
+   */
+  async enforceLocks(): Promise<string[]> {
+    const locks = await readLocks(this.dir);
+    const report: string[] = [];
+    const restored: Change[] = [];
+    const dirty = new Set<string>();
+    for (const [path, mark] of Object.entries(locks)) {
+      let current: unknown;
+      try {
+        current = getValue(this.docs, this.registry, path).value;
+      } catch (e) {
+        report.push(`ロック ${path} の対象が見つかりません（消された可能性があります）: ${(e as Error).message}`);
+        continue;
+      }
+      if (JSON.stringify(current) === JSON.stringify(mark.value)) continue;
+      const a = parseAddress(path);
+      const holder = a.kind === 'prefab'
+        ? this.docs.prefabs.get(a.doc)!
+        : this.docs.scenes.get(a.doc)!.entities.find((e) => e.id === a.entity)!;
+      holder.components[a.component!][a.field!] = structuredClone(mark.value);
+      restored.push({ path, from: current, to: mark.value });
+      dirty.add(a.kind === 'prefab' ? `prefab:${a.doc}` : `scene:${a.doc}`);
+      report.push(`ロック ${path} が ${JSON.stringify(current)} に変えられていたので ${JSON.stringify(mark.value)} に戻しました`);
+    }
+    if (restored.length) {
+      await this.saveDirty(dirty);
+      await appendLog(this.dir, { who: 'ages', kind: 'system', win: 'lock' }, 'lock-restore', restored);
+    }
+    return report;
+  }
+
+  /** 値をロックする（人だけ）。paths はフィールドまでのアドレス。 */
+  async lock(paths: string[], actor: Actor, note?: string): Promise<void> {
+    const locks = await readLocks(this.dir);
+    const t = new Date().toISOString();
+    for (const path of paths) {
+      const a = parseAddress(path);
+      if (!a.component || !a.field) throw new Error(`ロックはフィールド単位です（例: main#player.Player.speed）: ${path}`);
+      const { value } = getValue(this.docs, this.registry, path);
+      const mark: LockMark = { who: actor.who, t, value };
+      if (note) mark.note = note;
+      locks[path] = mark;
+    }
+    await writeLocks(this.dir, actor, locks);
+    await appendLog(this.dir, actor, 'lock', paths.map((p) => ({ path: p, to: 'locked' })));
+  }
+
+  async unlock(paths: string[], actor: Actor): Promise<void> {
+    const locks = await readLocks(this.dir);
+    for (const p of paths) delete locks[p];
+    await writeLocks(this.dir, actor, locks);
+    await appendLog(this.dir, actor, 'unlock', paths.map((p) => ({ path: p, to: 'unlocked' })));
+  }
+
+  scenePath(name: string): string {
+    return join(this.dir, 'scenes', `${name}.scene.json`);
+  }
+
+  prefabPath(name: string): string {
+    return join(this.dir, 'prefabs', `${name}.prefab.json`);
+  }
+
+  /** 全文書を検証する。問題の一覧を返す（空なら健全）。 */
+  validate(): string[] {
+    const errs: string[] = [];
+    const check = (where: string, comps: Record<string, Record<string, unknown>>) => {
+      for (const [name, values] of Object.entries(comps)) {
+        try { this.registry.build(name, values, where); } catch (e) { errs.push((e as Error).message); }
+        const def = this.registry.components.get(name);
+        if (!def) continue;
+        for (const [k, f] of Object.entries(def.fields)) {
+          if (f.type === 'prefab' && k in values && !this.docs.prefabs.has(values[k] as string)) {
+            errs.push(`${where}.${name}.${k}: プレハブ ${values[k]} はありません${suggest(String(values[k]), [...this.docs.prefabs.keys()])}`);
+          }
+        }
+      }
+    };
+    for (const s of this.docs.scenes.values()) {
+      const ids = new Set<string>();
+      for (const e of s.entities) {
+        if (ids.has(e.id)) errs.push(`${s.name}#${e.id}: IDが重複しています`);
+        ids.add(e.id);
+        check(`${s.name}#${e.id}`, e.components);
+      }
+    }
+    for (const p of this.docs.prefabs.values()) check(`@${p.name}`, p.components);
+    if (!this.docs.scenes.has(this.config.startScene)) errs.push(`開始シーン ${this.config.startScene} がありません`);
+    return errs;
+  }
+
+  /**
+   * 操作を適用して保存し、ログに残す。
+   * AIが人の調整した値を変えようとした場合は force がない限り止める。
+   */
+  async apply(ops: Op[], actor: Actor, opts: { force?: boolean } = {}): Promise<PatchResult> {
+    const targetOf = (op: Op) =>
+      op.op === 'set' ? op.path : op.op === 'removeEntity' ? `${op.scene}#${op.id}` : op.op === 'removeComponent' ? `${op.target}.${op.component}` : null;
+    const locks = await readLocks(this.dir);
+    if (actor.kind === 'ai') {
+      // ロックは --force でも越えられない
+      const hits = ops.flatMap((op) => { const t = targetOf(op); return t ? lockedHits(locks, t) : []; });
+      if (hits.length) {
+        throw new Error(`🔒 ロックされた値は変更できません: ${hits.join(', ')}。この値は人が決めるものです。変えるべき理由があれば、ユーザーに提案してください`);
+      }
+    }
+    if (actor.kind === 'ai' && !opts.force) {
+      const touched = await readTouched(this.dir);
+      const hits: string[] = [];
+      for (const op of ops) {
+        const target = targetOf(op);
+        if (!target) continue;
+        for (const [path, mark] of Object.entries(touched)) {
+          if (path === target || path.startsWith(target + '.')) hits.push(`${path}（${mark.who} が ${mark.t.slice(0, 16).replace('T', ' ')} に調整）`);
+        }
+      }
+      if (hits.length) {
+        throw new Error(`人が調整した値に触れようとしています: ${hits.join(', ')}。ユーザーに確認してから --force を付けて実行してください`);
+      }
+    }
+    const result = applyOps(this.docs, this.registry, ops);
+    await this.saveDirty(result.dirty);
+    const opName = ops.length === 1 ? ops[0].op : 'batch';
+    await appendLog(this.dir, actor, opName, result.changes);
+    await markTouched(this.dir, actor, result.changes);
+    if (actor.kind === 'human') {
+      // 人がロック中の値を編集したら、ロックの値も新しい値にする。消したものはロックも外す
+      let changed = false;
+      for (const c of result.changes) {
+        if (c.to === 'removed') {
+          for (const p of lockedHits(locks, c.path)) { delete locks[p]; changed = true; }
+        } else if (locks[c.path]) {
+          locks[c.path].value = structuredClone(c.to);
+          changed = true;
+        }
+      }
+      if (changed) await writeLocks(this.dir, actor, locks);
+    }
+    return result;
+  }
+
+  async saveDirty(dirty: Iterable<string>): Promise<void> {
+    for (const key of dirty) {
+      const [kind, name] = key.split(':');
+      if (kind === 'scene') {
+        await mkdir(join(this.dir, 'scenes'), { recursive: true });
+        await writeFile(this.scenePath(name), formatJson(this.docs.scenes.get(name)));
+      } else {
+        await mkdir(join(this.dir, 'prefabs'), { recursive: true });
+        await writeFile(this.prefabPath(name), formatJson(this.docs.prefabs.get(name)));
+      }
+    }
+  }
+
+  newGame(scene = this.config.startScene, seed = this.config.seed): Game {
+    const doc = this.docs.scenes.get(scene);
+    if (!doc) throw new Error(`シーン ${scene} はありません${suggest(scene, [...this.docs.scenes.keys()])}`);
+    return new Game(this.registry, this.config, doc, seed);
+  }
+}
+
+async function list(dir: string, suffix: string): Promise<string[]> {
+  try {
+    return (await readdir(dir)).filter((f) => f.endsWith(suffix)).sort();
+  } catch {
+    return [];
+  }
+}

@@ -1,0 +1,181 @@
+// 差分編集。AIも人（エディタ）も、ファイルの変更はすべてここを通る。
+// 返り値は「何がいくつからいくつに変わったか」だけ。
+import { parseAddress, type Address, type EntityData, type PrefabDoc, type SceneDoc } from './docs.ts';
+import { checkValue, suggest } from './schema.ts';
+import type { Registry } from './registry.ts';
+
+export type Op =
+  | { op: 'set'; path: string; value: unknown }
+  | { op: 'addEntity'; scene: string; entity: { id: string; name?: string; tags?: string[]; components?: Record<string, Record<string, unknown>> } }
+  | { op: 'removeEntity'; scene: string; id: string }
+  | { op: 'addComponent'; target: string; component: string; values?: Record<string, unknown> }
+  | { op: 'removeComponent'; target: string; component: string }
+  | { op: 'rename'; target: string; name: string };
+
+export interface Change {
+  path: string;
+  from?: unknown;
+  to?: unknown;
+}
+
+export interface Docs {
+  scenes: Map<string, SceneDoc>;
+  prefabs: Map<string, PrefabDoc>;
+}
+
+export interface PatchResult {
+  changes: Change[];
+  /** 変更があった文書（"scene:main" / "prefab:enemy"） */
+  dirty: Set<string>;
+}
+
+export class PatchError extends Error {
+  opIndex: number;
+  constructor(opIndex: number, message: string) {
+    super(`操作${opIndex + 1}: ${message}`);
+    this.opIndex = opIndex;
+  }
+}
+
+type Holder = { components: Record<string, Record<string, unknown>>; name?: string };
+
+function holderOf(docs: Docs, a: Address): { holder: Holder; key: string } {
+  if (a.kind === 'prefab') {
+    const p = docs.prefabs.get(a.doc);
+    if (!p) throw new Error(`プレハブ ${a.doc} はありません${suggest(a.doc, [...docs.prefabs.keys()])}`);
+    return { holder: p, key: `prefab:${a.doc}` };
+  }
+  const s = docs.scenes.get(a.doc);
+  if (!s) throw new Error(`シーン ${a.doc} はありません${suggest(a.doc, [...docs.scenes.keys()])}`);
+  const e = s.entities.find((x) => x.id === a.entity);
+  if (!e) throw new Error(`シーン ${a.doc} にエンティティ ${a.entity} はありません${suggest(a.entity!, s.entities.map((x) => x.id))}`);
+  return { holder: e, key: `scene:${a.doc}` };
+}
+
+/** 値を読む。フィールドが省略されていれば既定値を返す（isDefault=true）。 */
+export function getValue(docs: Docs, reg: Registry, path: string): { value: unknown; isDefault: boolean } {
+  const a = parseAddress(path);
+  const { holder } = holderOf(docs, a);
+  if (!a.component) return { value: holder, isDefault: false };
+  const comp = holder.components[a.component];
+  if (!comp) throw new Error(`${path}: コンポーネント ${a.component} が付いていません${suggest(a.component, Object.keys(holder.components))}`);
+  if (!a.field) return { value: comp, isDefault: false };
+  const def = reg.component(a.component);
+  const f = def.fields[a.field];
+  if (!f) throw new Error(`${a.component} に ${a.field} はありません${suggest(a.field, Object.keys(def.fields))}`);
+  return a.field in comp ? { value: comp[a.field], isDefault: false } : { value: f.default, isDefault: true };
+}
+
+/** 操作をまとめて適用する。1つでも失敗したら何も変えない。 */
+export function applyOps(docs: Docs, reg: Registry, ops: Op[]): PatchResult {
+  const work: Docs = { scenes: structuredClone(docs.scenes), prefabs: structuredClone(docs.prefabs) };
+  const changes: Change[] = [];
+  const dirty = new Set<string>();
+  ops.forEach((op, i) => {
+    try {
+      applyOne(work, reg, op, changes, dirty);
+    } catch (err) {
+      throw new PatchError(i, err instanceof Error ? err.message : String(err));
+    }
+  });
+  // 成功したら本物に反映
+  for (const k of dirty) {
+    const [kind, name] = k.split(':');
+    if (kind === 'scene') docs.scenes.set(name, work.scenes.get(name)!);
+    else docs.prefabs.set(name, work.prefabs.get(name)!);
+  }
+  return { changes, dirty };
+}
+
+function applyOne(docs: Docs, reg: Registry, op: Op, changes: Change[], dirty: Set<string>): void {
+  switch (op.op) {
+    case 'set': {
+      const a = parseAddress(op.path);
+      if (!a.component || !a.field) throw new Error(`set にはフィールドまでのアドレスが必要です（例: main#player.Mover.speed）。受け取った値: ${op.path}`);
+      const { holder, key } = holderOf(docs, a);
+      const comp = holder.components[a.component];
+      if (!comp) throw new Error(`${op.path}: コンポーネント ${a.component} が付いていません。先に addComponent が必要です`);
+      const def = reg.component(a.component);
+      const f = def.fields[a.field];
+      if (!f) throw new Error(`${a.component} に ${a.field} はありません${suggest(a.field, Object.keys(def.fields))}`);
+      const err = checkValue(a.component, a.field, f, op.value);
+      if (err) throw new Error(err);
+      if (f.type === 'prefab' && !docs.prefabs.has(op.value as string)) {
+        throw new Error(`プレハブ ${op.value} はありません${suggest(String(op.value), [...docs.prefabs.keys()])}`);
+      }
+      const from = a.field in comp ? comp[a.field] : f.default;
+      if (JSON.stringify(from) === JSON.stringify(op.value)) return;
+      comp[a.field] = structuredClone(op.value);
+      changes.push({ path: op.path, from, to: op.value });
+      dirty.add(key);
+      return;
+    }
+    case 'addEntity': {
+      const s = docs.scenes.get(op.scene);
+      if (!s) throw new Error(`シーン ${op.scene} はありません${suggest(op.scene, [...docs.scenes.keys()])}`);
+      if (!/^[A-Za-z0-9_-]+$/.test(op.entity.id)) throw new Error(`エンティティID "${op.entity.id}" には英数字・_・- だけが使えます`);
+      if (s.entities.some((e) => e.id === op.entity.id)) throw new Error(`シーン ${op.scene} に ${op.entity.id} はすでにあります`);
+      const comps = op.entity.components ?? {};
+      for (const [name, values] of Object.entries(comps)) reg.build(name, values, `${op.scene}#${op.entity.id}`);
+      const e: EntityData = { id: op.entity.id, name: op.entity.name ?? op.entity.id, components: structuredClone(comps) };
+      if (op.entity.tags?.length) e.tags = [...op.entity.tags];
+      s.entities.push(e);
+      changes.push({ path: `${op.scene}#${e.id}`, to: 'added' });
+      dirty.add(`scene:${op.scene}`);
+      return;
+    }
+    case 'removeEntity': {
+      const s = docs.scenes.get(op.scene);
+      if (!s) throw new Error(`シーン ${op.scene} はありません`);
+      const i = s.entities.findIndex((e) => e.id === op.id);
+      if (i < 0) throw new Error(`シーン ${op.scene} に ${op.id} はありません${suggest(op.id, s.entities.map((e) => e.id))}`);
+      const [removed] = s.entities.splice(i, 1);
+      changes.push({ path: `${op.scene}#${op.id}`, from: removed, to: 'removed' });
+      dirty.add(`scene:${op.scene}`);
+      return;
+    }
+    case 'addComponent': {
+      const a = parseAddress(op.target);
+      const { holder, key } = holderOf(docs, a);
+      if (holder.components[op.component]) throw new Error(`${op.target} にはすでに ${op.component} が付いています`);
+      reg.build(op.component, op.values ?? {}, op.target);
+      holder.components[op.component] = structuredClone(op.values ?? {});
+      changes.push({ path: `${op.target}.${op.component}`, to: 'added' });
+      dirty.add(key);
+      return;
+    }
+    case 'removeComponent': {
+      const a = parseAddress(op.target);
+      const { holder, key } = holderOf(docs, a);
+      if (!holder.components[op.component]) throw new Error(`${op.target} に ${op.component} は付いていません${suggest(op.component, Object.keys(holder.components))}`);
+      const from = holder.components[op.component];
+      delete holder.components[op.component];
+      changes.push({ path: `${op.target}.${op.component}`, from, to: 'removed' });
+      dirty.add(key);
+      return;
+    }
+    case 'rename': {
+      const a = parseAddress(op.target);
+      const { holder, key } = holderOf(docs, a);
+      const from = holder.name;
+      holder.name = op.name;
+      changes.push({ path: `${op.target}:name`, from, to: op.name });
+      dirty.add(key);
+      return;
+    }
+    default:
+      throw new Error(`未知の操作 ${(op as { op: string }).op}。使えるのは set / addEntity / removeEntity / addComponent / removeComponent / rename`);
+  }
+}
+
+/** 値を文字列から推測して変換する（CLIの set 用）。 */
+export function parseLiteral(text: string): unknown {
+  if (text === 'true') return true;
+  if (text === 'false') return false;
+  if (text === 'null') return null;
+  if (/^-?\d+(\.\d+)?(e-?\d+)?$/i.test(text)) return Number(text);
+  if (/^[[{"]/.test(text)) {
+    try { return JSON.parse(text); } catch { /* 文字列として扱う */ }
+  }
+  return text;
+}

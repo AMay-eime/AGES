@@ -1,0 +1,26 @@
+{
+  "name": "ages",
+  "version": "0.1.0",
+  "description": "AGES — All Games should be Edited Speedy. AIが扱いやすいゲームエンジン兼エディタ",
+  "type": "module",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "node": ">=22.18"
+  },
+  "bin": {
+    "ages": "./bin/ages.js"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "editor": "node src/editor/server.ts examples/shooter",
+    "check": "tsc -p tsconfig.json",
+    "test": "node --test test/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0"
+  }
+}
