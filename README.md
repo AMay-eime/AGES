@@ -8,7 +8,12 @@
 - 人とAIのすべての編集を操作ログに残し、人が調整した値はAIが勝手に上書きしない
 - 実行時の外部依存ゼロ。コンパイル待ちなし
 
-設計の詳細は [DESIGN.md](DESIGN.md)、AIが作業するときの手順は [AGENTS.md](AGENTS.md) を参照。
+- 開発理念: [docs/VISION.md](docs/VISION.md)
+- 企画書（現在地・段階的な計画・ベンチマーク）: [docs/PLAN.md](docs/PLAN.md)
+- 手順書: [docs/PROCEDURES.md](docs/PROCEDURES.md)
+- 決定の記録: [docs/DECISIONS.md](docs/DECISIONS.md)
+- 技術設計: [DESIGN.md](DESIGN.md)
+- AIがAGESでゲームを作るときの手順: [AGENTS.md](AGENTS.md)
 
 ## 必要なもの
 
