@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "AGES — All Games should be Edited Speedy. AIが扱いやすいゲームエンジン兼エディタ",
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "private": true,
   "engines": {
     "node": ">=22.18"
