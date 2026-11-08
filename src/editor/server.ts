@@ -281,18 +281,21 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
     const exists = (r: string) => existsSync(inside(projectDir, r));
     const data = await body(req);
     const had = exists(rel);
-    if (had && (await call<boolean>('fileLocked', rel))) return json(res, { error: `🔒 ${rel} はロックされたファイルです。差し替えるならロックマネージャーで` }, 423);
     if (had && mode === 'new') return json(res, { error: `${rel} はすでにあります`, exists: true, free: freeName(rel, exists) }, 409);
     if (had && mode === 'keep') rel = freeName(rel, exists);
-    const abs = inside(projectDir, rel);
-    await mkdir(dirname(abs), { recursive: true });
-    await writeFile(abs, data);
-    known.set(abs, data.toString('utf8'));
-    await call('logFiles', human(req, 'assets'), [{ path: `file:${rel}`, to: had && mode === 'replace' ? 'replaced' : 'added' }]);
-    await call('recheckLocks');
+    known.set(inside(projectDir, rel), data.toString('utf8'));
+    // 書くのは作業スレッド（元に戻せるように控えを取り、ロックされたファイルは断る）
+    await call('upload', human(req, 'assets'), rel, new Uint8Array(data));
     broadcast({ type: 'files', paths: [rel] });
     return json(res, { ok: true, path: rel });
   }
+  if (m === 'POST' && (p === '/api/undo' || p === '/api/redo')) {
+    const b = JSON.parse((await body(req)).toString('utf8') || '{}');
+    const r = await call('undo', human(req, b.win ?? 'undo'), { tx: b.tx, redo: p === '/api/redo' });
+    broadcast({ type: 'docs', by: human(req, '').who, changes: r.changes });
+    return json(res, r);
+  }
+  if (m === 'GET' && p === '/api/undo') return json(res, await call('undoState', human(req, '')));
   if (m === 'POST' && p === '/api/mkdir') {
     const rel = (url.searchParams.get('path') ?? '').replace(/\\/g, '/').replace(/\/+$/, '');
     const bad = checkAssetPath(rel);

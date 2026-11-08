@@ -74,6 +74,8 @@ const renderTop = () => {
     h('button', { title: '1フレーム進める', onclick: () => app.stepOnce() }, '⏭'),
     h('button', { title: '停止（実行中の変更を保存するか選べます）', onclick: () => app.stopPlay(), disabled: !p }, '⏹ 停止'),
     h('button', { title: '入力を記録しながら再生（停止時に recordings/ に保存）', onclick: () => app.startPlay(true), disabled: !!p }, '● 記録して再生'),
+    h('button', { class: 'icon', title: app.undoInfo.undo ? `元に戻す（Ctrl+Z）: ${app.undoInfo.undo.label}` : '元に戻せる編集はありません', disabled: !app.undoInfo.undo || !!p, onclick: () => app.undo() }, '↶'),
+    h('button', { class: 'icon', title: app.undoInfo.redo ? `やり直す（Ctrl+Shift+Z）: ${app.undoInfo.redo.label}` : 'やり直せる編集はありません', disabled: !app.undoInfo.redo || !!p, onclick: () => app.undo(true) }, '↷'),
     h('span', { class: 'spacer' }),
     audioControls(),
     broken ? h('button', { style: 'border-color:var(--bad);color:var(--bad)', onclick: () => app.openLocks(), title: `${s.integrity.reason}\nロックマネージャーで確かめます` }, '🔒⚠ ロックの記録を確認') : null,
@@ -121,6 +123,13 @@ function openSettings(): void {
 const typing = (e: KeyboardEvent) => e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement;
 app.devices.enabled = () => !!app.play;
 app.devices.bindKeyboard(window, typing);
+// 元に戻す・やり直す（文字を入力している欄では、その欄の中の取り消しを優先する）
+window.addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey) || typing(e) || (e.target as HTMLElement)?.isContentEditable || app.play) return;
+  const k = e.key.toLowerCase();
+  if (k === 'z' && !e.shiftKey) { e.preventDefault(); app.undo(); }
+  else if ((k === 'z' && e.shiftKey) || k === 'y') { e.preventDefault(); app.undo(true); }
+});
 
 // ---------- プロジェクト独自のウインドウ ----------
 const windows = new Map<string, { el: HTMLElement; cleanup?: () => void }>();

@@ -1,5 +1,6 @@
 // プロジェクト（フォルダ）の読み込みと保存。Node 側専用。
-import { readFile, writeFile, readdir, mkdir, rm, rename, copyFile } from 'node:fs/promises';
+import { readFile, writeFile, readdir, mkdir, rm, rename, copyFile, cp } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -14,8 +15,10 @@ import { ROW_ID, type TableDoc } from '../core/table.ts';
 import { appendLog, localTime, lockedHits, markTouched, movePrefixTouched, moveTouched, readLocks as readLockFile, readLog, readTouched, writeLocks, type Actor, type LockMark } from './oplog.ts';
 import { agesHome, lockDiff, verifyLocks, type LockIntegrity } from './seal.ts';
 import { scanAssets, type AssetInfo } from './assets.ts';
-import { codeRefs, codeSceneRefs, isUnder } from '../core/assets.ts';
+import { assetRefs, codeRefs, codeSceneRefs, isUnder } from '../core/assets.ts';
 import { checkWindows, loadWindows, unlistedWindows, withinEdits, type WindowInfo } from './windows.ts';
+import { Journal, inverseFiles, type DocState, type FileMove, type TxRecord } from './journal.ts';
+import { revert as revertValue, same } from '../core/revert.ts';
 import { FIT_MODES } from '../core/camera.ts';
 import { KNOWN_AXES, KNOWN_BUTTONS } from '../core/input.ts';
 import { checkSheet, checkSheetImage, findFrame, frameCount, sheetPathOf, type SheetDef } from '../core/sheet.ts';
@@ -120,6 +123,10 @@ export class Project {
       return (e as Error).message;
     }
   }
+
+  /** 元に戻す・やり直しの記録 */
+  get journal(): Journal { return (this.journalCache ??= new Journal(this.dir)); }
+  private journalCache: Journal | null = null;
 
   /** 画像・音・フォントの一覧（reload のたびに更新） */
   assets: AssetInfo[] = [];
@@ -489,7 +496,7 @@ export class Project {
    * 操作を適用して保存し、ログに残す。
    * AIが人の調整した値を変えようとした場合は force がない限り止める。
    */
-  async apply(ops: Op[], actor: Actor, opts: { force?: boolean } = {}): Promise<PatchResult> {
+  async apply(ops: Op[], actor: Actor, opts: { force?: boolean; tx?: Partial<TxRecord> } = {}): Promise<PatchResult> {
     const targetOf = (op: Op) =>
       op.op === 'set' || op.op === 'setCells' || op.op === 'insert' ? op.path
         : op.op === 'removeItem' || op.op === 'moveItem' ? splitItem(op.path).list
@@ -623,18 +630,38 @@ export class Project {
     }
     const introduced = this.validate().filter((e) => !before.has(e));
     if (introduced.length) rollback(introduced.join(' / '));
+    const fileMoves: FileMove[] = [];
     for (const f of result.files) {
       try {
         const from = join(this.dir, f.from);
-        if (f.to === null) await rm(from, { recursive: f.dir, force: true });
-        else { await mkdir(dirname(join(this.dir, f.to)), { recursive: true }); await rename(from, join(this.dir, f.to)); }
+        if (f.to === null) {
+          // 消すファイルは、元に戻せるように控えを取っておく（この端末の使用者のフォルダ）
+          fileMoves.push({ kind: 'delete', path: f.from, dir: f.dir, trash: await this.journal.keep(from, f.dir) });
+          await rm(from, { recursive: f.dir, force: true });
+        } else {
+          await mkdir(dirname(join(this.dir, f.to)), { recursive: true });
+          await rename(from, join(this.dir, f.to));
+          fileMoves.push({ kind: 'move', from: f.from, to: f.to, dir: f.dir });
+        }
       } catch (e) {
         rollback(`ファイルを${f.to === null ? '消せません' : '動かせません'}（${f.from}）: ${(e as Error).message}`);
       }
     }
     await this.saveDirty(result.dirty);
-    const opName = ops.length === 1 ? ops[0].op : 'batch';
-    await appendLog(this.dir, actor, opName, result.changes);
+    const opName = opts.tx?.undoOf ? 'undo' : opts.tx?.redoOf ? 'redo' : ops.length === 1 ? ops[0].op : 'batch';
+    const tx = this.journal.newId();
+    if (result.changes.length || fileMoves.length) {
+      const docs: Record<string, DocState> = {};
+      for (const key of result.dirty) docs[key] = { before: docOf(backup, key), after: docOf(this.docs, key) };
+      const structural = ops.every((o) => STRUCTURAL.has(o.op));
+      await this.journal.append({
+        id: tx, t: new Date().toISOString(), who: actor.who, kind: actor.kind, win: actor.win, label: describeTx(result.changes),
+        docs, files: fileMoves.length ? fileMoves : undefined,
+        ...(structural ? { ops, inverse: [...ops].reverse().map(inverseOp) } : {}),
+        ...opts.tx,
+      });
+    }
+    await appendLog(this.dir, actor, opName, result.changes, tx);
     await markTouched(this.dir, actor, result.changes);
     if (actor.kind === 'human') {
       // 人がロック中の値を編集したら、ロックの値も新しい値にする。消したものはロックも外す。行の ID を変えたらロックも付け替える
@@ -724,6 +751,157 @@ export class Project {
     return files;
   }
 
+  /**
+   * 元に戻す（redo ならやり直す）。tx を省くと、その人（actor）の直前の編集。
+   * その後で同じ所が別の値に変えられていたら、戻さずに知らせる。ロック・★の決まりはふつうの編集と同じ
+   */
+  async undo(actor: Actor, opts: { tx?: string; redo?: boolean; force?: boolean } = {}): Promise<PatchResult & { label: string }> {
+    const all = await this.journal.read();
+    const st = Journal.status(all);
+    let target: TxRecord | undefined;
+    if (opts.tx) {
+      target = all.find((r) => r.id === opts.tx);
+      if (!target) throw new Error(`編集 ${opts.tx} の記録がありません（この端末で行った、最近${300}件までの編集を戻せます）`);
+      if (!opts.redo && st.get(target.id) !== 'done') throw new Error(`編集 ${opts.tx} はもう戻してあります`);
+      if (opts.redo && st.get(target.id) !== 'undone') throw new Error(`編集 ${opts.tx} は戻していないので、やり直せません`);
+    } else {
+      const n = Journal.next(all, actor.who, actor.kind);
+      target = opts.redo ? n.redo : n.undo;
+      if (!target) throw new Error(opts.redo ? 'やり直せる編集はありません' : '元に戻せる編集はありません（この端末で行った、あなたの編集だけを戻せます）');
+    }
+    if (target.undoOf) throw new Error('「元に戻す」そのものは戻せません。やり直すなら redo で');
+    const meta: Partial<TxRecord> = opts.redo ? { redoOf: target.id, label: target.label } : { undoOf: target.id, label: `元に戻す: ${target.label}` };
+    const ops = opts.redo ? target.ops : target.inverse;
+    const r = ops
+      ? await this.apply(ops, actor, { force: opts.force, tx: meta })
+      : await this.restoreDocs(target, !!opts.redo, actor, meta, !!opts.force);
+    return { ...r, label: target.label };
+  }
+
+  /** 文書を、ある編集の前（redo なら後）に戻す。その後で変わった所はそのまま、ぶつかれば止める */
+  private async restoreDocs(target: TxRecord, redo: boolean, actor: Actor, meta: Partial<TxRecord>, force: boolean): Promise<PatchResult> {
+    const conflicts: string[] = [];
+    const next = new Map<string, unknown>();
+    for (const [key, d] of Object.entries(target.docs)) {
+      const from = redo ? d.before : d.after, to = redo ? d.after : d.before;
+      const r = revertValue(docOf(this.docs, key) ?? undefined, from ?? undefined, to ?? undefined, docLabel(key));
+      conflicts.push(...r.conflicts);
+      next.set(key, r.value ?? null);
+    }
+    if (conflicts.length) throw new Error(`${redo ? 'やり直せません' : '元に戻せません'}。その後で変えられています: ${conflicts.slice(0, 6).join(', ')}${conflicts.length > 6 ? ` ほか${conflicts.length - 6}か所` : ''}`);
+    const files = redo ? target.files ?? [] : inverseFiles(target.files ?? []);
+    // ロック・★の決まりは、ふつうの編集と同じ
+    const before: Docs = { scenes: new Map(this.docs.scenes), prefabs: new Map(this.docs.prefabs), sheets: new Map(this.docs.sheets), tables: new Map(this.docs.tables), files: new Set(this.docs.files), config: structuredClone(this.config) };
+    const after: Docs = { scenes: new Map(before.scenes), prefabs: new Map(before.prefabs), sheets: new Map(before.sheets), tables: new Map(before.tables), files: before.files, config: structuredClone(this.config) };
+    for (const [key, v] of next) setDoc(after, key, v);
+    const changes = diffDocs(before, after);
+    if (before.config!.startScene !== after.config!.startScene) changes.push({ path: 'config.startScene', from: before.config!.startScene, to: after.config!.startScene });
+    for (const f of files) changes.push(f.kind === 'move' ? { path: `file:${f.from}`, from: f.from, to: f.to } : { path: `file:${f.path}`, to: f.kind === 'delete' ? 'removed' : f.kind === 'create' ? 'added' : 'replaced' });
+    const locks = await this.effectiveLocks();
+    if (!isKeeper(actor)) {
+      const hits = [...new Set([
+        ...changes.filter((c) => !c.path.startsWith('file:')).flatMap((c) => lockedHits(locks, sheetRoot(c.path.replace(/\[\d+,\s*\d+\]$/, '')))),
+        ...files.flatMap((f) => { const p = f.kind === 'move' ? f.from : f.path; return Object.keys(locks).filter((k) => k === `file:${p}` || (k.startsWith('file:') && isUnder(k.slice(5), p))); }),
+      ])];
+      if (hits.length) throw new Error(`🔒 ロックされた値に関わるので、${meta.redoOf ? 'やり直せません' : '元に戻せません'}: ${hits.join(', ')}${actor.kind === 'human' ? '。変えるならロックマネージャーで' : ''}`);
+    }
+    // AI が人の編集を戻すときは、人が調整した値に触れるなら確認が要る（自分の編集を戻すだけなら、前の値に戻るだけなので要らない）
+    if (actor.kind === 'ai' && !force && (target.who !== actor.who || target.kind !== actor.kind)) {
+      const touched = await readTouched(this.dir);
+      const hits = changes.flatMap((c) => Object.keys(touched).filter((t) => related(t, c.path) && touched[t].who !== actor.who));
+      if (hits.length) throw new Error(`人が調整した値に触れます: ${[...new Set(hits)].join(', ')}。ユーザーに確認してから --force を付けて実行してください`);
+    }
+    // 使われているファイルは、取り込みを戻して消すことはできない
+    const refs = assetRefs(after, this.registry);
+    for (const f of files) if (f.kind === 'delete' && refs.has(f.path)) throw new Error(`${f.path} は使われているので、取り込みを戻せません: ${refs.get(f.path)!.slice(0, 3).join(', ')}`);
+    // ファイルを動かしてから、文書を置き換えて検証する。問題が増えたら全部戻す
+    const done: FileMove[] = [];
+    const runFile = async (f: FileMove) => {
+      const abs = (p: string) => join(this.dir, p);
+      if (f.kind === 'move') {
+        if (existsSync(abs(f.to))) throw new Error(`${f.to} がすでにあります`);
+        await mkdir(dirname(abs(f.to)), { recursive: true });
+        await rename(abs(f.from), abs(f.to));
+      } else if (f.kind === 'delete') {
+        await rm(abs(f.path), { recursive: f.dir, force: true });
+      } else if (f.kind === 'create') {
+        if (existsSync(abs(f.path))) throw new Error(`${f.path} がすでにあります`);
+        await mkdir(dirname(abs(f.path)), { recursive: true });
+        await cp(this.journal.trashPath(f.trash), abs(f.path), { recursive: f.dir });
+      } else {
+        await copyFile(this.journal.trashPath(f.newTrash), abs(f.path));
+      }
+    };
+    const problemsBefore = new Set(this.validate());
+    try {
+      for (const f of files) { await runFile(f); done.push(f); }
+    } catch (e) {
+      for (const f of inverseFiles(done)) await runFile(f).catch(() => {});
+      throw new Error(`ファイルを戻せません: ${(e as Error).message}`);
+    }
+    const keep = { docs: this.docs, assets: this.assets, images: this.registry.images, config: structuredClone(this.config) };
+    const scan = files.length ? await scanAssets(this.dir) : null;
+    this.docs = { ...after, files: scan ? new Set(scan.files) : this.docs.files, config: this.config, sheets: after.sheets };
+    Object.assign(this.config, after.config);
+    if (scan) { this.assets = scan.assets; this.registry.images = imagesOf(scan.assets); }
+    this.registry.prefabs = this.docs.prefabs;
+    this.registry.scenes = this.docs.scenes;
+    this.registry.sheets = this.docs.sheets;
+    this.registry.tableData = this.docs.tables;
+    const introduced = this.validate().filter((e) => !problemsBefore.has(e));
+    if (introduced.length) {
+      this.docs = keep.docs;
+      this.assets = keep.assets;
+      this.registry.images = keep.images;
+      Object.assign(this.config, keep.config);
+      this.registry.prefabs = this.docs.prefabs;
+      this.registry.scenes = this.docs.scenes;
+      this.registry.sheets = this.docs.sheets;
+      this.registry.tableData = this.docs.tables;
+      for (const f of inverseFiles(done)) await runFile(f).catch(() => {});
+      throw new Error(`${meta.redoOf ? 'やり直す' : '元に戻す'}と問題が出るので止めました: ${introduced.join(' / ')}`);
+    }
+    const dirty = new Set<string>([...next.keys()]);
+    await this.saveDirty(dirty);
+    const tx = this.journal.newId();
+    const docs: Record<string, DocState> = {};
+    for (const key of next.keys()) docs[key] = { before: docOf(before, key), after: docOf(this.docs, key) };
+    await this.journal.append({ id: tx, t: new Date().toISOString(), who: actor.who, kind: actor.kind, win: actor.win, label: meta.label ?? describeTx(changes), docs, files: files.length ? files : undefined, ...meta });
+    await appendLog(this.dir, actor, meta.redoOf ? 'redo' : 'undo', changes, tx);
+    await markTouched(this.dir, actor, changes);
+    return { changes, dirty, files: [] };
+  }
+
+  /** 次に「元に戻す」「やり直す」と何が起きるか（エディタのボタンの説明） */
+  async undoState(actor: Actor): Promise<{ undo?: { id: string; label: string }; redo?: { id: string; label: string } }> {
+    const n = Journal.next(await this.journal.read(), actor.who, actor.kind);
+    return { undo: n.undo && { id: n.undo.id, label: n.undo.label }, redo: n.redo && { id: n.redo.id, label: n.redo.label } };
+  }
+
+  /**
+   * ファイルを取り込む（エディタから）。同じ名前があれば差し替え。元に戻せるように、前の中身と新しい中身の控えを取る
+   * ロックされたファイルは差し替えられない（ロックマネージャーで）
+   */
+  async upload(rel: string, data: Buffer, actor: Actor): Promise<{ replaced: boolean }> {
+    const abs = join(this.dir, rel);
+    const had = existsSync(abs);
+    if (had && !isKeeper(actor) && (await this.effectiveLocks())[`file:${rel}`]) throw new Error(`🔒 ${rel} はロックされたファイルです。差し替えるならロックマネージャーで`);
+    const oldTrash = had ? await this.journal.keep(abs, false) : null;
+    await mkdir(dirname(abs), { recursive: true });
+    await writeFile(abs, data);
+    const newTrash = await this.journal.keep(abs, false);
+    const tx = this.journal.newId();
+    const change: Change = { path: `file:${rel}`, to: had ? 'replaced' : 'added' };
+    await this.journal.append({ id: tx, t: new Date().toISOString(), who: actor.who, kind: actor.kind, win: actor.win, label: `${rel} を${had ? '差し替え' : '取り込み'}`, docs: {},
+      files: [oldTrash ? { kind: 'replace', path: rel, oldTrash, newTrash } : { kind: 'create', path: rel, dir: false, trash: newTrash }] });
+    await appendLog(this.dir, actor, 'upload', [change], tx);
+    const scan = await scanAssets(this.dir);
+    this.assets = scan.assets;
+    this.registry.images = imagesOf(scan.assets);
+    this.docs.files = new Set(scan.files);
+    return { replaced: had };
+  }
+
   /** このプロセスが書いたファイルと内容（エディタが「外部からの編集」と区別するため） */
   written = new Map<string, string>();
 
@@ -776,7 +954,14 @@ export class Project {
     const before = this.docs;
     await this.reload(); // ロックされた値はここで元に戻る（lockReport に出る）
     const changes = diffDocs(before, this.docs);
-    await appendLog(this.dir, actor, 'text', changes);
+    const tx = this.journal.newId();
+    const docs: Record<string, DocState> = {};
+    for (const key of docKeys(before, this.docs)) {
+      const a = docOf(before, key), b = docOf(this.docs, key);
+      if (!same(a, b)) docs[key] = { before: a, after: b };
+    }
+    if (Object.keys(docs).length) await this.journal.append({ id: tx, t: new Date().toISOString(), who: actor.who, kind: actor.kind, win: actor.win, label: `テキストで ${describeTx(changes)}`, docs });
+    await appendLog(this.dir, actor, 'text', changes, tx);
     await markTouched(this.dir, actor, changes);
     return changes;
   }
@@ -881,3 +1066,58 @@ async function fileHash(abs: string): Promise<string | null> {
 
 /** ロックしたファイルの控えの場所（この端末の使用者のフォルダ。Git では共有しない） */
 const lockedCopy = (root: string, sha256: string) => join(agesHome(), 'locked-files', createHash('sha1').update(resolve(root)).digest('hex'), sha256);
+
+/** 文書の鍵（"scene:main" など）の中身。無ければ null */
+function docOf(d: Docs, key: string): unknown {
+  if (key === 'config') return d.config ? structuredClone(d.config) : null;
+  const i = key.indexOf(':');
+  const kind = key.slice(0, i), name = key.slice(i + 1);
+  const v = kind === 'scene' ? d.scenes.get(name) : kind === 'prefab' ? d.prefabs.get(name) : kind === 'table' ? d.tables.get(name) : kind === 'sheet' ? d.sheets.get(name) : undefined;
+  return v === undefined ? null : structuredClone(v);
+}
+
+function setDoc(d: Docs, key: string, v: unknown): void {
+  if (key === 'config') { if (v) d.config = structuredClone(v) as ProjectConfig; return; }
+  const i = key.indexOf(':');
+  const kind = key.slice(0, i), name = key.slice(i + 1);
+  const map = (kind === 'scene' ? d.scenes : kind === 'prefab' ? d.prefabs : kind === 'table' ? d.tables : d.sheets) as Map<string, unknown>;
+  if (v === null || v === undefined) map.delete(name); else map.set(name, structuredClone(v));
+}
+
+function docKeys(a: Docs, b: Docs): string[] {
+  const keys = new Set<string>();
+  for (const d of [a, b]) {
+    for (const n of d.scenes.keys()) keys.add(`scene:${n}`);
+    for (const n of d.prefabs.keys()) keys.add(`prefab:${n}`);
+    for (const n of d.tables.keys()) keys.add(`table:${n}`);
+    for (const n of d.sheets.keys()) keys.add(`sheet:${n}`);
+  }
+  return [...keys];
+}
+
+/** ぶつかりの知らせに使う、文書の名前 */
+function docLabel(key: string): string {
+  if (key.startsWith('prefab:')) return '@' + key.slice(7);
+  if (key.startsWith('table:')) return '$' + key.slice(6);
+  return key;
+}
+
+/** 名前の変更・場所の変更の、逆の操作 */
+function inverseOp(op: Op): Op {
+  if (op.op === 'renameRow') return { op: 'renameRow', table: op.table, id: op.to, to: op.id };
+  if (op.op === 'renameScene') return { op: 'renameScene', name: op.to, to: op.name };
+  if (op.op === 'moveAsset') return { op: 'moveAsset', from: op.to, to: op.from };
+  throw new Error(`${op.op} の逆の操作はありません`);
+}
+
+/** 編集の短い説明（「元に戻す: main#player.Player.speed 4.5→6」のように出る） */
+function describeTx(changes: Change[]): string {
+  const main = changes.filter((c) => !c.auto);
+  const first = main[0] ?? changes[0];
+  if (!first) return '編集';
+  const v = (x: unknown) => { const s = typeof x === 'string' ? x : JSON.stringify(x); return s && s.length > 24 ? s.slice(0, 21) + '…' : s; };
+  const what = typeof first.to === 'string' && /^(added|removed|replaced)$/.test(first.to) ? ({ added: '追加', removed: '削除', replaced: '差し替え' } as Record<string, string>)[first.to]
+    : typeof first.to === 'string' && first.to.startsWith('renamed:') ? `→ ${first.to.slice(8)}`
+    : first.from !== undefined && typeof first.from !== 'object' && typeof first.to !== 'object' ? `${v(first.from)}→${v(first.to)}` : '変更';
+  return `${first.path} ${what}${main.length > 1 ? ` ほか${main.length - 1}件` : ''}`;
+}

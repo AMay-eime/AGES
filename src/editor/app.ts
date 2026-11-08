@@ -94,9 +94,26 @@ export class App {
     localStorage.setItem('ages.user', this.user);
   }
 
+  /** 次に「元に戻す」「やり直す」と何が起きるか（上のバーのボタンの説明） */
+  undoInfo: { undo?: { id: string; label: string }; redo?: { id: string; label: string } } = {};
+
+  /** 元に戻す（redo ならやり直す）。tx を渡すと、その編集（操作ログから選んだもの。AI の編集も） */
+  async undo(redo = false, tx?: string): Promise<void> {
+    if (this.play) return toast('再生中は元に戻せません（止めてから）', 'bad');
+    try {
+      const r = await this.api<{ label: string; changes: Change[]; warnings?: string[] }>(redo ? '/api/redo' : '/api/undo', { body: { tx } });
+      toast(`${redo ? 'やり直しました' : '元に戻しました'}: ${r.label}`);
+      for (const w of r.warnings ?? []) toast(`⚠ ${w}`, 'bad', 8000);
+    } catch (e) {
+      toast((e as Error).message, 'bad', 8000);
+    }
+    await this.refresh();
+  }
+
   async refresh(): Promise<void> {
-    const s = await this.api<EditorState>('/api/state');
+    const [s, u] = await Promise.all([this.api<EditorState>('/api/state'), this.api<App['undoInfo']>('/api/undo').catch(() => ({}))]);
     this.state = s;
+    this.undoInfo = u;
     if (s.error) {
       this.emit('change');
       return;
