@@ -89,7 +89,7 @@ test('ロックマネージャーの表示: 今の値・型・問題、打つと
   assert.deepEqual(st.items.map((i) => [i.path, i.value, i.lock?.note]), [['$enemies.basic.hp', 2, '体力は決定']]);
 });
 
-test('サーバー: ロックの操作はロックマネージャーのオリジンからだけ。エディタの側では受け付けない', async () => {
+test('サーバー: ロックを外す・値を変えるのはロックマネージャーのオリジンからだけ。かけるのはエディタからも', async () => {
   const dir = await fresh();
   const port = 15170 + Math.floor(Math.random() * 400) * 2;
   const child = spawn(process.execPath, [new URL('../src/editor/server.ts', import.meta.url).pathname, dir, '--port', String(port), '--lock-port', String(port + 1)], { env: { ...process.env, NODE_NO_WARNINGS: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -102,7 +102,9 @@ test('サーバー: ロックの操作はロックマネージャーのオリジ
     });
     const post = (p: number, path: string, body: unknown, origin?: string) => fetch(`http://127.0.0.1:${p}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', ...(origin ? { origin } : {}) }, body: JSON.stringify(body) });
     const lockBody = { paths: ['main#player.Player.speed'] };
-    assert.equal((await post(port, '/api/lock', lockBody)).status, 403, 'エディタの側のロックの窓口はない');
+    assert.equal((await post(port, '/api/unlock', lockBody)).status, 403, 'エディタの側から外す窓口はない');
+    assert.equal((await post(port, '/api/lock', { ...lockBody, win: 'window:x' })).status, 403, '独自のウインドウからはかけられない');
+    assert.equal((await post(port, '/api/lock', { paths: ['main#player.Player.fireInterval'] })).status, 200, 'エディタからはかけられる');
     assert.equal((await post(port, '/api/patch', { ops: [{ op: 'set', path: 'main#player.Player.speed', value: 1 }], win: 'lock-manager' })).status, 403, 'ロックマネージャーを名乗れない');
     assert.equal((await post(port + 1, '/api/lock', lockBody, `http://localhost:${port}`)).status, 403, 'エディタの画面（別のオリジン）からは通らない');
     assert.equal((await post(port + 1, '/api/lock', lockBody)).status, 403, '送り元がなければ通らない');

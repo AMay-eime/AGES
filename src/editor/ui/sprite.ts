@@ -368,8 +368,8 @@ export function spritePanel(app: App): Panel & { open(image: string): void } {
       lock ? h('span', { style: 'color:var(--lock)', title: '変えるなら、ロックマネージャーで外してから' }, '🔒 ロック中（保存できません）') : null,
       image && h('button', {
         class: `icon lockbtn ${lock ? 'on' : ''}`,
-        title: lock ? `🔒 この画像の切り方はロック中（${lock.who}）。AI もエディタも変えられません。クリックでロックマネージャーを開く` : 'この画像の切り方をロックする（ロックマネージャーが開きます）',
-        onclick: () => app.openLocks(lockPath),
+        title: lock ? `🔒 この画像の切り方はロック中（${lock.who}）。AI もエディタも変えられません。クリックでロックマネージャーを開く` : 'この画像の切り方をロックする（外すのはロックマネージャーで）',
+        onclick: () => (lock ? app.openLocks(lockPath) : app.lock([lockPath], 'sprite')),
       }, lock ? '🔒' : '🔓'),
       h('button', { onclick: () => { load(); renderAll(); }, title: '保存していない変更を捨てる' }, '元に戻す'),
       saveBtn,

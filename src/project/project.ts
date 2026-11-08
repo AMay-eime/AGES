@@ -311,7 +311,8 @@ export class Project {
 
   /** 値をロックする（人だけ）。paths はフィールドまでのアドレス。 */
   async lock(paths: string[], actor: Actor, note?: string): Promise<void> {
-    this.requireKeeper(actor, 'ロックを付けるの');
+    // ロックを「かける」のは、人ならエディタからもできる（安全側の操作で、開発が進む操作なので軽く）。外すのはロックマネージャーからだけ
+    if (actor.kind !== 'human' || actor.win?.startsWith('window:')) throw new Error('🔒 ロックをかけるのは人だけです（エディタの 🔓 か、ロックマネージャーで）。AI と独自のウインドウからはできません');
     this.requireIntegrity();
     const locks = await readLockFile(this.dir);
     const t = new Date().toISOString();

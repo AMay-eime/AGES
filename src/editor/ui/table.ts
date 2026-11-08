@@ -144,7 +144,7 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
       if (lock) { w.setAttribute('inert', ''); w.classList.add('locked-value'); }
       return h('div', { class: `field ${isNested(f) ? 'wide' : ''} ${k in r ? '' : 'default'} ${touched ? 'touched' : ''} ${lock ? 'locked' : ''}` },
         h('label', { title: `${k}: ${typeOf(f)}${f.desc ? '\n' + f.desc : ''}${touched ? `\n★ ${touched.who} が ${time(touched.t)} に調整` : ''}` }, k), w,
-        h('button', { class: `icon lockbtn ${lock ? 'on' : ''}`, title: lock ? `🔒 ロック中（${lock.who}）。クリックでロックマネージャーを開く（外す・値を変える）` : 'ロックする（ロックマネージャーが開きます）', onclick: () => app.openLocks(path) }, lock ? '🔒' : '🔓'));
+        h('button', { class: `icon lockbtn ${lock ? 'on' : ''}`, title: lock ? `🔒 ロック中（${lock.who}）。クリックでロックマネージャーを開く（外す・値を変える）` : 'ロックする（外すのはロックマネージャーで）', onclick: () => (lock ? app.openLocks(path) : app.lock([path], 'table')) }, lock ? '🔒' : '🔓'));
     });
     clear(side,
       h('div', { class: 'pad', style: 'border-bottom:1px solid var(--line)' },
@@ -153,7 +153,7 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
           h('button', { class: 'icon', title: '上へ', disabled: i === 0, onclick: () => patch([{ op: 'moveRow', table: name, id: r.id, to: i - 1 }]) }, '↑'),
           h('button', { class: 'icon', title: '下へ', disabled: i === rows().length - 1, onclick: () => patch([{ op: 'moveRow', table: name, id: r.id, to: i + 1 }]) }, '↓'),
           h('button', { onclick: () => duplicate(r), title: 'この行を複製して、すぐ下に置く' }, '複製'),
-          h('button', { onclick: () => app.openLocks(`$${name}.${r.id}`), title: 'この行の値をまとめてロック／解除する（ロックマネージャーが開きます）' }, allLocked ? '🔒 行のロック' : '🔒 行をロック'),
+          h('button', { onclick: () => (allLocked ? app.openLocks(`$${name}.${r.id}`) : app.lock(allPaths.filter((p) => !locks[p]), 'table')), title: allLocked ? 'この行のロックを見る・外す（ロックマネージャーで）' : 'この行の値をまとめてロックする（外すのはロックマネージャーで）' }, allLocked ? '🔒 行のロック' : '🔒 行をロック'),
           h('button', { style: 'color:var(--bad)', onclick: () => { if (confirm(`$${name}.${r.id} を消しますか？`)) { selRow = ''; patch([{ op: 'removeRow', table: name, id: r.id }]); } } }, '消す'))),
       fields);
   };
