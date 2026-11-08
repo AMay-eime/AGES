@@ -4,6 +4,7 @@
   "components": {
     "Sound": {
       "clip": "assets/sounds/shot.wav",
+      "bus": "se",
       "volume": 0.35,
       "pitchJitter": 0.06,
       "maxVoices": 6,

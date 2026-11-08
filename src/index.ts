@@ -5,7 +5,7 @@ export { defineSystem, type SystemDef, type GameModule } from './core/registry.t
 export type { Ctx } from './core/game.ts';
 export type { Entity } from './core/world.ts';
 export { defineWindow, type EditorWindow, type EditorApi } from './editor/window-api.ts';
-export { Transform, Sprite, Animator, Shape, Text, Camera, Sound, Mixer } from './std/components.ts';
-export type { SoundApi, AudioCmd, Bus } from './core/audio.ts';
+export { Transform, Sprite, Animator, Shape, Text, Camera, Sound, AudioBus } from './std/components.ts';
+export type { SoundApi, AudioCmd, BusDef } from './core/audio.ts';
 export { camerasOf, worldToScreen, screenToWorld, visibleCorners, fitView, type CameraView, type FitMode } from './core/camera.ts';
 export type { SheetDef, ClipDef } from './core/sheet.ts';

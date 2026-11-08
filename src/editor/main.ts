@@ -78,10 +78,10 @@ app.on('change', renderTop);
 app.on('play', renderTop);
 app.on('audio', renderTop);
 
-/** 手元の音量とミュート（このブラウザだけ。プロジェクトの音量は Mixer で決める） */
+/** 手元の音量とミュート（このブラウザだけ。ゲームの音量は音量の区分 AudioBus で決める） */
 function audioControls(): HTMLElement {
   const l = app.localAudio;
-  const range = h('input', { type: 'range', min: '0', max: '1', step: '0.05', value: String(l.volume), style: 'width:70px', title: `手元の音量 ${Math.round(l.volume * 100)}%（このブラウザだけ。ゲームの音量はシーンの Mixer で決めます）` }) as HTMLInputElement;
+  const range = h('input', { type: 'range', min: '0', max: '1', step: '0.05', value: String(l.volume), style: 'width:70px', title: `手元の音量 ${Math.round(l.volume * 100)}%（このブラウザだけ。ゲームの音量は音量の区分 AudioBus で決めます）` }) as HTMLInputElement;
   range.addEventListener('input', () => app.setLocalAudio(Number(range.value), false));
   return h('span', { class: 'row', style: 'gap:2px' },
     h('button', { class: 'icon', title: l.muted ? 'ミュート中（クリックで解除）' : '音を消す', onclick: () => app.setLocalAudio(l.volume, !l.muted) }, l.muted ? '🔇' : '🔊'),

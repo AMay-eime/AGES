@@ -211,8 +211,13 @@ export class Project {
         const def = this.registry.components.get(name);
         if (!def) continue;
         for (const [k, f] of Object.entries(def.fields)) {
-          if (f.type === 'prefab' && k in values && !this.docs.prefabs.has(values[k] as string)) {
+          if (f.type === 'prefab' && k in values && values[k] !== '' && !this.docs.prefabs.has(values[k] as string)) {
             errs.push(`${where}.${name}.${k}: プレハブ ${values[k]} はありません${suggest(String(values[k]), [...this.docs.prefabs.keys()])}`);
+          }
+          // 音量の区分を指す値は、AudioBus の付いたプレハブであること
+          if ((name === 'Sound' && k === 'bus' || name === 'AudioBus' && k === 'parent') && typeof values[k] === 'string' && values[k] && this.docs.prefabs.has(values[k] as string) && !this.docs.prefabs.get(values[k] as string)!.components.AudioBus) {
+            const buses = [...this.docs.prefabs.values()].filter((p) => p.components.AudioBus).map((p) => p.name);
+            errs.push(`${where}.${name}.${k}="${values[k]}": 音量の区分は AudioBus の付いたプレハブです${buses.length ? `（ある区分: ${buses.join(', ')}）` : '（まだ区分がありません）'}`);
           }
           if (f.type === 'asset' && typeof values[k] === 'string' && values[k] && !assetPaths.has(values[k] as string)) {
             const same = this.assets.filter((a) => a.kind === f.kind).map((a) => a.path);
@@ -248,8 +253,6 @@ export class Project {
         ids.add(e.id);
         check(`${s.name}#${e.id}`, e.components);
       }
-      const mixers = s.entities.filter((e) => e.components.Mixer).map((e) => e.id);
-      if (mixers.length > 1) errs.push(`シーン ${s.name} に Mixer が ${mixers.length} 個あります（${mixers.join(', ')}）。音量の区分はシーンに1つだけ置きます`);
       // 同じシーンの中のIDを指す値（例: Camera.follow）は、その相手がいること
       const all = s.entities.map((e) => e.id);
       for (const e of s.entities) {
@@ -260,6 +263,15 @@ export class Project {
             if (f.type === 'ref' && typeof v === 'string' && v && !ids.has(v)) errs.push(`${s.name}#${e.id}.${name}.${k}="${v}": シーン ${s.name} にそのIDはありません${suggest(v, all)}`);
           }
         }
+      }
+    }
+    // 音量の区分の親子が輪になっていないこと
+    for (const p of this.docs.prefabs.values()) {
+      if (!p.components.AudioBus) continue;
+      const seen = new Set<string>([p.name]);
+      for (let cur = p.components.AudioBus.parent as string | undefined; cur; cur = this.docs.prefabs.get(cur)?.components.AudioBus?.parent as string | undefined) {
+        if (seen.has(cur)) { errs.push(`@${p.name}.AudioBus.parent: 区分の親子が輪になっています（${[...seen, cur].join(' → ')}）`); break; }
+        seen.add(cur);
       }
     }
     if (this.config.view.fit && !FIT_MODES.includes(this.config.view.fit)) {

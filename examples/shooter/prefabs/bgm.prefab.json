@@ -1,0 +1,10 @@
+{
+  "name": "bgm",
+  "desc": "音量の区分: BGM（同時に1曲だけ。新しい曲でフェードしながら切り替わる）",
+  "components": {
+    "AudioBus": {
+      "volume": 0.8,
+      "exclusive": true
+    }
+  }
+}

@@ -1,6 +1,6 @@
 // エディタの中心。状態の読み込み、サーバーとのやりとり、再生（プレイモード）を受け持つ。
 import { Registry, type GameModule } from '../core/registry.ts';
-import { Game } from '../core/game.ts';
+import { Game, busesOf } from '../core/game.ts';
 import { InputRecorder, InputPlayback, type InputEvent } from '../core/input.ts';
 import type { PrefabDoc, ProjectConfig, SceneDoc } from '../core/docs.ts';
 import type { Op, Change } from '../core/patch.ts';
@@ -172,10 +172,10 @@ export class App {
     try { return { volume: 1, muted: false, ...JSON.parse(localStorage.getItem('ages.audio') ?? '{}') }; } catch { return { volume: 1, muted: false }; }
   }
 
-  /** シーンの Mixer（音量の区分）を、鳴らす側に伝える */
-  syncMix(): void {
-    const m = this.world?.query('Mixer')[0]?.c.Mixer;
-    this.audio.setMix(m ?? { master: 1, bgm: 1, se: 1, voice: 1, ui: 1, maxVoices: 32 });
+  /** 音量の区分（AudioBus のプレハブ）を、鳴らす側に伝える。再生中に人が区分の音量を変えても、その場で反映される */
+  syncBuses(): void {
+    if (!this.registry) return;
+    this.audio.setBuses(this.play ? this.play.game.audioBuses() : busesOf(this.registry));
   }
 
   /** 試しに鳴らす（インスペクタの ▶） */
@@ -185,10 +185,10 @@ export class App {
     this.audio.ensure();
     const l = this.localAudio;
     this.audio.setLocal(l.volume, l.muted);
-    this.syncMix();
-    this.audio.stop({ t: 'stop', frame: 0, cue: 'preview' });
-    // 繰り返す音・BGM も、試し聞きは1回だけ
-    this.audio.handle({ ...playCmd(0, cue, s), loop: false, bus: s.bus === 'bgm' ? 'se' : s.bus });
+    this.syncBuses();
+    this.audio.stop({ t: 'stop', frame: 0, target: 'preview' });
+    // 繰り返す音も、試し聞きは1回だけ（「同時に1つだけ」の区分の曲を止めないよう、区分は通すが切り替えはしない名前で鳴らす）
+    this.audio.handle({ ...playCmd(-1, cue, s), loop: false });
     if (l.muted) toast('ミュート中です（上のバーの 🔇 で解除）');
   }
 
@@ -203,6 +203,7 @@ export class App {
       this.audio.setLocal(l.volume, l.muted);
       this.audio.preload(this.state.assets.filter((a) => a.kind === 'sound').map((a) => a.path));
       this.audio.resume();
+      this.audio.setBuses(game.audioBuses());
       game.audioListeners.push((cmd) => this.audio.handle(cmd));
       this.play = { game, paused: false, edits: new Map(), recorder: record ? new InputRecorder() : undefined };
       this.emit('play');
@@ -235,7 +236,7 @@ export class App {
     try {
       p.recorder?.record(p.game.frame, this.keys);
       p.game.step(this.keys);
-      this.syncMix();
+      this.syncBuses();
     } catch (e) {
       p.paused = true;
       toast((e as Error).message, 'bad', 10000);

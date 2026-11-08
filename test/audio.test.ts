@@ -42,36 +42,56 @@ test('ctx.sound.play: プレハブの設定で鳴らし、回数を数える。�
   assert.match([...g.warnings].join(), /se_shoot.*もしかして: se_shot/);
 });
 
-test('物に付いた音: autoplay の物が現れたら鳴らし、消えたらその音のフェードで止める', async () => {
+test('物に付いた音: playOnStart の物が現れたら鳴らし、消えたらその音のフェードで止める（Play On Awake）', async () => {
   const p = await Project.load(await fresh());
-  await p.apply([{ op: 'addEntity', scene: 'main', entity: { id: 'engine', components: { Sound: { clip: 'assets/sounds/hit.wav', loop: true, autoplay: true, fadeOut: 0.3 } } } }], ai);
+  await p.apply([{ op: 'addEntity', scene: 'main', entity: { id: 'engine', components: { Sound: { clip: 'assets/sounds/hit.wav', loop: true, playOnStart: true, fadeOut: 0.3 } } } }], ai);
   const g = p.newGame();
   const cmds: AudioCmd[] = [];
   g.audioListeners.push((c) => cmds.push(c));
   g.step();
   const plays = cmds.filter((c) => c.t === 'play');
-  assert.deepEqual(plays.map((c) => c.t === 'play' && [c.cue, c.owner, c.bus, c.loop]), [['bgm', 'bgm', 'bgm', true], ['engine', 'engine', 'se', true]]);
+  assert.deepEqual(plays.map((c) => c.t === 'play' && [c.cue, c.owner, c.bus, c.loop]), [['music', 'music', 'bgm', true], ['engine', 'engine', '', true]]);
   g.step();
   assert.equal(cmds.filter((c) => c.t === 'play').length, 2, '鳴り続けている間は、もう一度鳴らさない');
   g.world.destroy('engine');
   g.world.flush();
   g.step();
-  assert.deepEqual(cmds.at(-1), { t: 'stop', frame: 2, owner: 'engine', fade: 0.3 });
+  assert.deepEqual(cmds.at(-1), { t: 'stop', frame: 2, target: 'engine', fade: 0.3 });
 });
 
-test('音量の区分: ctx.sound.volume はシーンの Mixer を変える。Mixer は1つだけ', async () => {
+test('音量の区分はプロジェクトで決める（AudioBus のプレハブ）。親子・音量の変更・検証', async () => {
   const p = await Project.load(await fresh());
   const g = p.newGame();
+  assert.deepEqual(g.audioBuses(), { bgm: { volume: 0.8, parent: '', exclusive: true, maxVoices: 0 }, se: { volume: 1, parent: '', exclusive: false, maxVoices: 24 } });
   g.ctx.sound.volume('bgm', 1.5);
-  assert.equal(g.world.get('mixer')!.c.Mixer.bgm, 1, '0〜1 に収める');
-  await assert.rejects(p.apply([{ op: 'addEntity', scene: 'main', entity: { id: 'mixer2', components: { Mixer: {} } } }], ai), /Mixer が 2 個/);
+  assert.equal(g.ctx.sound.getVolume('bgm'), 1, '0〜1 に収める');
+  assert.equal(g.audioBuses().bgm.volume, 1);
+  g.ctx.sound.volume('bmg', 0.5);
+  assert.match([...g.warnings].join(), /区分 "bmg".*もしかして: bgm/);
+  // 区分を足す（親子）。区分でないプレハブは選べない。親子の輪は止める。空は全体の直下
+  await p.apply([{ op: 'set', path: '@se.AudioBus.parent', value: '' }], ai);
+  await assert.rejects(p.apply([{ op: 'set', path: '@se_hit.Sound.bus', value: 'enemy' }], ai), /音量の区分は AudioBus の付いたプレハブ.*ある区分: bgm, se/);
+  await assert.rejects(p.apply([{ op: 'set', path: '@se.AudioBus.parent', value: 'bgm' }, { op: 'set', path: '@bgm.AudioBus.parent', value: 'se' }], ai), /輪になっています/);
   await assert.rejects(p.apply([{ op: 'set', path: '@se_hit.Sound.clip', value: 'assets/sounds/hitt.wav' }], ai), /もしかして: assets\/sounds\/hit\.wav/);
+});
+
+test('重ねるBGM: 音量を時間で変える・曲の位置をそろえて足す・区分ごと止める', async () => {
+  const p = await Project.load(await fresh());
+  const g = p.newGame();
+  const cmds: AudioCmd[] = [];
+  g.audioListeners.push((c) => cmds.push(c));
+  g.ctx.sound.play('assets/sounds/hit.wav', { volume: 0, with: 'music' });
+  g.ctx.sound.fade('assets/sounds/hit.wav', 0.8, 2);
+  g.ctx.sound.stopBus('se', 0.5);
+  assert.deepEqual(cmds.map((c) => c.t === 'play' ? [c.t, c.volume, c.with] : c.t === 'fade' ? [c.t, c.target, c.volume, c.sec] : c.t === 'stop' ? [c.t, c.bus, c.fade] : [c.t]),
+    [['play', 0, 'music'], ['fade', 'assets/sounds/hit.wav', 0.8, 2], ['stop', 'se', 0.5]]);
 });
 
 test('ages run: 何が何回鳴ったかと、見つからない音を要約に出す', async () => {
   const dir = await fresh();
   const out = await cmdRun(dir, { frames: '120', keys: '0-120:KeyZ' });
-  assert.match(out, /sounds: .*♪se_shot×\d+.*♪bgm×1/);
+  assert.match(out, /sounds: .*♪se_shot×\d+/);
+  assert.match(out, /♪music×1/);
   const p = await Project.load(dir);
   assert.deepEqual(p.validate(), []);
   // WAV の長さを地図に出す

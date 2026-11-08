@@ -183,8 +183,13 @@ function widget(app: App, f: Field, value: unknown, commit: (v: unknown, final: 
     }
     case 'enum':
     case 'prefab': {
-      const options = f.type === 'enum' ? f.options : Object.keys(app.state.prefabs);
-      const sel = h('select', {}, options.map((o) => h('option', { value: o, selected: o === value }, o))) as HTMLSelectElement;
+      // 音量の区分を選ぶ欄は、AudioBus の付いたプレハブだけを出す
+      const busOnly = (ctx.comp === 'Sound' && ctx.field === 'bus') || (ctx.comp === 'AudioBus' && ctx.field === 'parent');
+      const prefabs = Object.values(app.state.prefabs).filter((p) => !busOnly || p.components.AudioBus).map((p) => p.name);
+      const options = f.type === 'enum' ? f.options : [...(f.default === '' ? [''] : []), ...prefabs];
+      if (f.type === 'prefab' && typeof value === 'string' && !options.includes(value)) options.push(value);
+      const label = (o: string) => (o === '' ? (busOnly ? '（なし: 全体の直下）' : '（なし）') : o);
+      const sel = h('select', {}, options.map((o) => h('option', { value: o, selected: o === value }, label(o)))) as HTMLSelectElement;
       sel.addEventListener('change', () => commit(sel.value, true));
       wrap.append(sel);
       return { el: wrap, set: (v) => { sel.value = String(v); } };

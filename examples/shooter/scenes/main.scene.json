@@ -152,26 +152,17 @@
       }
     },
     {
-      "id": "bgm",
-      "name": "BGM",
+      "id": "music",
+      "name": "Music",
       "components": {
         "Sound": {
           "clip": "assets/sounds/bgm.wav",
           "bus": "bgm",
           "volume": 0.6,
           "loop": true,
-          "autoplay": true,
+          "playOnStart": true,
           "fadeIn": 0.5,
           "fadeOut": 1
-        }
-      }
-    },
-    {
-      "id": "mixer",
-      "name": "Mixer",
-      "components": {
-        "Mixer": {
-          "bgm": 0.8
         }
       }
     }

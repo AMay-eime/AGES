@@ -4,6 +4,7 @@
   "components": {
     "Sound": {
       "clip": "assets/sounds/hit.wav",
+      "bus": "se",
       "volume": 0.9
     }
   }

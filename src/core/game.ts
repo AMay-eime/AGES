@@ -4,7 +4,7 @@ import { Rng } from './rng.ts';
 import { Input } from './input.ts';
 import type { Registry } from './registry.ts';
 import type { SceneDoc, ProjectConfig } from './docs.ts';
-import { DEFAULT_SOUND, isSoundPath, playCmd, type AudioCmd, type SoundApi, type SoundSettings } from './audio.ts';
+import { DEFAULT_SOUND, isSoundPath, playCmd, type AudioCmd, type BusDef, type SoundApi, type SoundSettings } from './audio.ts';
 import { suggest } from './schema.ts';
 
 export interface Ctx {
@@ -43,6 +43,17 @@ export class GameError extends Error {
     this.frame = frame;
     this.cause = cause;
   }
+}
+
+/** 音量の区分（AudioBus の付いたプレハブ）の一覧。overrides はゲームの中で変えた音量 */
+export function busesOf(registry: Registry, overrides: Map<string, number> = new Map()): Record<string, BusDef> {
+  const out: Record<string, BusDef> = {};
+  for (const p of registry.prefabs.values()) {
+    if (!p.components.AudioBus) continue;
+    const b = registry.build('AudioBus', p.components.AudioBus) as unknown as BusDef;
+    out[p.name] = { ...b, volume: overrides.get(p.name) ?? b.volume };
+  }
+  return out;
 }
 
 export class Game {
@@ -120,7 +131,15 @@ export class Game {
     return null;
   }
 
+  /** 音量の区分（AudioBus の付いたプレハブ）。鳴らす側に渡す */
+  audioBuses(): Record<string, BusDef> {
+    return busesOf(this.registry, this.busVolumes);
+  }
+  /** ゲームの中で変えた区分の音量（'' は全体） */
+  private busVolumes = new Map<string, number>();
+
   private makeSoundApi(): SoundApi {
+    const f = () => this.frame;
     return {
       play: (name, opts) => {
         const s = this.soundSettings(name);
@@ -132,8 +151,9 @@ export class Game {
         this.sendAudio(playCmd(this.frame, name, s, opts));
         return true;
       },
-      stop: (name, fade) => this.sendAudio({ t: 'stop', frame: this.frame, ...(name ? { cue: name } : {}), ...(fade !== undefined ? { fade } : {}) }),
-      stopMusic: (fade) => this.sendAudio({ t: 'stop', frame: this.frame, bus: 'bgm', ...(fade !== undefined ? { fade } : {}) }),
+      stop: (target, fade) => this.sendAudio({ t: 'stop', frame: f(), ...(target ? { target } : {}), ...(fade !== undefined ? { fade } : {}) }),
+      stopBus: (bus, fade) => this.sendAudio({ t: 'stop', frame: f(), bus, ...(fade !== undefined ? { fade } : {}) }),
+      fade: (target, volume, sec) => this.sendAudio({ t: 'fade', frame: f(), target, volume: Math.max(0, volume), sec: Math.max(0, sec) }),
       playFrom: (id) => {
         const e = this.world.get(id);
         if (!e?.c.Sound) { this.warnings.add(`ctx.sound.playFrom("${id}"): その物に Sound がありません`); return false; }
@@ -142,13 +162,17 @@ export class Game {
         this.sendAudio(playCmd(this.frame, e.prefab ?? e.id, s, {}, id));
         return true;
       },
-      stopFrom: (id, fade) => this.sendAudio({ t: 'stop', frame: this.frame, owner: id, ...(fade !== undefined ? { fade } : {}) }),
       volume: (bus, value) => {
+        if (bus && !this.registry.prefabs.get(bus)?.components.AudioBus) {
+          const names = [...this.registry.prefabs.values()].filter((p) => p.components.AudioBus).map((p) => p.name);
+          this.warnings.add(`ctx.sound.volume: 音量の区分 "${bus}" がありません（AudioBus の付いたプレハブの名前。全体は ''）${suggest(bus, names)}`);
+          return;
+        }
         const v = Math.max(0, Math.min(1, value));
-        const mixer = this.world.query('Mixer')[0];
-        if (mixer) mixer.c.Mixer[bus] = v;
-        this.sendAudio({ t: 'volume', frame: this.frame, bus, value: v });
+        this.busVolumes.set(bus, v);
+        this.sendAudio({ t: 'volume', frame: f(), bus, value: v });
       },
+      getVolume: (bus) => this.busVolumes.get(bus) ?? (bus ? this.audioBuses()[bus]?.volume ?? 1 : 1),
     };
   }
 
