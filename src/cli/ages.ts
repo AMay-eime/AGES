@@ -73,7 +73,9 @@ export async function cmdMap(dir: string): Promise<string> {
 export async function planWarning(dir: string): Promise<string> {
   const text = await readFile(join(dir, 'EDITOR-PLAN.md'), 'utf8').catch(() => null);
   if (text === null) return '⚠ EDITOR-PLAN.md がありません。ゲームを作る前に、必要なエディタを使用者と決めてください（AGENTS.md「ゲームの企画を受けたら」）';
-  if (!/-\s*\[x\]\s*使用者がこの計画を確認した/i.test(text)) return '⚠ EDITOR-PLAN.md がまだ合意されていません。使用者と計画を確認するまで、ゲームのコードは書かないでください';
+  if (!/-\s*\[x\]\s*使用者が(この計画を確認した|AIにおまかせした)/i.test(text)) {
+    return '⚠ EDITOR-PLAN.md がまだ合意されていません。使用者に「一緒に決めるか、AIにおまかせか」を聞き、合意するまでゲームのコードは書かないでください';
+  }
   return '';
 }
 

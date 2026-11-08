@@ -165,3 +165,13 @@ test('ages init: 手順書とエディタ計画書の入ったプロジェクト
   assert.equal(await planWarning(dir), '');
   await assert.rejects(cmdInit(dir), /すでに/);
 });
+
+test('エディタ計画: 「AIにおまかせ」でも合意として扱う', async () => {
+  const { cmdInit, planWarning } = await import('../src/cli/ages.ts');
+  const dir = join(await mkdtemp(join(tmpdir(), 'ages-omakase-')), 'g');
+  await cmdInit(dir, 'g');
+  const plan = join(dir, 'EDITOR-PLAN.md');
+  assert.match(await planWarning(dir), /おまかせか/);
+  await writeFile(plan, (await readFile(plan, 'utf8')).replace('- [ ] 使用者がAIにおまかせした', '- [x] 使用者がAIにおまかせした'));
+  assert.equal(await planWarning(dir), '');
+});
