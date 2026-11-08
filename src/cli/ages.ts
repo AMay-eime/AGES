@@ -117,6 +117,10 @@ export async function cmdInit(dir: string, name?: string): Promise<string> {
     .replaceAll('`examples/', `\`${engine}/examples/`);
   await writeFile(join(target, 'AGENTS.md'), agents);
   created.push('AGENTS.md');
+  // MCP の設定（Claude Code などがこのフォルダを開くと、AGES の道具と使い方の説明が自動で渡る）
+  const mcp = { mcpServers: { ages: { command: 'node', args: [`${engine}/src/mcp/server.ts`] } } };
+  await writeFile(join(target, '.mcp.json'), JSON.stringify(mcp, null, 2) + '\n');
+  created.push('.mcp.json');
   return [
     `プロジェクト ${projectName} を作りました: ${dir}`,
     ...created.sort().map((f) => `  ${f}`),

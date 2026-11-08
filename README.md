@@ -41,6 +41,16 @@ node bin/ages.js run examples/shooter --frames 600 --watch main#player.Health.hp
 node bin/ages.js log examples/shooter            # 前回からの編集の要約
 ```
 
+## MCP（AIのアプリから直接使う）
+
+`ages init` で作ったプロジェクトには `.mcp.json` が入っていて、Claude Code などで開けば自動でつながります。手動で足す場合:
+
+```sh
+claude mcp add ages -- node /path/to/AGES/src/mcp/server.ts --project /path/to/my-game
+```
+
+使用者のPC上で動く小さなプログラムで、ネット上のサーバーは要りません。
+
 ## エディタでできること（段階1）
 
 - 階層・プロジェクト（ファイル一覧、ドロップで assets/ に追加）・インスペクタ・ゲーム・テキスト・操作ログ・Git
@@ -52,6 +62,7 @@ node bin/ages.js log examples/shooter            # 前回からの編集の要�
 - タブはドラッグで別の場所へ移動でき、境界線で大きさを変えられる（配置は .ages/layout.json に保存）
 - プロジェクト独自のウインドウ（`editor/*.window.ts`）を追加できる
 - 外部（別のエディタやAI）でファイルが書き換えられると即座に反映。ロックされた値は自動で元に戻る
+- ロックの記録そのものが書き換えられると「🔒⚠ ロックの記録を確認」が出て、人が確認するまでAIの編集はすべて止まる
 - Git: エディタからプル・コミット・プッシュ。コミットの説明は操作ログから下書き
 
 ## ライセンス
