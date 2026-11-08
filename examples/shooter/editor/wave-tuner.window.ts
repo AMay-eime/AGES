@@ -9,11 +9,13 @@ const KNOBS: { path: string; label: string; min: number; max: number; step: numb
 ];
 
 // 自動操作: 撃ちながら左右に往復する
-const AUTOPILOT = '0-1800:KeyZ;0-150:ArrowLeft;150-450:ArrowRight;450-750:ArrowLeft;750-1050:ArrowRight;1050-1350:ArrowLeft;1350-1650:ArrowRight';
+const AUTOPILOT = '0-1800:@fire;0-150:@move_x=-1;150-450:@move_x=1;450-750:@move_x=-1;750-1050:@move_x=1;1050-1350:@move_x=-1;1350-1650:@move_x=1';
 
 export default defineWindow({
   id: 'wave-tuner',
   title: '敵の出方',
+  desc: '敵の出方（間隔・速さ・体力）をまとめて調整し、自動操作で30秒を試す',
+  edits: KNOBS.map((k) => k.path),
   mount(el, api: EditorApi) {
     const { h } = api;
     const result = h('pre', { style: 'padding:8px;margin:0' }, '「30秒を試す」で、自動操作のプレイを画面なしで一瞬で回します');

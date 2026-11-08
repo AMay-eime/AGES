@@ -83,7 +83,7 @@ function compact(obj: Record<string, unknown>): string {
 export async function cmdMap(dir: string): Promise<string> {
   const p = await Project.load(dir);
   const plan = await planWarning(p.dir);
-  return withLockReport(p, (plan ? plan + '\n' : '') + renderMap(p, await readTouched(p.dir), await p.effectiveLocks(), await p.codeRefs()));
+  return withLockReport(p, (plan ? plan + '\n' : '') + renderMap(p, await readTouched(p.dir), await p.effectiveLocks(), await p.codeRefs(), await p.windows()));
 }
 
 /** エディタ計画書が未合意なら警告文を返す */
@@ -364,7 +364,7 @@ export async function cmdLog(dir: string, f: Args['flags']): Promise<string> {
 
 export async function cmdCheck(dir: string): Promise<string> {
   const p = await Project.load(dir);
-  const errs = p.validate();
+  const errs = [...p.validate(), ...(await p.checkWindows())];
   return withLockReport(p, errs.length ? errs.map((e) => `error: ${e}`).join('\n') : `ok（シーン${p.docs.scenes.size} プレハブ${p.docs.prefabs.size} コンポーネント${p.registry.components.size} システム${p.registry.systems.length}）`);
 }
 
