@@ -5,8 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Project } from '../src/project/project.ts';
 import { readLog } from '../src/project/oplog.ts';
-import { keysToEvents } from '../src/cli/ages.ts';
-import { InputPlayback } from '../src/core/input.ts';
+import { InputPlayback, keysToEvents } from '../src/core/input.ts';
 
 // ロックの封印の鍵と控えを、テスト用の一時フォルダに置く（使用者のフォルダを汚さない）
 process.env.AGES_HOME = await mkdtemp(join(tmpdir(), 'ages-home-'));

@@ -5,6 +5,7 @@ import type { PrefabDoc } from './docs.ts';
 import type { SheetDef } from './sheet.ts';
 import { STD_COMPONENTS } from '../std/components.ts';
 import { STD_SYSTEMS } from '../std/systems.ts';
+import { STD_TABLES } from '../std/tables.ts';
 import type { Ctx } from './game.ts';
 
 export interface SystemDef {
@@ -48,6 +49,8 @@ export class Registry {
   images = new Map<string, { w: number; h: number }>();
   /** 標準のコンポーネントの名前 */
   readonly std = new Set(STD_COMPONENTS.map((c) => c.name));
+  /** 標準の表の名前 */
+  readonly stdTables = new Set(STD_TABLES.map((t) => t.name));
 
   static from(mod: GameModule, prefabs: Iterable<PrefabDoc> = []): Registry {
     const r = new Registry();
@@ -66,7 +69,9 @@ export class Registry {
       }
       r.systems.push(s);
     }
+    for (const t of STD_TABLES) r.tables.set(t.name, t);
     for (const t of mod.tables ?? []) {
+      if (STD_TABLES.some((x) => x.name === t.name)) throw new Error(`表 ${t.name} は標準で用意されています。game/ の定義を消して、標準のものを使ってください（ages schema <dir> $${t.name}）`);
       if (r.tables.has(t.name)) throw new Error(`表 ${t.name} が2回定義されています`);
       if (!/^[A-Za-z0-9_-]+$/.test(t.name)) throw new Error(`表の名前 "${t.name}" には英数字・_・- だけが使えます`);
       if ('id' in t.columns) throw new Error(`表 ${t.name}: 列 id は自動で付くので、columns に書かないでください`);

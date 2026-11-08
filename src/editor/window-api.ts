@@ -22,7 +22,7 @@ export interface EditorApi {
   get(path: string): unknown;
   /** インスペクタで選ぶ（例: main#player / @enemy） */
   select(address: string): void;
-  /** 画面なしで試し実行する。keys は "0-600:KeyZ;100-200:ArrowLeft" の形 */
+  /** 画面なしで試し実行する。keys は ages run --keys と同じ書き方（"0-600:@fire;100-200:ArrowLeft"） */
   simulate(frames: number, keys?: string, seed?: number): { counts: Record<string, number>; frame: number; ms: number };
   on(event: 'change' | 'select' | 'play' | 'frame', fn: () => void): () => void;
   on(event: 'gameEvent', fn: (ev: GameEvent) => void): () => void;

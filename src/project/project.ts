@@ -14,6 +14,7 @@ import { appendLog, localTime, lockedHits, markTouched, readLocks as readLockFil
 import { lockDiff, verifyLocks, type LockIntegrity } from './seal.ts';
 import { scanAssets, type AssetInfo } from './assets.ts';
 import { FIT_MODES } from '../core/camera.ts';
+import { KNOWN_AXES, KNOWN_BUTTONS } from '../core/input.ts';
 import { checkSheet, checkSheetImage, findFrame, frameCount, sheetPathOf, type SheetDef } from '../core/sheet.ts';
 
 // ゲームコードの import ... from 'ages' を、どのフォルダにあるプロジェクトからでもこのエンジンに向ける
@@ -208,6 +209,10 @@ export class Project {
         if (!this.registry.tables.has(lf.table)) { errs.push(`${lat}: 表 ${lf.table} の形がありません${suggest(lf.table, [...this.registry.tables.keys()])}`); return; }
         const ids = (this.docs.tables.get(lf.table)?.rows ?? []).map((r) => r.id);
         if (!ids.includes(lv)) errs.push(`${lat}="${lv}": 表 ${lf.table} にその行はありません${suggest(lv, ids)}`);
+      }
+      if (lf.type === 'input' && typeof lv === 'string') {
+        const known = lf.analog ? KNOWN_AXES : KNOWN_BUTTONS;
+        if (!known.includes(lv)) errs.push(`${lat}="${lv}": ${lf.analog ? '軸' : 'ボタン'}の名前ではありません${suggest(lv, known)}（例 ${lf.analog ? 'Pad.LX' : 'KeyZ, Space, Pad.A, Mouse0'}）`);
       }
       if (lat === at) return; // フィールドそのものの prefab・asset は、下のこれまでの検証で見る
       if (lf.type === 'prefab' && typeof lv === 'string' && lv && !this.docs.prefabs.has(lv)) errs.push(`${lat}: プレハブ ${lv} はありません${suggest(lv, [...this.docs.prefabs.keys()])}`);

@@ -12,7 +12,7 @@ import { brief, defaultOf, matrixSize, suggest, typeOf } from '../core/schema.ts
 import { parseAddress } from '../core/docs.ts';
 import { cellsToRows, formatDelimited, importOps, parseDelimited, tableToCells } from '../core/csv.ts';
 import type { Row, TableDoc } from '../core/table.ts';
-import { InputPlayback, type InputEvent } from '../core/input.ts';
+import { InputPlayback, actionsFromRows, keysToEvents, type ActionDef, type InputEvent } from '../core/input.ts';
 import { GameError, type Game } from '../core/game.ts';
 import { baseNameOf, frameCount, listFrames, type SheetDef } from '../core/sheet.ts';
 import { autoRects, carryClips, gridRects, nameFrames, type Pixels, type Rect } from '../core/slice.ts';
@@ -29,7 +29,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
                addRow/removeRow/moveRow/renameRow/setSheet/setFrame/setClip）
   table  <dir> <表> [--cols a,b] [--rows id1,id2]   表を見る（1行1行）
                [--export x.csv] [--import x.csv [--force]]   表計算ソフトとの行き来（読み込みは表をまるごと置き換える）
-  run    <dir> [--frames 600] [--scene main] [--seed 1] [--keys "0-120:ArrowLeft+KeyZ;120-200:ArrowRight"]
+  run    <dir> [--frames 600] [--scene main] [--seed 1] [--keys "0-120:ArrowLeft+KeyZ;120-200:@move_x=1;30:Mouse0+ptr=240,100"]
                [--input recordings/x.input.json] [--watch player.Health.hp,...] [--every 60] [--until gameOver] [--twice] [--dump]
   log    <dir> [--all] [--peek]      前回からの編集の要約（--peek は既読にしない）
   check  <dir>                       全データの検証とロックの検査
@@ -245,25 +245,9 @@ export async function cmdPatch(dir: string, ops: Op[], force: boolean): Promise<
     : `ok ${c.path} ${show(c.from)} → ${show(c.to)}${c.auto ? '（自動）' : ''}`)).join('\n');
 }
 
-/** "0-120:ArrowLeft+KeyZ;120-200:ArrowRight" を入力の記録に変換する */
-export function keysToEvents(spec: string): InputEvent[] {
-  const timeline = new Map<number, { d: string[]; u: string[] }>();
-  const at = (f: number) => timeline.get(f) ?? (timeline.set(f, { d: [], u: [] }), timeline.get(f)!);
-  for (const seg of spec.split(';').map((s) => s.trim()).filter(Boolean)) {
-    const m = seg.match(/^(\d+)-(\d+):(.+)$/);
-    if (!m) throw new Error(`--keys の書き方が違います: "${seg}"。例: 0-120:ArrowLeft+KeyZ`);
-    const [, a, b, keys] = m;
-    for (const k of keys.split('+')) {
-      at(Number(a)).d.push(k);
-      at(Number(b)).u.push(k);
-    }
-  }
-  return [...timeline.entries()].sort((x, y) => x[0] - y[0]).map(([f, v]) => {
-    const ev: InputEvent = { f };
-    if (v.d.length) ev.d = v.d;
-    if (v.u.length) ev.u = v.u;
-    return ev;
-  });
+/** プロジェクトの操作の名前と割り当て（$actions） */
+export function actionsOf(p: Project): Map<string, ActionDef> {
+  return actionsFromRows(p.registry.tableView('actions').rows);
 }
 
 function readWatch(game: Game, addr: string): unknown {
@@ -284,7 +268,7 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
   const seed = f.seed !== undefined ? Number(f.seed) : p.config.seed;
   let events: InputEvent[] = [];
   if (typeof f.input === 'string') events = JSON.parse(await readFile(`${p.dir}/${f.input}`, 'utf8')).events;
-  if (typeof f.keys === 'string') events = keysToEvents(f.keys);
+  if (typeof f.keys === 'string') events = keysToEvents(f.keys, actionsOf(p));
   const watch = typeof f.watch === 'string' ? f.watch.split(',').map((s) => s.trim()).filter(Boolean) : [];
   const every = f.every !== undefined ? Number(f.every) : 0;
   const until = typeof f.until === 'string' ? f.until : '';
@@ -299,7 +283,7 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
     const t0 = performance.now();
     try {
       for (let i = 0; i < frames && !stopped; i++) {
-        game.step(play.keysAt(game.frame));
+        game.step(play.at(game.frame));
         if (every && game.frame % every === 0) {
           lines.push(`f${game.frame} ` + watch.map((w) => `${w.split('.').pop()}=${fmt(readWatch(game, w))}`).join(' '));
         }

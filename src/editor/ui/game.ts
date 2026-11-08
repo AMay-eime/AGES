@@ -123,6 +123,33 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
   };
   const inView = (c: CameraView, x: number, y: number) => x >= c.vx && y >= c.vy && x <= c.vx + c.vw && y <= c.vy + c.vh;
 
+  // ---------- ゲームへのマウス・タッチ ----------
+  /** 再生中（一時停止していない）のカメラの視点では、クリックはゲームの入力になる。選ぶのは一時停止中か自由な視点で */
+  const gameHasMouse = () => !!app.play && !app.play.paused && viewMode === 'camera';
+  /** 画面の点 → ゲームの画面の座標（ctx.view と同じ、設計の大きさで数える。expand で広がった所は 0〜幅 の外になる） */
+  const toGame = (cx: number, cy: number): { x: number; y: number } | null => {
+    if (!app.state || app.state.error) return null;
+    const d = design();
+    const r = canvas.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    let px = ((cx - r.left) / r.width) * canvas.width, py = ((cy - r.top) / r.height) * canvas.height;
+    if (px < 0 || py < 0 || px > canvas.width || py > canvas.height) return null;
+    let vw = canvas.width, vh = canvas.height;
+    if (viewMode === 'free') {
+      // 自由な視点: ワールドの点を、それを映しているプレイヤーのカメラの画面の点に直す
+      const w = app.world;
+      if (!w) return null;
+      const [wx, wy] = screenToWorld(free, px, py);
+      const cams = camerasOf(w, playerView.w, playerView.h, d.width, d.height).reverse();
+      const hit = cams.map((c) => ({ c, s: worldToScreen(c, wx, wy) })).find((x) => inView(x.c, x.s[0], x.s[1]));
+      if (!hit) return null;
+      [px, py] = hit.s;
+      vw = playerView.w; vh = playerView.h;
+    }
+    return { x: px - (vw - d.width) / 2, y: py - (vh - d.height) / 2 };
+  };
+  app.devices.bindPointer(canvas, toGame, gameHasMouse);
+
   /** 位置はあるのに何も描かれていないもの（カメラ・Transform だけ・空の文字・非表示など）。編集中・自由な視点で印を出す */
   const markers = (): { id: string; x: number; y: number; cam: number }[] => {
     const w = app.world;
@@ -147,7 +174,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('mousedown', (e) => {
     const w = app.world;
-    if (!w || !renderer) return;
+    if (!w || !renderer || gameHasMouse()) return;
     const p = toCanvas(e);
     // 自由な視点では、右・中ボタンのドラッグで動かす
     if (viewMode === 'free' && (e.button === 1 || e.button === 2)) { e.preventDefault(); pan = { x: p.x, y: p.y, cx: free.x, cy: free.y }; return; }
@@ -275,7 +302,8 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     drawOverlay(w);
     const cams = renderer.cams.filter((c) => c.id).length;
     const where = viewMode === 'free' ? `自由な視点 ${Math.round(free.zoom * 100)}%（ホイールで拡大・右ドラッグで移動）` : cams ? `カメラ ${cams}台` : '';
-    const tail = [where, hint].filter(Boolean).join('  ');
+    const mouse = gameHasMouse() ? 'マウスはゲームへ（選ぶには一時停止）' : '';
+    const tail = [where, mouse, hint].filter(Boolean).join('  ');
     hud.textContent = p
       ? `${p.paused ? '⏸' : '▶'} f${p.game.frame}  ${(p.game.frame / app.state.config.fps).toFixed(1)}s  ${w.entities.size}体${p.recorder ? '  ●REC' : ''}  ${tail}`
       : `編集中  ${w.entities.size}体  クリックで選択・ドラッグで移動  ${tail}`;

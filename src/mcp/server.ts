@@ -21,7 +21,8 @@ const INSTRUCTIONS = `AGES は、AIと人が一緒に速くゲームを作るた
 - 値は ages_set / ages_patch で変える。JSONを直接書き換えない。行列はセル単位（住所[行,列]）。リストの中は 住所[番号]、構造体の中は 住所.名前
 - 同じ形の行がたくさん並ぶデータ（武器・敵・カードなど）は表にする（defineTable と data/<表>.table.json）。住所は $表.行.列、中身は ages_table で見る
 - 🔒ロックされた値は絶対に変えない（変えられない）。変えるべき理由があれば人に提案する。★人が調整した値は、人に確認してから force
-- 変更後は ages_run で確かめる（keys で入力を指定、twice で再現性）
+- 変更後は ages_run で確かめる（keys で入力を指定。操作の名前 @fire で書ける。twice で再現性）
+- ゲームのコードは入力を操作の名前で読む（ctx.input.isDown('fire') / value('move_x')）。操作は標準の表 $actions に行を足す。キーコンフィグは ctx.input.bind / exportBindings
 - 音は Sound の付いたプレハブを作り ctx.sound.play('名前') で鳴らす。鳴ったかは ages_run の sounds: と ⚠ で確かめる（音を聞かなくてよい）
 - 画像の切り方（スプライトシート）は ages_sheet で見て、ages_slice（格子・数・自動）か ages_patch の setFrame / setClip で変える。画像を開いて確かめない
 - 面白さの核・手触り・個性は人が決める。AIが出すものは「案」と明記する
@@ -80,7 +81,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'ages_run',
-    description: '画面なしで実行し、要約だけを返す。keys の例 "0-120:ArrowLeft+KeyZ;120-200:ArrowRight"。watch の例 ["player.Health.hp"]。until はその出来事で止める。twice=true で再現性を確かめる',
+    description: '画面なしで実行し、要約だけを返す。keys の例 "0-300:@fire;0-120:@move_x=-1;120-200:Pad.LX=0.5;30:ptr=240,100+Mouse0"（@操作 は表 $actions の名前、=-1 は − の向き、=0.5 はアナログ。ボタンの名前 KeyZ も使える）。watch の例 ["player.Health.hp"]。until はその出来事で止める。twice=true で再現性を確かめる',
     inputSchema: {
       type: 'object',
       properties: {

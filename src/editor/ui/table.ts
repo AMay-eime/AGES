@@ -12,7 +12,7 @@ import { h, clear, toast, modal, time } from './dom.ts';
 import { isNested, nestedWidget, toOp, valueSummary, widget, type NestedOp } from './inspector.ts';
 import type { Panel } from './layout.ts';
 
-const SIMPLE = new Set(['number', 'int', 'string', 'enum', 'bool', 'color', 'row', 'prefab', 'asset', 'frame', 'ref']);
+const SIMPLE = new Set(['number', 'int', 'string', 'enum', 'bool', 'color', 'row', 'prefab', 'asset', 'frame', 'ref', 'input']);
 
 export function tablePanel(app: App): Panel & { open(name: string, row?: string): void } {
   const el = h('div', { class: 'table-ed' });
@@ -202,6 +202,8 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
     render();
     if (key) (grid.querySelector(`td[data-row="${CSS.escape(key[0] ?? '')}"][data-col="${CSS.escape(key[1] ?? '')}"]`)?.querySelector('input,select') as HTMLElement | null)?.focus();
   });
+  // リストを開く・閉じる（右の編集欄だけ描き直す）
+  app.on('nestToggle', () => { if (el.isConnected) renderSide(); });
   render();
   return { id: 'table', title: '表', el, fill: true, area: 'center', open, render };
 }
