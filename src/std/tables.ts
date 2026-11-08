@@ -14,4 +14,17 @@ export const actions = defineTable({
   },
 });
 
-export const STD_TABLES = [actions];
+export const tweens = defineTable({
+  name: 'tweens',
+  desc: 'トゥイーン（値を時間で変える）の手触り（標準）。ゲームのコードは ctx.tween(物, { "Sprite.alpha": 0 }, "fadeOut") のように名前で使う',
+  columns: {
+    time: { type: 'number', default: 0.3, min: 0, max: 60, step: 0.01, desc: 'かける秒数（片道）' },
+    ease: { type: 'ease', default: 'outQuad', desc: '変わり方' },
+    delay: { type: 'number', default: 0, min: 0, max: 60, step: 0.01, desc: '始めるまでの秒数' },
+    repeat: { type: 'int', default: 0, min: -1, max: 1000, desc: 'くり返す回数（-1 で止めるまで）' },
+    yoyo: { type: 'bool', default: false, desc: '行って戻る（くり返すたびに向きが変わる）' },
+    desc: { type: 'string', default: '', desc: '何に使うか' },
+  },
+});
+
+export const STD_TABLES = [actions, tweens];

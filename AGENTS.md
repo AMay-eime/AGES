@@ -71,6 +71,8 @@ AGESに足りない機能（画像・音・物理など。docs/PLAN.md の段階
 - 入力は操作の名前で読む（`ctx.input.isDown('fire')` / `pressed` / `value('move_x')`）。キーの名前をコードに書かない。操作と既定の割り当ては標準の表 `$actions`（`ages table <dir> actions`）に行を足す
 - キーコンフィグの画面はゲームのスクリプトで作る: `ctx.input.bind(操作, { keys: [...] })` / `resetBindings()` / `lastPressed()` / `usedBy(ボタン)` / `label(ボタン)`。セーブには `exportBindings()` を入れ、読み込みで `importBindings()`
 - マウス・タッチの位置は `ctx.input.pointer`（画面の座標）か `ctx.pointerWorld()`（ワールドの座標）
+- 値を時間で変える演出（点滅・はねる・薄くして消す）は `ctx.tween(物, { 'Sprite.alpha': 0 }, '名前')`。自分でフレームを数えない。手触り（秒数・ease・くり返し）は標準の表 `$tweens` に行を足して名前で使い、コードに数字を書かない。`'+10'` で今の値からの相対、`from` で始めの値、`destroy` / `emit` で終わったときの処理。止めるのは `ctx.stopTween`
+- 粒（火花・煙）は標準の Particles を物（プレハブ）に付ける（`ages schema <dir> Particles`）。現れたときに出すのは `burst`、出し続けるのは `rate`。後から出すのは `ctx.particles.burst(id)`。粒の動きは描く側で動かし、ゲームの結果には入らない。出したかどうかは `ages run` の `particles:` で確かめる
 
 ## エディタウインドウ
 

@@ -8,6 +8,8 @@ import { DEFAULT_SOUND, isSoundPath, playCmd, type AudioCmd, type BusDef, type S
 import { suggest } from './schema.ts';
 import type { RowOf, TableDef, TableView } from './table.ts';
 import { camerasOf, screenToWorld } from './camera.ts';
+import { checkEase, targetValue, tweenAt, type TweenOptions, type TweenState, type TweenValue } from './tween.ts';
+import type { ParticleApi, ParticleCmd } from './particles.ts';
 
 export interface Ctx {
   world: World;
@@ -40,6 +42,17 @@ export interface Ctx {
   pointerWorld(camera?: string): [number, number] | null;
   /** シーン（今の名前・入ってからのフレーム・切り替え） */
   scene: SceneApi;
+  /**
+   * 値を時間で変える（トゥイーン）。to は { 'コンポーネント.フィールド': 行き先 }（'+10' のように書くと今からの差）。
+   * how は表 $tweens の行の名前（手触りは人が表で決める）か、{ time, ease, delay, repeat, yoyo, destroy, emit, preset }。
+   * 同じ物の同じ値のトゥイーンは、新しいものに置き換わる
+   * 例: ctx.tween('player', { 'Sprite.tint': '#ff6060' }, 'hitFlash')
+   */
+  tween(target: string, to: Record<string, TweenValue>, how?: string | TweenOptions): void;
+  /** トゥイーンを止める（値はそのまま）。field（'Sprite.alpha'）を省くと、その物のすべて */
+  stopTween(target: string, field?: string): void;
+  /** パーティクル（Particles の付いた物から粒を出す） */
+  particles: ParticleApi;
 }
 
 export interface GotoOptions {
@@ -130,6 +143,12 @@ export class Game {
   audioListeners: ((cmd: AudioCmd) => void)[] = [];
   /** 鳴らした音ごとの回数（ages run の要約に載る） */
   soundCounts = new Map<string, number>();
+  /** 進行中のトゥイーン */
+  tweens: TweenState[] = [];
+  /** パーティクルの命令のリスナー（描く側） */
+  particleListeners: ((cmd: ParticleCmd) => void)[] = [];
+  /** パーティクルを出した回数（物の名前・プレハブ → 回数。ages run の要約に載る） */
+  particleCounts = new Map<string, number>();
   /** 実行中に見つかった問題（同じものは1回だけ。ages run の要約に載る） */
   warnings = new Set<string>();
   private lastPlayed = new Map<string, number>();
@@ -178,6 +197,24 @@ export class Game {
         }
       },
       sound: this.makeSoundApi(),
+      tween: (target, to, how) => this.addTween(target, to, how),
+      stopTween: (target, field) => {
+        this.tweens = this.tweens.filter((t) => !(t.id === target && (!field || `${t.comp}.${t.field}` === field)));
+      },
+      particles: {
+        burst: (id, count) => {
+          const e = this.world.get(id);
+          if (!e?.c.Particles) { this.warnings.add(`ctx.particles.burst("${id}"): その物に Particles がありません`); return; }
+          const n = Math.max(0, Math.floor(count ?? e.c.Particles.burst ?? 0));
+          if (!n) return;
+          const key = e.prefab ?? e.id;
+          this.particleCounts.set(key, (this.particleCounts.get(key) ?? 0) + 1);
+          const cmd: ParticleCmd = { t: 'burst', frame: this.frame, id, count: n };
+          for (const l of this.particleListeners) l(cmd);
+        },
+        play: (id) => { const p = this.world.get(id)?.c.Particles; if (p) p.playing = true; else this.warnings.add(`ctx.particles.play("${id}"): その物に Particles がありません`); },
+        stop: (id) => { const p = this.world.get(id)?.c.Particles; if (p) p.playing = false; else this.warnings.add(`ctx.particles.stop("${id}"): その物に Particles がありません`); },
+      },
       table: ((def: string | TableDef) => this.registry.tableView(typeof def === 'string' ? def : def.name)) as Ctx['table'],
       pointerWorld: (camera) => {
         const p = this.input.pointer;
@@ -260,6 +297,54 @@ export class Game {
     };
   }
 
+  /** トゥイーンを足す（同じ物の同じ値のものは置き換える） */
+  private addTween(target: string, to: Record<string, TweenValue>, how: string | TweenOptions = {}): void {
+    const opts: TweenOptions = typeof how === 'string' ? { preset: how } : how;
+    let base: { time: number; ease: string; delay: number; repeat: number; yoyo: boolean } = { time: 0.3, ease: 'outQuad', delay: 0, repeat: 0, yoyo: false };
+    if (opts.preset) {
+      const view = this.registry.tableView('tweens');
+      if (!view.has(opts.preset)) throw new Error(`ctx.tween: 表 $tweens に ${opts.preset} はありません${suggest(opts.preset, [...view.ids])}（行を足すと、人が手触りを表で決められます）`);
+      base = view.get(opts.preset) as unknown as typeof base;
+    }
+    const time = opts.time ?? base.time, delay = opts.delay ?? base.delay;
+    const ease = checkEase(opts.ease ?? base.ease);
+    const e = this.world.get(target);
+    if (!e) throw new Error(`ctx.tween: 物 ${target} はありません${suggest(target, [...this.world.entities.keys()].filter((k) => !k.includes('~')))}`);
+    const fps = this.config.fps;
+    for (const [path, dest] of Object.entries(to)) {
+      const [comp, field] = path.split('.');
+      const def = this.registry.components.get(comp);
+      if (!def || !e.c[comp]) throw new Error(`ctx.tween: ${target} に ${comp} は付いていません${suggest(comp, Object.keys(e.c))}（行き先は 'コンポーネント.フィールド' で書きます）`);
+      const f = def.fields[field];
+      if (!f) throw new Error(`ctx.tween: ${comp} に ${field} はありません${suggest(String(field), Object.keys(def.fields))}`);
+      const at = `${target}.${path}`;
+      const from = opts.from?.[path] !== undefined ? targetValue(at, f, e.c[comp][field], opts.from[path]) : structuredClone(e.c[comp][field]) as TweenValue;
+      const value = targetValue(at, f, from, dest);
+      this.tweens = this.tweens.filter((t) => !(t.id === target && t.comp === comp && t.field === field));
+      this.tweens.push({
+        id: target, comp, field, from, to: value, start: this.frame + Math.round(delay * fps), frames: Math.max(1, Math.round(time * fps)),
+        ease, repeat: Math.round(opts.repeat ?? base.repeat), yoyo: opts.yoyo ?? base.yoyo, cycle: 0, round: f.type === 'int',
+        ...(opts.destroy ? { destroy: true } : {}), ...(opts.emit ? { emit: opts.emit } : {}),
+      });
+    }
+  }
+
+  /** トゥイーンを1フレーム進める（システムの後に） */
+  private stepTweens(): void {
+    if (!this.tweens.length) return;
+    const keep: TweenState[] = [];
+    for (const t of this.tweens) {
+      const c = this.world.isAlive(t.id) ? this.world.get(t.id)?.c[t.comp] : undefined;
+      if (!c) continue; // 物が消えたら、トゥイーンも終わり
+      const r = tweenAt(t, this.frame);
+      if (r.value !== undefined) c[t.field] = r.value;
+      if (!r.done) { keep.push(t); continue; }
+      if (t.emit) this.ctx.emit(t.emit, { id: t.id });
+      if (t.destroy) this.world.destroy(t.id);
+    }
+    this.tweens = keep;
+  }
+
   /** このシーンで動くシステム */
   private active() {
     return this.registry.systems.filter((s) => !s.scenes || s.scenes.includes(this.sceneName));
@@ -339,6 +424,7 @@ export class Game {
     for (const s of systems) {
       try { s.update(this.ctx); } catch (err) { throw new GameError(s.name, this.frame, err); }
     }
+    this.stepTweens();
     this.world.flush();
     this.frame++;
     this.sceneFrame++;
@@ -351,7 +437,7 @@ export class Game {
 
   /** 状態のハッシュ（同じ結果になったかの比較用） */
   hash(): string {
-    const text = JSON.stringify([this.frame, this.rng.state, [...this.world.entities.values()].map((e) => [e.id, e.c]), this.sceneLog.length > 1 ? [this.sceneName, this.sceneFrame] : 0]);
+    const text = JSON.stringify([this.frame, this.rng.state, [...this.world.entities.values()].map((e) => [e.id, e.c]), this.sceneLog.length > 1 ? [this.sceneName, this.sceneFrame] : 0, this.tweens.length ? this.tweens : 0]);
     let h = 0x811c9dc5;
     for (let i = 0; i < text.length; i++) {
       h ^= text.charCodeAt(i);
@@ -361,6 +447,6 @@ export class Game {
   }
 
   snapshot() {
-    return { frame: this.frame, rng: this.rng.state, world: this.world.snapshot(), counts: Object.fromEntries(this.counts), scene: { name: this.sceneName, frame: this.sceneFrame, params: this.sceneParams } };
+    return { frame: this.frame, rng: this.rng.state, world: this.world.snapshot(), counts: Object.fromEntries(this.counts), scene: { name: this.sceneName, frame: this.sceneFrame, params: this.sceneParams }, tweens: structuredClone(this.tweens) };
   }
 }

@@ -1,5 +1,6 @@
 // コンポーネントの宣言（型・範囲・既定値・説明）。
 // インスペクタの自動生成と、AI・人の入力値の検証の両方がここを使う。
+import { EASE_NAMES } from './ease.ts';
 
 export type Field =
   | { type: 'number'; default: number; min?: number; max?: number; step?: number; desc?: string }
@@ -19,6 +20,8 @@ export type Field =
   | { type: 'row'; table: string; default: string; desc?: string }
   /** シーンの名前（ctx.scene.goto の行き先など）。名前を変えると直る */
   | { type: 'scene'; default: string; desc?: string }
+  /** 変わり方（イージング。トゥイーンの手触り）。エディタでは曲線で見える */
+  | { type: 'ease'; default: string; desc?: string }
   /** 入力のボタンの名前（KeyZ, Pad.A, Mouse0 …）。analog なら軸の名前（Pad.LX …）。エディタでは押して決められる */
   | { type: 'input'; default: string; analog?: boolean; desc?: string }
   | MatrixField
@@ -188,6 +191,8 @@ export function checkAt(at: string, f: Field, v: unknown): string | null {
       return typeof v === 'string' ? null : `${at} は表 ${f.table} の行の ID（文字列）が必要です`;
     case 'scene':
       return typeof v === 'string' ? null : `${at} はシーンの名前（文字列）が必要です`;
+    case 'ease':
+      return typeof v === 'string' && (EASE_NAMES as string[]).includes(v) ? null : `${at}=${JSON.stringify(v)} は変わり方の名前ではありません${suggest(String(v), EASE_NAMES)}（ある名前: ${EASE_NAMES.join(' ')}）`;
     case 'input':
       return typeof v === 'string' ? null : `${at} は${f.analog ? '軸' : 'ボタン'}の名前（例 ${f.analog ? 'Pad.LX' : 'KeyZ, Pad.A, Mouse0'}）が必要です`;
     case 'matrix':
@@ -290,6 +295,7 @@ export function typeOf(f: Field): string {
     case 'asset': return `asset<${f.kind}>`;
     case 'row': return `row<${f.table}>`;
     case 'scene': return 'scene';
+    case 'ease': return 'ease';
     case 'input': return f.analog ? 'axis' : 'button';
     case 'matrix': return `matrix<${f.cell ?? 'number'}${r(f.min, f.max)}>`;
     case 'list': return `list<${typeOf(f.of)}>${f.min !== undefined || f.max !== undefined ? `(${f.min ?? 0}..${f.max ?? ''}個)` : ''}`;
@@ -310,7 +316,7 @@ export function brief(f: Field): string {
     }
     case 'list': return `${typeOf(f)}=${JSON.stringify(defaultOf(f))}`;
     case 'struct': case 'oneOf': return typeOf(f);
-    case 'number': case 'int': case 'enum': case 'asset': case 'row': case 'scene': return `${typeOf(f)}=${typeof f.default === 'string' ? JSON.stringify(f.default) : f.default}`;
+    case 'number': case 'int': case 'enum': case 'asset': case 'row': case 'scene': case 'ease': return `${typeOf(f)}=${typeof f.default === 'string' ? JSON.stringify(f.default) : f.default}`;
     default: return `${f.type}=${JSON.stringify(f.default)}`;
   }
 }

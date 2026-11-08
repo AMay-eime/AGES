@@ -1,6 +1,6 @@
 {
   "name": "explosion",
-  "desc": "爆発（アニメーションが終わると消える）",
+  "desc": "爆発（アニメーションが終わると消える。出たときに火花を出す）",
   "components": {
     "Transform": {
       "sx": 2.5,
@@ -15,6 +15,20 @@
     "Animator": {
       "clip": "explode",
       "destroyOnEnd": true
+    },
+    "Particles": {
+      "burst": 14,
+      "lifetime": 0.45,
+      "lifetimeJitter": 0.4,
+      "speed": 140,
+      "speedJitter": 0.5,
+      "spread": 360,
+      "drag": 3,
+      "sizeStart": 5,
+      "sizeEnd": 1,
+      "colorStart": "#ffe9a8",
+      "colorEnd": "#ff5a1f",
+      "layer": 6
     }
   }
 }

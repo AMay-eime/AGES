@@ -87,4 +87,28 @@ export const audio = defineSystem({
   },
 });
 
-export const STD_SYSTEMS = [animator, camera, audio];
+const emittersByWorld = new WeakMap<object, Map<string, number>>();
+
+export const particles = defineSystem({
+  name: 'std.particles',
+  desc: 'Particles の物が現れたら burst の数だけ出し、autoDestroy なら出し終わって粒が消えたころに物を消す（標準）',
+  reads: ['Particles'],
+  update({ world, particles: api, frame, dt, destroy }) {
+    const seen = emittersByWorld.get(world) ?? new Map<string, number>();
+    const now = new Map<string, number>();
+    for (const e of world.query('Particles')) {
+      const p = e.c.Particles;
+      const born = seen.get(e.id) ?? frame;
+      now.set(e.id, born);
+      if (!seen.has(e.id) && p.burst > 0) api.burst(e.id);
+      if (!p.autoDestroy) continue;
+      // 出し続ける時間（rate がなければ 0）＋粒がいちばん長く残る時間
+      const emitting = p.rate > 0 && p.playing !== false ? (p.duration < 0 ? Infinity : p.duration) : 0;
+      const end = born + Math.ceil((emitting + p.lifetime * (1 + p.lifetimeJitter)) / dt);
+      if (frame >= end) destroy(e.id);
+    }
+    emittersByWorld.set(world, now);
+  },
+});
+
+export const STD_SYSTEMS = [animator, camera, audio, particles];
