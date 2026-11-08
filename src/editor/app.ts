@@ -17,6 +17,7 @@ export interface EditorState {
   locks: Record<string, LockMark>;
   issues: string[];
   lockReport: string[];
+  integrity: { ok: boolean; reason?: string; diff: { added: string[]; removed: string[]; changed: string[] }; hasBackup: boolean };
   version: number;
   files: { path: string; size: number }[];
   error?: string;

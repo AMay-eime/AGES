@@ -9,7 +9,8 @@ import { applyOps, diffDocs, getValue, type Change, type Docs, type Op, type Pat
 import { parseAddress } from '../core/docs.ts';
 import { Game } from '../core/game.ts';
 import { suggest } from '../core/schema.ts';
-import { appendLog, localTime, lockedHits, markTouched, readLocks, readLog, readTouched, writeLocks, type Actor, type LockMark } from './oplog.ts';
+import { appendLog, localTime, lockedHits, markTouched, readLocks as readLockFile, readLog, readTouched, writeLocks, type Actor, type LockMark } from './oplog.ts';
+import { lockDiff, verifyLocks, type LockIntegrity } from './seal.ts';
 
 // ゲームコードの import ... from 'ages' を、どのフォルダにあるプロジェクトからでもこのエンジンに向ける
 const AGES_INDEX = new URL('../index.ts', import.meta.url).href;
@@ -56,7 +57,52 @@ export class Project {
     const mod = (await import(url)) as GameModule;
     this.registry = Registry.from(mod, []);
     this.registry.prefabs = prefabs;
+    this.integrity = await verifyLocks(this.dir);
     this.lockReport = await this.enforceLocks();
+    if (!this.integrity.ok) {
+      const d = this.lockDiff();
+      const detail = [d.removed.length ? `消されたロック ${d.removed.length}件` : '', d.added.length ? `増えたロック ${d.added.length}件` : '', d.changed.length ? `値が変わったロック ${d.changed.length}件` : ''].filter(Boolean).join('・');
+      this.lockReport.unshift(`⚠ ${this.integrity.reason}${detail ? `（${detail}）` : ''}。人がエディタで確認するまで、AIからの編集はすべて止めます。最後に封印されたロックは引き続き有効です`);
+    }
+  }
+
+  /** ロックの記録が人の封印と一致しているか（reload のたびに更新） */
+  integrity: LockIntegrity = { ok: true };
+
+  /**
+   * 効いているロック。記録が封印と一致しないときは、最後に封印された控えのロックも合わせて効かせる
+   * （AIがロックの記録から項目を消しても、ロックは外れない）。
+   */
+  async effectiveLocks(): Promise<Record<string, LockMark>> {
+    const current = await readLockFile(this.dir);
+    if (this.integrity.ok) return current;
+    return { ...current, ...((this.integrity.backup ?? {}) as Record<string, LockMark>) };
+  }
+
+  /** 現在の記録と、最後に封印された控えの違い */
+  lockDiff() {
+    return lockDiff(this.lockFileCache, this.integrity.backup);
+  }
+  private lockFileCache: Record<string, LockMark> = {};
+
+  /** 人が「この内容で承認」する: 今のロックの記録をそのまま封印し直す */
+  async approveLocks(actor: Actor): Promise<void> {
+    await writeLocks(this.dir, actor, await readLockFile(this.dir));
+    await appendLog(this.dir, actor, 'lock-approve', [{ path: '.ages/locks.json', to: 'approved' }]);
+    await this.reload();
+  }
+
+  /** 人が「前の状態に戻す」: 最後に封印した控えに戻す */
+  async restoreLocks(actor: Actor): Promise<void> {
+    const backup = this.integrity.backup;
+    if (!backup) throw new Error('戻せる控えがありません。「この内容で承認」するか、ロックを付け直してください');
+    await writeLocks(this.dir, actor, backup as Record<string, LockMark>);
+    await appendLog(this.dir, actor, 'lock-restore-backup', [{ path: '.ages/locks.json', to: 'restored' }]);
+    await this.reload();
+  }
+
+  private requireIntegrity(): void {
+    if (!this.integrity.ok) throw new Error(`ロックの記録の確認が必要です: ${this.integrity.reason}。エディタの「🔒⚠ ロックの記録を確認」から、承認するか前の状態に戻してください`);
   }
 
   /** 直近の読み込み時にロックの検査で見つかった問題（復元したもの・復元できないもの） */
@@ -67,7 +113,8 @@ export class Project {
    * （AIがファイルを直接書き換えた場合も、次にAGESが読み込んだ時点で必ず復元される）
    */
   async enforceLocks(): Promise<string[]> {
-    const locks = await readLocks(this.dir);
+    this.lockFileCache = await readLockFile(this.dir);
+    const locks = await this.effectiveLocks();
     const report: string[] = [];
     const restored: Change[] = [];
     const dirty = new Set<string>();
@@ -98,7 +145,8 @@ export class Project {
 
   /** 値をロックする（人だけ）。paths はフィールドまでのアドレス。 */
   async lock(paths: string[], actor: Actor, note?: string): Promise<void> {
-    const locks = await readLocks(this.dir);
+    this.requireIntegrity();
+    const locks = await readLockFile(this.dir);
     const t = new Date().toISOString();
     for (const path of paths) {
       const a = parseAddress(path);
@@ -113,7 +161,8 @@ export class Project {
   }
 
   async unlock(paths: string[], actor: Actor): Promise<void> {
-    const locks = await readLocks(this.dir);
+    this.requireIntegrity();
+    const locks = await readLockFile(this.dir);
     for (const p of paths) delete locks[p];
     await writeLocks(this.dir, actor, locks);
     await appendLog(this.dir, actor, 'unlock', paths.map((p) => ({ path: p, to: 'unlocked' })));
@@ -162,7 +211,14 @@ export class Project {
   async apply(ops: Op[], actor: Actor, opts: { force?: boolean } = {}): Promise<PatchResult> {
     const targetOf = (op: Op) =>
       op.op === 'set' || op.op === 'setCells' ? op.path : op.op === 'removeEntity' ? `${op.scene}#${op.id}` : op.op === 'removeComponent' ? `${op.target}.${op.component}` : null;
-    const locks = await readLocks(this.dir);
+    if (actor.kind === 'ai' && !this.integrity.ok) {
+      throw new Error(`🔒 ロックの記録が人の封印と一致しないため、AIからの編集を止めています（${this.integrity.reason}）。ユーザーにエディタでの確認を頼んでください`);
+    }
+    const locks = await this.effectiveLocks();
+    if (actor.kind === 'human' && !this.integrity.ok) {
+      const hits = ops.flatMap((op) => { const t = targetOf(op); return t ? lockedHits(locks, t) : []; });
+      if (hits.length) this.requireIntegrity();
+    }
     if (actor.kind === 'ai') {
       // ロックは --force でも越えられない
       const hits = ops.flatMap((op) => { const t = targetOf(op); return t ? lockedHits(locks, t) : []; });
@@ -227,7 +283,8 @@ export class Project {
   async humanTextEdit(actor: Actor): Promise<Change[]> {
     const before = this.docs;
     const changes = diffDocs(before, await readDocs(this.dir));
-    const locks = await readLocks(this.dir);
+    if (!this.integrity.ok && changes.some((c) => lockedHits(this.lockFileCache, c.path.replace(/\[\d+,\s*\d+\]$/, '')).length)) this.requireIntegrity();
+    const locks = await readLockFile(this.dir);
     let touchedLock = false;
     for (const c of changes) {
       if (locks[c.path] && c.to !== 'removed' && c.to !== 'added') { locks[c.path].value = structuredClone(c.to); touchedLock = true; }

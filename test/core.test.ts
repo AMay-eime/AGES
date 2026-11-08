@@ -1,12 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cp, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Project } from '../src/project/project.ts';
 import { readLog } from '../src/project/oplog.ts';
 import { keysToEvents } from '../src/cli/ages.ts';
 import { InputPlayback } from '../src/core/input.ts';
+
+// ロックの封印の鍵と控えを、テスト用の一時フォルダに置く（使用者のフォルダを汚さない）
+process.env.AGES_HOME = await mkdtemp(join(tmpdir(), 'ages-home-'));
 
 const human = { who: 'yamamoto', kind: 'human' as const, win: 'inspector' };
 const ai = { who: 'ai', kind: 'ai' as const, win: 'cli' };
@@ -174,4 +177,49 @@ test('エディタ計画: 「AIにおまかせ」でも合意として扱う', a
   assert.match(await planWarning(dir), /おまかせか/);
   await writeFile(plan, (await readFile(plan, 'utf8')).replace('- [ ] 使用者がAIにおまかせした', '- [x] 使用者がAIにおまかせした'));
   assert.equal(await planWarning(dir), '');
+});
+
+
+test('封印: AIがロックの記録から項目を消しても、ロックは外れず、AIの編集は止まる', async () => {
+  const dir = await fresh();
+  const p = await Project.load(dir);
+  await p.lock(['main#player.Player.speed'], human);
+  // AIがロックの記録を直接書き換えて、ロックを消し、値も書き換える
+  await writeFile(join(dir, '.ages', 'locks.json'), '{}\n');
+  const file = p.scenePath('main');
+  await writeFile(file, (await readFile(file, 'utf8')).replace('"speed": 4.5', '"speed": 9'));
+  const again = await Project.load(dir);
+  assert.equal(again.integrity.ok, false);
+  assert.match(again.lockReport.join(), /一致しません/);
+  assert.match(await readFile(file, 'utf8'), /"speed": 4.5/);  // 控えのロックで元に戻る
+  await assert.rejects(again.apply([{ op: 'set', path: 'main#player.Player.fireInterval', value: 3 }], ai, { force: true }), /AIからの編集を止めています/);
+  assert.deepEqual(again.lockDiff().removed, ['main#player.Player.speed']);
+});
+
+test('封印: 人が「前の状態に戻す」とロックが戻り、AIの編集も再開できる', async () => {
+  const dir = await fresh();
+  const p = await Project.load(dir);
+  await p.lock(['main#player.Player.speed'], human);
+  await writeFile(join(dir, '.ages', 'locks.json'), '{}\n');
+  const again = await Project.load(dir);
+  await assert.rejects(again.lock(['main#player.Player.fireInterval'], human), /確認が必要/);
+  await again.restoreLocks(human);
+  assert.equal(again.integrity.ok, true);
+  assert.ok((await again.effectiveLocks())['main#player.Player.speed']);
+  await again.apply([{ op: 'set', path: 'main#player.Player.fireInterval', value: 3 }], ai);
+});
+
+test('封印: Gitで取り込んだロックの変更は、人が承認するまでAIを止める', async () => {
+  const dir = await fresh();
+  // 別の人の端末で封印されたロックの記録だけが届いた状態（この端末の封印がない）
+  await mkdir(join(dir, '.ages'), { recursive: true });
+  await writeFile(join(dir, '.ages', 'locks.json'), JSON.stringify({ 'main#player.Player.speed': { who: 'teammate', t: '2026-11-08T00:00:00Z', value: 4.5 } }));
+  const p = await Project.load(dir);
+  assert.equal(p.integrity.ok, false);
+  assert.match(p.integrity.reason!, /まだ人がロックの記録を確認していません/);
+  await assert.rejects(p.apply([{ op: 'set', path: 'main#spawner.Spawner.interval', value: 30 }], ai), /止めています/);
+  await p.approveLocks(human);
+  assert.equal(p.integrity.ok, true);
+  await assert.rejects(p.apply([{ op: 'set', path: 'main#player.Player.speed', value: 6 }], ai, { force: true }), /ロックされた値/);
+  await p.apply([{ op: 'set', path: 'main#spawner.Spawner.interval', value: 30 }], ai);
 });

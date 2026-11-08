@@ -6,7 +6,7 @@ import { join, resolve, relative, basename, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Project } from '../project/project.ts';
 import { renderMap } from '../project/map.ts';
-import { readCursor, readLocks, readLog, readTouched, summarize, writeCursor, type Actor } from '../project/oplog.ts';
+import { readCursor, readLog, readTouched, summarize, writeCursor, type Actor } from '../project/oplog.ts';
 import { getValue, parseLiteral, splitCell, type Op } from '../core/patch.ts';
 import { brief, matrixSize } from '../core/schema.ts';
 import { InputPlayback, type InputEvent } from '../core/input.ts';
@@ -66,7 +66,7 @@ function compact(obj: Record<string, unknown>): string {
 export async function cmdMap(dir: string): Promise<string> {
   const p = await Project.load(dir);
   const plan = await planWarning(p.dir);
-  return withLockReport(p, (plan ? plan + '\n' : '') + renderMap(p, await readTouched(p.dir), await readLocks(p.dir)));
+  return withLockReport(p, (plan ? plan + '\n' : '') + renderMap(p, await readTouched(p.dir), await p.effectiveLocks()));
 }
 
 /** エディタ計画書が未合意なら警告文を返す */
@@ -133,7 +133,7 @@ export async function cmdSchema(dir: string, names: string[]): Promise<string> {
 export async function cmdGet(dir: string, addrs: string[]): Promise<string> {
   const p = await Project.load(dir);
   const touched = await readTouched(p.dir);
-  const locks = await readLocks(p.dir);
+  const locks = await p.effectiveLocks();
   const mark = (path: string) => (locks[path] ? '🔒' : touched[path] ? '★' : '');
   const out: string[] = [];
   for (const addr of addrs) {

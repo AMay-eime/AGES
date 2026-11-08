@@ -1,7 +1,7 @@
 // AGES エディタの起動。
 import { App } from './app.ts';
 import { Layout, type LayoutData, type Panel } from './ui/layout.ts';
-import { h, clear, toast } from './ui/dom.ts';
+import { h, clear, toast, modal } from './ui/dom.ts';
 import { inspectorPanel } from './ui/inspector.ts';
 import { hierarchyPanel, projectPanel, gamePanel, textPanel, logPanel, gitPanel } from './ui/panels.ts';
 import { matrixPanel } from './ui/matrix.ts';
@@ -55,6 +55,7 @@ const renderTop = () => {
   const userInput = h('input', { type: 'text', value: app.user, title: '操作ログに残るあなたの名前', style: 'width:110px' }) as HTMLInputElement;
   userInput.addEventListener('change', () => { app.setUser(userInput.value); toast(`名前: ${app.user}`); });
   const locks = s && !s.error ? Object.keys(s.locks).length : 0;
+  const broken = s && !s.error && s.integrity && !s.integrity.ok;
   clear(top,
     h('span', { class: 'title' }, 'AGES', h('small', {}, s?.config?.name ?? '')),
     h('button', { class: p && !p.paused ? 'on' : '', title: '再生', onclick: () => (p ? app.togglePause() : app.startPlay()) }, p && !p.paused ? '⏸ 一時停止' : '▶ 再生'),
@@ -62,11 +63,40 @@ const renderTop = () => {
     h('button', { title: '停止（実行中の変更を保存するか選べます）', onclick: () => app.stopPlay(), disabled: !p }, '⏹ 停止'),
     h('button', { title: '入力を記録しながら再生（停止時に recordings/ に保存）', onclick: () => app.startPlay(true), disabled: !!p }, '● 記録して再生'),
     h('span', { class: 'spacer' }),
+    broken ? h('button', { style: 'border-color:var(--bad);color:var(--bad)', onclick: checkLocks, title: s.integrity.reason }, '🔒⚠ ロックの記録を確認') : null,
     h('span', { class: 'status' }, s?.error ? `⚠ ${s.error}` : `${s.issues.length ? `⚠${s.issues.length} ` : ''}🔒${locks}  v${s.version}`),
     h('span', { class: 'muted' }, '名前'), userInput);
 };
 app.on('change', renderTop);
 app.on('play', renderTop);
+
+/** ロックの記録が人の封印と一致しないときの確認画面 */
+function checkLocks(): void {
+  const g = app.state.integrity;
+  modal((close) => {
+    const list = (title: string, items: string[], color: string) => items.length
+      ? h('div', { style: 'margin:8px 0' }, h('div', { style: `color:${color}` }, `${title}（${items.length}）`), items.map((i) => h('div', { style: 'font:var(--mono);padding-left:12px' }, i)))
+      : null;
+    const act = (path: string) => async () => {
+      close();
+      try { await app.api(path, { body: {} }); toast('ロックの記録を確認しました。AIからの編集を再開できます'); }
+      catch (e) { toast((e as Error).message, 'bad'); }
+      await app.refresh();
+    };
+    return h('div', {},
+      h('h3', {}, '🔒⚠ ロックの記録を確認してください'),
+      h('div', { style: 'margin-bottom:8px' }, g.reason ?? ''),
+      h('div', { class: 'muted' }, 'AIからの編集はすべて止まっています。最後にあなたが封印したロックは、確認するまで引き続き有効です。'),
+      list('消されたロック', g.diff.removed, 'var(--bad)'),
+      list('増えたロック', g.diff.added, 'var(--warn)'),
+      list('値が変わったロック', g.diff.changed, 'var(--warn)'),
+      !g.diff.added.length && !g.diff.removed.length && !g.diff.changed.length ? h('div', { class: 'muted', style: 'margin:8px 0' }, '（中身の違いは見つかりません。チームの誰かがGitで送ったロックか、この端末で初めて開いたロックです）') : null,
+      h('div', { class: 'row', style: 'justify-content:flex-end;margin-top:12px' },
+        h('button', { onclick: close }, '閉じる'),
+        g.hasBackup ? h('button', { onclick: act('/api/locks/restore'), title: '最後にあなたが封印した状態に戻す' }, '前の状態に戻す') : null,
+        h('button', { class: 'on', onclick: act('/api/locks/approve'), title: '今のロックの記録を正しいものとして封印する' }, 'この内容で承認する')));
+  });
+}
 
 // ---------- キー入力（再生中だけゲームへ） ----------
 const typing = (e: KeyboardEvent) => e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement;
@@ -142,6 +172,9 @@ events.onmessage = async (msg) => {
     const n = ev.changes?.length ?? 0;
     if (n) toast(`外部でファイルが編集されました（${n}件の変更）`);
     if (ev.lockReport?.length) toast(ev.lockReport.map((l: string) => '🔒 ' + l).join('\n'), 'lock', 8000);
+  }
+  if (ev.type === 'locks' && ev.integrity === false) {
+    toast('🔒⚠ ロックの記録がエディタ以外で書き換えられました。AIからの編集を止めています。上の「ロックの記録を確認」から確認してください', 'lock', 10000);
   }
   if (ev.type === 'code' && app.state.version !== lastVersion) {
     lastVersion = app.state.version;

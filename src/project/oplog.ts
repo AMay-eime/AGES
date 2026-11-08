@@ -2,6 +2,7 @@
 import { readFile, writeFile, appendFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Change } from '../core/patch.ts';
+import { sealLocks } from './seal.ts';
 
 export interface Actor {
   /** 名前（人はエディタで設定した名前、AIは "ai" など） */
@@ -173,7 +174,9 @@ export async function readLocks(root: string): Promise<Record<string, LockMark>>
 export async function writeLocks(root: string, actor: Actor, locks: Record<string, LockMark>): Promise<void> {
   if (actor.kind !== 'human') throw new Error('ロックの設定・解除は人だけができます（エディタから操作してください）');
   await mkdir(dirOf(root), { recursive: true });
-  await writeFile(join(dirOf(root), 'locks.json'), JSON.stringify(locks, null, 2) + '\n');
+  const text = JSON.stringify(locks, null, 2) + '\n';
+  await writeFile(join(dirOf(root), 'locks.json'), text);
+  await sealLocks(root, text);
 }
 
 /** パスがロック対象か（ロックされたパスそのもの、またはその親を消す操作） */
