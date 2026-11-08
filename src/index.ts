@@ -5,3 +5,5 @@ export { defineSystem, type SystemDef, type GameModule } from './core/registry.t
 export type { Ctx } from './core/game.ts';
 export type { Entity } from './core/world.ts';
 export { defineWindow, type EditorWindow, type EditorApi } from './editor/window-api.ts';
+export { Transform, Sprite, Animator, Shape, Text } from './std/components.ts';
+export type { SheetDef, ClipDef } from './core/sheet.ts';

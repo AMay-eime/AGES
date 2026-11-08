@@ -1,0 +1,20 @@
+{
+  "name": "explosion",
+  "desc": "爆発（アニメーションが終わると消える）",
+  "components": {
+    "Transform": {
+      "sx": 2.5,
+      "sy": 2.5
+    },
+    "Sprite": {
+      "image": "assets/kenney-pixel-shmup/tiles.png",
+      "frame": 4,
+      "layer": 5,
+      "blend": "add"
+    },
+    "Animator": {
+      "clip": "explode",
+      "destroyOnEnd": true
+    }
+  }
+}

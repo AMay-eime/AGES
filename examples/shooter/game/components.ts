@@ -1,34 +1,13 @@
 import { defineComponent } from 'ages';
 
-export const Transform = defineComponent({
-  name: 'Transform',
-  desc: '位置と向き',
-  fields: {
-    x: { type: 'number', default: 0, desc: '横位置(px)' },
-    y: { type: 'number', default: 0, desc: '縦位置(px)' },
-    rot: { type: 'number', default: 0, min: -360, max: 360, desc: '回転(度)' },
-  },
-});
+// Transform・Sprite・Animator・Shape・Text は AGES の標準なので、ここでは定義しない
 
-export const Shape = defineComponent({
-  name: 'Shape',
-  desc: '単色の図形として描く（当たり判定の大きさにも使う）',
+export const Hitbox = defineComponent({
+  name: 'Hitbox',
+  desc: '当たり判定の大きさ（Transform の位置が中心の矩形）',
   fields: {
-    kind: { type: 'enum', options: ['rect', 'circle'], default: 'rect', desc: '形' },
-    w: { type: 'number', default: 16, min: 1, max: 512, desc: '幅(px)' },
-    h: { type: 'number', default: 16, min: 1, max: 512, desc: '高さ(px)' },
-    color: { type: 'color', default: '#ffffff', desc: '色' },
-  },
-});
-
-export const Text = defineComponent({
-  name: 'Text',
-  desc: '文字を描く',
-  fields: {
-    text: { type: 'string', default: '', desc: '表示する文字' },
-    size: { type: 'number', default: 16, min: 6, max: 128, desc: '文字の大きさ(px)' },
-    color: { type: 'color', default: '#ffffff', desc: '色' },
-    align: { type: 'enum', options: ['left', 'center', 'right'], default: 'left', desc: '揃え' },
+    w: { type: 'number', default: 16, min: 0, max: 512, desc: '幅(px)' },
+    h: { type: 'number', default: 16, min: 0, max: 512, desc: '高さ(px)' },
   },
 });
 

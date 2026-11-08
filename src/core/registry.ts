@@ -1,6 +1,9 @@
 // コンポーネント・システム・プレハブの登録簿。
 import { checkComponent, defaultsOf, suggest, type ComponentDef } from './schema.ts';
 import type { PrefabDoc } from './docs.ts';
+import type { SheetDef } from './sheet.ts';
+import { STD_COMPONENTS } from '../std/components.ts';
+import { STD_SYSTEMS } from '../std/systems.ts';
 import type { Ctx } from './game.ts';
 
 export interface SystemDef {
@@ -31,10 +34,16 @@ export class Registry {
   components = new Map<string, ComponentDef>();
   systems: SystemDef[] = [];
   prefabs = new Map<string, PrefabDoc>();
+  /** スプライトシート（定義ファイルの場所 → 中身） */
+  sheets = new Map<string, SheetDef>();
+  /** 標準のコンポーネントの名前 */
+  readonly std = new Set(STD_COMPONENTS.map((c) => c.name));
 
   static from(mod: GameModule, prefabs: Iterable<PrefabDoc> = []): Registry {
     const r = new Registry();
+    for (const c of STD_COMPONENTS) r.components.set(c.name, c);
     for (const c of mod.components) {
+      if (r.std.has(c.name)) throw new Error(`コンポーネント ${c.name} は標準で用意されています。game/ の定義を消して、標準のものを使ってください（ages schema <dir> ${c.name} で中身を確認できます）`);
       if (r.components.has(c.name)) throw new Error(`コンポーネント ${c.name} が2回定義されています`);
       r.components.set(c.name, c);
     }
@@ -47,6 +56,8 @@ export class Registry {
       }
       r.systems.push(s);
     }
+    // 標準のシステムはゲームのシステムの後に動く
+    for (const s of STD_SYSTEMS) r.systems.push(s);
     for (const p of prefabs) r.prefabs.set(p.name, p);
     return r;
   }

@@ -11,6 +11,8 @@ import { Game } from '../core/game.ts';
 import { suggest } from '../core/schema.ts';
 import { appendLog, localTime, lockedHits, markTouched, readLocks as readLockFile, readLog, readTouched, writeLocks, type Actor, type LockMark } from './oplog.ts';
 import { lockDiff, verifyLocks, type LockIntegrity } from './seal.ts';
+import { scanAssets, type AssetInfo } from './assets.ts';
+import { frameCount, sheetPathOf } from '../core/sheet.ts';
 
 // ゲームコードの import ... from 'ages' を、どのフォルダにあるプロジェクトからでもこのエンジンに向ける
 const AGES_INDEX = new URL('../index.ts', import.meta.url).href;
@@ -57,6 +59,10 @@ export class Project {
     const mod = (await import(url)) as GameModule;
     this.registry = Registry.from(mod, []);
     this.registry.prefabs = prefabs;
+    const scan = await scanAssets(this.dir);
+    this.assets = scan.assets;
+    this.assetIssues = scan.issues;
+    this.registry.sheets = scan.sheets;
     this.integrity = await verifyLocks(this.dir);
     this.lockReport = await this.enforceLocks();
     if (!this.integrity.ok) {
@@ -65,6 +71,10 @@ export class Project {
       this.lockReport.unshift(`⚠ ${this.integrity.reason}${detail ? `（${detail}）` : ''}。人がエディタで確認するまで、AIからの編集はすべて止めます。最後に封印されたロックは引き続き有効です`);
     }
   }
+
+  /** 画像・音・フォントの一覧（reload のたびに更新） */
+  assets: AssetInfo[] = [];
+  private assetIssues: string[] = [];
 
   /** ロックの記録が人の封印と一致しているか（reload のたびに更新） */
   integrity: LockIntegrity = { ok: true };
@@ -179,6 +189,7 @@ export class Project {
   /** 全文書を検証する。問題の一覧を返す（空なら健全）。 */
   validate(): string[] {
     const errs: string[] = [];
+    const assetPaths = new Map(this.assets.map((a) => [a.path, a]));
     const check = (where: string, comps: Record<string, Record<string, unknown>>) => {
       for (const [name, values] of Object.entries(comps)) {
         try { this.registry.build(name, values, where); } catch (e) { errs.push((e as Error).message); }
@@ -188,6 +199,27 @@ export class Project {
           if (f.type === 'prefab' && k in values && !this.docs.prefabs.has(values[k] as string)) {
             errs.push(`${where}.${name}.${k}: プレハブ ${values[k]} はありません${suggest(String(values[k]), [...this.docs.prefabs.keys()])}`);
           }
+          if (f.type === 'asset' && typeof values[k] === 'string' && values[k] && !assetPaths.has(values[k] as string)) {
+            const same = this.assets.filter((a) => a.kind === f.kind).map((a) => a.path);
+            errs.push(`${where}.${name}.${k}: ファイル ${values[k]} がありません${suggest(String(values[k]), same)}`);
+          }
+        }
+      }
+      // スプライトのコマ番号とアニメーションの名前
+      const sp = comps.Sprite as { image?: string; frame?: number } | undefined;
+      if (sp?.image) {
+        const sheet = this.registry.sheets.get(sheetPathOf(sp.image));
+        const info = assetPaths.get(sp.image);
+        if (sheet && info?.w && info.h && sp.frame !== undefined) {
+          const n = frameCount(sheet, info.w, info.h);
+          if (sp.frame >= n) errs.push(`${where}.Sprite.frame=${sp.frame} は範囲外です（${sp.image} は ${n} コマ、0から数えます）`);
+        } else if (!sheet && sp.frame) {
+          errs.push(`${where}.Sprite.frame=${sp.frame}: ${sp.image} にはスプライトシートの定義（${sheetPathOf(sp.image)}）がないので、コマは0だけです`);
+        }
+        const an = comps.Animator as { clip?: string } | undefined;
+        if (an?.clip) {
+          const clips = Object.keys(sheet?.clips ?? {});
+          if (!clips.includes(an.clip)) errs.push(`${where}.Animator.clip="${an.clip}" は ${sheetPathOf(sp.image)} にありません${clips.length ? `（ある名前: ${clips.join(', ')}）` : '（clips が定義されていません）'}${suggest(an.clip, clips)}`);
         }
       }
     };
@@ -201,6 +233,7 @@ export class Project {
     }
     for (const p of this.docs.prefabs.values()) check(`@${p.name}`, p.components);
     if (!this.docs.scenes.has(this.config.startScene)) errs.push(`開始シーン ${this.config.startScene} がありません`);
+    errs.push(...this.assetIssues);
     return errs;
   }
 
@@ -240,7 +273,17 @@ export class Project {
         throw new Error(`人が調整した値に触れようとしています: ${hits.join(', ')}。ユーザーに確認してから --force を付けて実行してください`);
       }
     }
+    // 編集で新しい問題（ないファイル・ないアニメーション・範囲外のコマなど）が増えるなら、保存せずに止める
+    const before = new Set(this.validate());
+    const backup: Docs = { scenes: new Map(this.docs.scenes), prefabs: new Map(this.docs.prefabs) };
     const result = applyOps(this.docs, this.registry, ops);
+    const introduced = this.validate().filter((e) => !before.has(e));
+    if (introduced.length) {
+      this.docs.scenes = backup.scenes;
+      this.docs.prefabs = backup.prefabs;
+      this.registry.prefabs = backup.prefabs;
+      throw new Error(introduced.join(' / '));
+    }
     await this.saveDirty(result.dirty);
     const opName = ops.length === 1 ? ops[0].op : 'batch';
     await appendLog(this.dir, actor, opName, result.changes);

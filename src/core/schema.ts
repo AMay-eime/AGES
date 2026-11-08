@@ -11,7 +11,18 @@ export type Field =
   | { type: 'vec2'; default: [number, number]; desc?: string }
   | { type: 'ref'; default: string | null; desc?: string }
   | { type: 'prefab'; default: string; desc?: string }
+  /** プロジェクトの中のファイル（例: assets/ships.png）。kind で種類を絞る。空文字はなし */
+  | { type: 'asset'; kind: AssetKind; default: string; desc?: string }
   | MatrixField;
+
+export type AssetKind = 'image' | 'sound' | 'font';
+
+/** 種類ごとの拡張子 */
+export const ASSET_EXT: Record<AssetKind, string[]> = {
+  image: ['.png', '.jpg', '.jpeg', '.webp', '.gif'],
+  sound: ['.wav', '.mp3', '.ogg', '.m4a'],
+  font: ['.ttf', '.otf', '.woff', '.woff2'],
+};
 
 /** 2次元行列（例: 敵の出現パターン、地形、ダメージ表）。インスペクタでは「開く」から専用の行列エディタで編集する。 */
 export interface MatrixField {
@@ -81,6 +92,13 @@ export function checkValue(comp: string, key: string, f: Field, v: unknown): str
       return v === null || typeof v === 'string' ? null : `${at} はエンティティID（文字列）か null が必要です`;
     case 'prefab':
       return typeof v === 'string' ? null : `${at} はプレハブ名（文字列）が必要です`;
+    case 'asset': {
+      if (typeof v !== 'string') return `${at} はファイルの場所（文字列。例: assets/ship.png）が必要です`;
+      if (v === '') return null;
+      if (v.startsWith('/') || v.includes('..')) return `${at} はプロジェクトの中の場所で書いてください（例: assets/ship.png）。受け取った値: ${v}`;
+      const ok = ASSET_EXT[f.kind].some((e) => v.toLowerCase().endsWith(e));
+      return ok ? null : `${at} は${f.kind === 'image' ? '画像' : f.kind === 'sound' ? '音' : 'フォント'}のファイル（${ASSET_EXT[f.kind].join(' ')}）が必要です。受け取った値: ${v}`;
+    }
     case 'matrix':
       return checkMatrix(at, f, v);
   }
@@ -147,6 +165,7 @@ export function brief(f: Field): string {
     case 'int': return `int${r(f.min, f.max)}=${f.default}`;
     case 'enum': return `${f.options.join('|')}=${f.default}`;
     case 'vec2': return `vec2=${JSON.stringify(f.default)}`;
+    case 'asset': return `asset<${f.kind}>=${JSON.stringify(f.default)}`;
     case 'matrix': {
       const size = f.rows !== undefined || f.cols !== undefined ? ` ${f.rows ?? '?'}x${f.cols ?? '?'}固定` : '';
       return `matrix<${f.cell ?? 'number'}${r(f.min, f.max)}>${size}=${matrixSize(f.default)}`;

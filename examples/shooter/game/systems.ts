@@ -1,8 +1,8 @@
 import { defineSystem, type Entity } from 'ages';
 
 const overlap = (a: Entity, b: Entity) => {
-  const at = a.c.Transform, as = a.c.Shape, bt = b.c.Transform, bs = b.c.Shape;
-  return Math.abs(at.x - bt.x) * 2 < as.w + bs.w && Math.abs(at.y - bt.y) * 2 < as.h + bs.h;
+  const at = a.c.Transform, ah = a.c.Hitbox, bt = b.c.Transform, bh = b.c.Hitbox;
+  return Math.abs(at.x - bt.x) * 2 < ah.w + bh.w && Math.abs(at.y - bt.y) * 2 < ah.h + bh.h;
 };
 
 export const playerControl = defineSystem({
@@ -82,13 +82,14 @@ export const lifetime = defineSystem({
 export const combat = defineSystem({
   name: 'combat',
   desc: '弾と敵、敵と自機の当たりを処理する',
-  reads: ['Bullet', 'Enemy', 'Player', 'Shape'],
+  reads: ['Bullet', 'Enemy', 'Player', 'Hitbox'],
   writes: ['Health', 'Score'],
-  update({ world, destroy, emit }) {
+  update({ world, destroy, emit, spawn }) {
     const isAlive = (id: string) => world.isAlive(id);
-    const enemies = world.query('Enemy', 'Health', 'Transform', 'Shape');
+    const boom = (e: Entity) => spawn('explosion', { Transform: { x: e.c.Transform.x, y: e.c.Transform.y } });
+    const enemies = world.query('Enemy', 'Health', 'Transform', 'Hitbox');
     const score = world.query('Score')[0]?.c.Score;
-    for (const b of world.query('Bullet', 'Transform', 'Shape')) {
+    for (const b of world.query('Bullet', 'Transform', 'Hitbox')) {
       if (b.c.Bullet.team !== 'player') continue;
       for (const en of enemies) {
         if (!isAlive(en.id) || !overlap(b, en)) continue;
@@ -96,19 +97,21 @@ export const combat = defineSystem({
         en.c.Health.hp -= b.c.Bullet.damage;
         if (en.c.Health.hp <= 0) {
           destroy(en.id);
+          boom(en);
           if (score) score.value += en.c.Enemy.score;
           emit('enemyKilled');
         }
         break;
       }
     }
-    for (const pl of world.query('Player', 'Health', 'Transform', 'Shape')) {
+    for (const pl of world.query('Player', 'Health', 'Transform', 'Hitbox')) {
       const h = pl.c.Health;
       if (h.invincible > 0) { h.invincible--; continue; }
       if (h.hp <= 0) continue;
       for (const en of enemies) {
         if (!isAlive(en.id) || !overlap(pl, en)) continue;
         destroy(en.id);
+        boom(en);
         h.hp--;
         h.invincible = h.invincibleOnHit;
         emit('playerHit', { hp: h.hp });
