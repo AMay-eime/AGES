@@ -10,6 +10,7 @@ import { compactPaths } from '../src/project/map.ts';
 
 process.env.AGES_HOME ??= await mkdtemp(join(tmpdir(), 'ages-home-'));
 const human = { who: 'yamamoto', kind: 'human' as const, win: 'inspector' };
+const keeper = { who: 'yamamoto', kind: 'human' as const, win: 'lock-manager' };
 const viaWindow = { who: 'yamamoto', kind: 'human' as const, win: 'window:wave-tuner' };
 
 async function fresh(): Promise<string> {
@@ -30,10 +31,11 @@ test('ウインドウからは、宣言した値だけを変えられ、ロッ�
   const p = await Project.load(dir);
   await p.apply([{ op: 'set', path: '@enemy.Health.hp', value: 3 }], viaWindow);
   await assert.rejects(p.apply([{ op: 'set', path: 'main#player.Player.speed', value: 9 }], viaWindow), /ウインドウ wave-tuner は、宣言（edits）にない値を変えようとしています: main#player\.Player\.speed/);
-  await p.lock(['@enemy.Health.hp'], human);
+  await p.lock(['@enemy.Health.hp'], keeper);
   await assert.rejects(p.apply([{ op: 'set', path: '@enemy.Health.hp', value: 4 }], viaWindow), /🔒 ロックされた値は、ウインドウ wave-tuner からは変えられません: @enemy\.Health\.hp/);
-  await p.apply([{ op: 'set', path: '@enemy.Health.hp', value: 4 }], human);
-  assert.equal(JSON.parse(await readFile(join(dir, 'prefabs/enemy.prefab.json'), 'utf8')).components.Health.hp, 4, '人はインスペクタからなら変えられる');
+  await assert.rejects(p.apply([{ op: 'set', path: '@enemy.Health.hp', value: 4 }], human), /ロックマネージャーで/, '人もエディタからは変えられない');
+  await p.apply([{ op: 'set', path: '@enemy.Health.hp', value: 4 }], keeper);
+  assert.equal(JSON.parse(await readFile(join(dir, 'prefabs/enemy.prefab.json'), 'utf8')).components.Health.hp, 4, 'ロックマネージャーからなら変えられる');
 });
 
 test('検証: 読み込めない・書き忘れ・ない住所・id の重複・登録し忘れを知らせる', async () => {

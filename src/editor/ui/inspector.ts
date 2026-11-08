@@ -18,9 +18,8 @@ interface Live { path: string; comp: string; field: string; set(v: unknown): voi
 export function inspectorPanel(app: App): Panel {
   const el = h('div', {});
   let live: Live[] = [];
-  // パラメータが多いとき用: ロックした値（もう人が決めた値）を隠す。人ごとにブラウザに記憶する
-  let hideLocked = localStorage.getItem('ages.hideLocked') === '1';
-  const setHide = (v: boolean) => { hideLocked = v; localStorage.setItem('ages.hideLocked', v ? '1' : '0'); render(); };
+  // パラメータが多いとき用: ロックした値（もう人が決めた値）を隠す。設定で切り替える（人ごとにブラウザに記憶する）
+  const setHide = (v: boolean) => { app.showLocked = !v; };
 
   const render = () => {
     live = [];
@@ -50,7 +49,7 @@ export function inspectorPanel(app: App): Panel {
     const head = h('div', { class: 'pad', style: 'border-bottom:1px solid var(--line)' },
       h('div', { class: 'row' }, nameInput,
         h('label', { class: 'row muted', style: 'gap:4px;white-space:nowrap', title: 'ロックした値を表示しない（人が決め終えた値を画面から外して、残りに集中する）' },
-          h('input', { type: 'checkbox', checked: hideLocked, onchange: (e: Event) => setHide((e.target as HTMLInputElement).checked) }), `🔒を隠す${lockedHere ? `（${lockedHere}）` : ''}`)),
+          h('input', { type: 'checkbox', checked: !app.showLocked, onchange: (e: Event) => setHide((e.target as HTMLInputElement).checked) }), `🔒を隠す${lockedHere ? `（${lockedHere}）` : ''}`)),
       h('div', { class: 'muted', style: 'margin-top:4px;font:var(--mono)' }, base, holder.tags?.length ? `  tags:${holder.tags.join(',')}` : '',
         playing ? '  ▶ 実行中（変更は停止時に保存するか選べます）' : ''));
 
@@ -59,7 +58,7 @@ export function inspectorPanel(app: App): Panel {
       const def = app.registry.components.get(cname);
       if (!def) return h('div', { class: 'comp' }, h('div', { class: 'head' }, cname, h('span', { class: 'desc', style: 'color:var(--bad)' }, '未定義のコンポーネント')));
       const entries = Object.entries(def.fields);
-      const visible = hideLocked ? entries.filter(([fname]) => !app.state.locks[`${base}.${cname}.${fname}`]) : entries;
+      const visible = !app.showLocked ? entries.filter(([fname]) => !app.state.locks[`${base}.${cname}.${fname}`]) : entries;
       hiddenCount += entries.length - visible.length;
       const rows = visible.map(([fname, f]) => {
         const path = `${base}.${cname}.${fname}`;
@@ -91,11 +90,13 @@ export function inspectorPanel(app: App): Panel {
           ? matrixWidget(app, path, value, f.cell ?? 'number')
           : isNested(f) ? { el: nestedWidget(app, f, value, path, [], nestedEmit, wctx), set: () => {} }
           : widget(app, f, value, commit, wctx);
+        // ロックされた値は、ここでは見るだけ（変えるのはロックマネージャーで）
+        if (lock) { w.el.setAttribute('inert', ''); w.el.classList.add('locked-value'); }
         const lockBtn = h('button', {
           class: `icon lockbtn ${lock ? 'on' : ''}`,
-          title: lock ? `🔒 ロック中（${lock.who} ${time(lock.t)}）${lock.note ? '\n' + lock.note : ''}\nAIはこの値を変更できません。クリックで解除` : 'ロックする（AIが変更できなくなります）',
+          title: lock ? `🔒 ロック中（${lock.who} ${time(lock.t)}）${lock.note ? '\n' + lock.note : ''}\nAI もエディタも変えられません。クリックでロックマネージャーを開く（外す・値を変える）` : 'ロックする（ロックマネージャーが開きます）',
           disabled: !savable,
-          onclick: () => app.setLock([path], !lock),
+          onclick: () => app.openLocks(path),
         }, lock ? '🔒' : '🔓');
         const row = h('div', {
           class: `field ${isNested(f) ? 'wide' : ''} ${has ? '' : 'default'} ${touched ? 'touched' : ''} ${lock ? 'locked' : ''}`,
@@ -142,6 +143,7 @@ export function inspectorPanel(app: App): Panel {
   app.on('change', render);
   app.on('select', render);
   app.on('nestToggle', render);
+  app.on('settings', render);
   app.on('play', render);
   return { id: 'inspector', title: 'インスペクタ', el, render };
 }

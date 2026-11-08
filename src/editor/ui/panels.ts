@@ -234,7 +234,8 @@ export function gitPanel(app: App): Panel {
     if (r.locks) {
       const d = r.locks.diff;
       const n = `増えたロック ${d.added.length}件・消えたロック ${d.removed.length}件・値が変わったロック ${d.changed.length}件`;
-      toast(r.locks.approved ? `チームのロックの変更を取り込み、自動で承認しました（${n}）` : `ロックの記録は、取り込む前から確認待ちでした。「🔒⚠ ロックの記録を確認」から確認してください（${n}）`, 'lock', 8000);
+      toast(`チームのロックの変更を取り込みました（${n}）。ロックマネージャーで確かめて承認するまで、AI の編集は止まります`, 'lock', 10000);
+      app.openLocks();
     }
     if (op === 'commit') edited = false;
     await app.refresh();

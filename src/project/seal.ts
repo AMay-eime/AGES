@@ -65,7 +65,7 @@ export async function verifyLocks(root: string): Promise<LockIntegrity> {
     if (empty) return { ok: true };
     return { ok: false, reason: 'この端末では、まだ人がロックの記録を確認していません（Gitで取り込んだ直後など）', backup };
   }
-  if (hmac(key, text) !== seal) return { ok: false, reason: 'ロックの記録が、人がエディタで設定した内容と一致しません（エディタ以外で書き換えられた可能性があります）', backup };
+  if (hmac(key, text) !== seal) return { ok: false, reason: 'ロックの記録が、人がロックマネージャーで設定した内容と一致しません（ロックマネージャー以外で書き換えられた可能性があります）', backup };
   return { ok: true, backup };
 }
 

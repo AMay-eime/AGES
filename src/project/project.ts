@@ -1,5 +1,6 @@
 // プロジェクト（フォルダ）の読み込みと保存。Node 側専用。
-import { readFile, writeFile, readdir, mkdir, rm, rename } from 'node:fs/promises';
+import { readFile, writeFile, readdir, mkdir, rm, rename, copyFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { registerHooks } from 'node:module';
@@ -8,10 +9,10 @@ import { Registry, type GameModule } from '../core/registry.ts';
 import { applyOps, diffDocs, getValue, setValue, sheetRoot, splitItem, type Change, type Docs, type Op, type PatchResult } from '../core/patch.ts';
 import { parseAddress } from '../core/docs.ts';
 import { Game } from '../core/game.ts';
-import { checkAt, suggest, visit, type Field } from '../core/schema.ts';
+import { brief, checkAt, suggest, visit, type Field } from '../core/schema.ts';
 import { ROW_ID, type TableDoc } from '../core/table.ts';
 import { appendLog, localTime, lockedHits, markTouched, movePrefixTouched, moveTouched, readLocks as readLockFile, readLog, readTouched, writeLocks, type Actor, type LockMark } from './oplog.ts';
-import { lockDiff, verifyLocks, type LockIntegrity } from './seal.ts';
+import { agesHome, lockDiff, verifyLocks, type LockIntegrity } from './seal.ts';
 import { scanAssets, type AssetInfo } from './assets.ts';
 import { codeRefs, codeSceneRefs, isUnder } from '../core/assets.ts';
 import { checkWindows, loadWindows, unlistedWindows, withinEdits, type WindowInfo } from './windows.ts';
@@ -77,7 +78,7 @@ export class Project {
     if (!this.integrity.ok) {
       const d = this.lockDiff();
       const detail = [d.removed.length ? `消されたロック ${d.removed.length}件` : '', d.added.length ? `増えたロック ${d.added.length}件` : '', d.changed.length ? `値が変わったロック ${d.changed.length}件` : ''].filter(Boolean).join('・');
-      this.lockReport.unshift(`⚠ ${this.integrity.reason}${detail ? `（${detail}）` : ''}。人がエディタで確認するまで、AIからの編集はすべて止めます。最後に封印されたロックは引き続き有効です`);
+      this.lockReport.unshift(`⚠ ${this.integrity.reason}${detail ? `（${detail}）` : ''}。人がロックマネージャーで確認するまで、AIからの編集はすべて止めます。最後に封印されたロックは引き続き有効です`);
     }
   }
 
@@ -145,6 +146,7 @@ export class Project {
 
   /** 人が「この内容で承認」する: 今のロックの記録をそのまま封印し直す */
   async approveLocks(actor: Actor): Promise<void> {
+    this.requireKeeper(actor, 'ロックの記録の承認');
     await writeLocks(this.dir, actor, await readLockFile(this.dir));
     await appendLog(this.dir, actor, 'lock-approve', [{ path: '.ages/locks.json', to: 'approved' }]);
     await this.reload();
@@ -152,6 +154,7 @@ export class Project {
 
   /** 人が「前の状態に戻す」: 最後に封印した控えに戻す */
   async restoreLocks(actor: Actor): Promise<void> {
+    this.requireKeeper(actor, 'ロックの記録を戻すの');
     const backup = this.integrity.backup;
     if (!backup) throw new Error('戻せる控えがありません。「この内容で承認」するか、ロックを付け直してください');
     await writeLocks(this.dir, actor, backup as Record<string, LockMark>);
@@ -160,7 +163,7 @@ export class Project {
   }
 
   private requireIntegrity(): void {
-    if (!this.integrity.ok) throw new Error(`ロックの記録の確認が必要です: ${this.integrity.reason}。エディタの「🔒⚠ ロックの記録を確認」から、承認するか前の状態に戻してください`);
+    if (!this.integrity.ok) throw new Error(`ロックの記録の確認が必要です: ${this.integrity.reason}。ロックマネージャー（エディタの「🔒⚠ ロックの記録を確認」から開く）で、承認するか前の状態に戻してください`);
   }
 
   /** 直近の読み込み時にロックの検査で見つかった問題（復元したもの・復元できないもの） */
@@ -176,7 +179,26 @@ export class Project {
     const report: string[] = [];
     const restored: Change[] = [];
     const dirty = new Set<string>();
+    let filesRestored = false;
     for (const [path, mark] of Object.entries(locks)) {
+      if (path.startsWith('file:')) {
+        // ファイルそのもののロック: 中身が変わっていたら、手元の控えから戻す
+        const rel = path.slice('file:'.length);
+        const want = (mark.value as { sha256?: string } | null)?.sha256;
+        const now = await fileHash(join(this.dir, rel));
+        if (!want || now === want) continue;
+        const copy = lockedCopy(this.dir, want);
+        if (await readFile(copy).then(() => true, () => false)) {
+          await mkdir(dirname(join(this.dir, rel)), { recursive: true });
+          await copyFile(copy, join(this.dir, rel));
+          filesRestored = true;
+          restored.push({ path, from: now ? '変えられた中身' : '消された', to: 'ロックしたときの中身' });
+          report.push(`ロック ${rel}（ファイル）が${now ? '書き換えられて' : '消されて'}いたので、ロックしたときの中身に戻しました`);
+        } else {
+          report.push(`ロック ${rel}（ファイル）が${now ? '書き換えられて' : '消されて'}いますが、この端末には控えがないので戻せません。ロックマネージャーで確かめて、付け直してください`);
+        }
+        continue;
+      }
       let current: unknown;
       try {
         current = getValue(this.docs, this.registry, path).value;
@@ -202,15 +224,104 @@ export class Project {
       await this.saveDirty(dirty);
       await appendLog(this.dir, { who: 'ages', kind: 'system', win: 'lock' }, 'lock-restore', restored);
     }
+    if (filesRestored) {
+      const scan = await scanAssets(this.dir);
+      this.assets = scan.assets;
+      this.registry.images = imagesOf(scan.assets);
+      this.docs.files = new Set(scan.files);
+    }
     return report;
+  }
+
+  /** ロックされたファイルの中身を差し替える（ロックマネージャーから）。ロックの控えも新しい中身にする */
+  async replaceLockedFile(rel: string, data: Buffer, actor: Actor): Promise<void> {
+    this.requireKeeper(actor, 'ロックされたファイルの差し替え');
+    this.requireIntegrity();
+    const locks = await readLockFile(this.dir);
+    const key = `file:${rel}`;
+    if (!locks[key]) throw new Error(`${rel} はロックされていません（ふつうに取り込めます）`);
+    const abs = join(this.dir, rel);
+    await writeFile(abs, data);
+    const sha256 = createHash('sha256').update(data).digest('hex');
+    await mkdir(dirname(lockedCopy(this.dir, sha256)), { recursive: true });
+    await writeFile(lockedCopy(this.dir, sha256), data);
+    locks[key] = { ...locks[key], value: { sha256, bytes: data.length } };
+    await writeLocks(this.dir, actor, locks);
+    await appendLog(this.dir, actor, 'upload', [{ path: key, to: 'replaced' }]);
+    await this.reload();
+  }
+
+  /** 住所が指すものの今の値と型（ロックマネージャーの表示用）。ロック中なら印も */
+  async describe(path: string): Promise<{ path: string; kind: 'value' | 'sheet' | 'file'; value?: unknown; type?: string; problem?: string; lock?: LockMark; asset?: AssetInfo }> {
+    const locks = await this.effectiveLocks();
+    const lock = locks[path];
+    if (path.startsWith('file:')) {
+      const asset = this.assets.find((a) => a.path === path.slice(5));
+      return { path, kind: 'file', asset, lock, problem: asset ? undefined : `ファイル ${path.slice(5)} はありません${suggest(path.slice(5), this.assets.map((a) => a.path))}` };
+    }
+    if (path.startsWith('sheet:')) {
+      const img = path.slice(6);
+      const problem = this.assets.some((a) => a.path === img && a.kind === 'image') ? undefined : `画像 ${img} はありません${suggest(img, this.assets.filter((a) => a.kind === 'image').map((a) => a.path))}`;
+      return { path, kind: 'sheet', value: this.docs.sheets.get(img) ?? null, type: '画像の切り方', lock, problem };
+    }
+    try {
+      const a = parseAddress(path);
+      if (!a.field) return { path, kind: 'value', lock, problem: 'ロックは値（フィールド・表のセル）単位です（例: main#player.Player.speed）' };
+      const { value } = getValue(this.docs, this.registry, path);
+      const def = a.kind === 'table' ? this.registry.tables.get(a.doc)?.columns[a.field] : this.registry.components.get(a.component!)?.fields[a.field];
+      return { path, kind: 'value', value, type: def ? brief(def) : undefined, lock };
+    } catch (e) {
+      return { path, kind: 'value', lock, problem: (e as Error).message };
+    }
+  }
+
+  /** ロックできる住所の候補（ロックマネージャーで打つときの補完）。text を含むものを最大 limit 件 */
+  lockCandidates(text: string, limit = 40): string[] {
+    const out: string[] = [];
+    const q = text.trim().toLowerCase();
+    const push = (a: string) => { if (out.length < limit && (!q || a.toLowerCase().includes(q))) out.push(a); };
+    const holder = (base: string, comps: Record<string, Record<string, unknown>>) => {
+      for (const cname of Object.keys(comps)) for (const f of Object.keys(this.registry.components.get(cname)?.fields ?? {})) push(`${base}.${cname}.${f}`);
+    };
+    for (const sc of this.docs.scenes.values()) for (const e of sc.entities) holder(`${sc.name}#${e.id}`, e.components);
+    for (const pf of this.docs.prefabs.values()) holder(`@${pf.name}`, pf.components);
+    for (const t of this.docs.tables.values()) for (const r of t.rows) for (const c of Object.keys(this.registry.tables.get(t.name)?.columns ?? {})) push(`$${t.name}.${r.id}.${c}`);
+    for (const a of this.assets) { if (a.kind === 'image') push(`sheet:${a.path}`); push(`file:${a.path}`); }
+    return out;
+  }
+
+  /** ロックマネージャーの一覧: すべてのロックと、今の値・型・問題 */
+  async lockState() {
+    const locks = await this.effectiveLocks();
+    const items = await Promise.all(Object.keys(locks).sort().map((k) => this.describe(k)));
+    return { items, integrity: { ok: this.integrity.ok, reason: this.integrity.reason, diff: this.lockDiff(), hasBackup: !!this.integrity.backup }, lockReport: this.lockReport, project: this.config.name };
+  }
+
+  /** ロックマネージャー（人だけが使う専用の画面）からの操作でなければ止める */
+  private requireKeeper(actor: Actor, what: string): void {
+    if (!isKeeper(actor)) throw new Error(`🔒 ${what}は、ロックマネージャーでだけできます（エディタの 🔒 を押すと開きます）。AI と独自のウインドウからはできません`);
   }
 
   /** 値をロックする（人だけ）。paths はフィールドまでのアドレス。 */
   async lock(paths: string[], actor: Actor, note?: string): Promise<void> {
+    this.requireKeeper(actor, 'ロックを付けるの');
     this.requireIntegrity();
     const locks = await readLockFile(this.dir);
     const t = new Date().toISOString();
     for (const path of paths) {
+      if (path.startsWith('file:')) {
+        // ファイルそのもののロック。中身の控えを、プロジェクトの外（この端末の使用者のフォルダ）に取る
+        const rel = path.slice('file:'.length);
+        if (!this.assets.some((a) => a.path === rel)) throw new Error(`ファイル ${rel} はありません${suggest(rel, this.assets.map((a) => a.path))}（ロックできるのは画像・音・フォント）`);
+        const abs = join(this.dir, rel);
+        const sha256 = (await fileHash(abs))!;
+        await mkdir(dirname(lockedCopy(this.dir, sha256)), { recursive: true });
+        await copyFile(abs, lockedCopy(this.dir, sha256));
+        const mark: LockMark = { who: actor.who, t, value: { sha256, bytes: (await readFile(abs)).length } };
+        if (note) mark.note = note;
+        locks[path] = mark;
+        continue;
+      }
       if (path.startsWith('sheet:')) {
         if (sheetRoot(path) !== path) throw new Error(`画像の切り方のロックはシート全体です（例: sheet:assets/hero.png）: ${path}`);
       } else {
@@ -229,6 +340,7 @@ export class Project {
   }
 
   async unlock(paths: string[], actor: Actor): Promise<void> {
+    this.requireKeeper(actor, 'ロックを外すの');
     this.requireIntegrity();
     const locks = await readLockFile(this.dir);
     for (const p of paths) delete locks[p];
@@ -388,16 +500,28 @@ export class Project {
         : null;
     // シーンを消す・名前を変えると、その中のロック・★の住所も変わる
     const sceneKeys = (op: Op, rec: Record<string, unknown>) => (op.op === 'removeScene' || op.op === 'renameScene' ? Object.keys(rec).filter((k) => k.startsWith(op.name + '#')) : []);
-    // アセットの移動・削除で一緒に動く画像の切り方（sheet:<画像>）
+    // アセットの移動・削除で一緒に動く画像の切り方（sheet:<画像>）と、ロックされたファイル（file:<場所>）
     const assetSheets = (op: Op) => {
       if (op.op !== 'moveAsset' && op.op !== 'removeAsset') return [];
       const from = (op.op === 'moveAsset' ? op.from : op.path).replace(/\/+$/, '');
-      return [...this.docs.sheets.keys()].filter((img) => img === from || isUnder(img, from)).map((img) => `sheet:${img}`);
+      const files = Object.keys(locks).filter((k) => k.startsWith('file:') && (k.slice(5) === from || isUnder(k.slice(5), from)));
+      return [...[...this.docs.sheets.keys()].filter((img) => img === from || isUnder(img, from)).map((img) => `sheet:${img}`), ...files];
     };
+    const keeper = isKeeper(actor);
+    // 人がエディタで行っても、ロックの住所が付いて動くだけで値の意味は変わらない操作（名前の変更・場所の変更）
+    const STRUCTURAL = new Set(['renameRow', 'renameScene', 'moveAsset']);
     if (actor.kind === 'ai' && !this.integrity.ok) {
-      throw new Error(`🔒 ロックの記録が人の封印と一致しないため、AIからの編集を止めています（${this.integrity.reason}）。ユーザーにエディタでの確認を頼んでください`);
+      throw new Error(`🔒 ロックの記録が人の封印と一致しないため、AIからの編集を止めています（${this.integrity.reason}）。ユーザーにロックマネージャーでの確認を頼んでください`);
     }
     const locks = await this.effectiveLocks();
+    // 人（ロックマネージャー以外）: ロックされた値を変える・ロックされたものを消すことはできない（独自のウインドウは下でもっと厳しく）
+    const fromWindow = actor.win?.startsWith('window:');
+    if (actor.kind === 'human' && !keeper && !fromWindow) {
+      const hits = ops.filter((op) => !STRUCTURAL.has(op.op)).flatMap((op) => { const t = targetOf(op); return [...(t ? lockedHits(locks, t) : []), ...assetSheets(op).filter((k) => locks[k]), ...sceneKeys(op, locks)]; });
+      if (hits.length) throw new Error(`🔒 ロックされています: ${[...new Set(hits)].join(', ')}。変えるならロックマネージャーで（🔒 を押すと開きます）`);
+      const files = ops.flatMap((op) => (op.op === 'moveAsset' ? assetSheets(op).filter((k) => k.startsWith('file:') && locks[k]) : []));
+      if (files.length) throw new Error(`🔒 ロックされたファイルは動かせません: ${files.join(', ')}。動かすならロックマネージャーで外してから`);
+    }
     if (actor.kind === 'human' && !this.integrity.ok) {
       const hits = ops.flatMap((op) => { const t = targetOf(op); return t ? lockedHits(locks, t) : []; });
       if (hits.length) this.requireIntegrity();
@@ -486,7 +610,13 @@ export class Project {
         warnings.push(`${asset} はコードの中にも書かれています（${at.join(', ')}）。コードは直していないので、${to} に書き換えてください`);
       }
     }
-    // 操作の結果として連動して変わる値（コマの名前の変更で書き換わる参照など）にも、ロックは効く
+    // 操作の結果として連動して変わる値（コマの名前の変更で書き換わる参照など）にも、ロックは効く。
+    // 人（ロックマネージャー以外）は、意味を保つための自動の直し（場所の変更に合わせた参照など）だけを通す
+    if (actor.kind === 'human' && !keeper && !fromWindow) {
+      const moved = (c: Change) => (typeof c.to === 'string' && c.to.startsWith('renamed:')) || /^(file|scene):|^config\./.test(c.path);
+      const hits = [...new Set(result.changes.filter((c) => !c.auto && !moved(c)).flatMap((c) => lockedHits(locks, sheetRoot(c.path.replace(/\[\d+,\s*\d+\]$/, '')))))];
+      if (hits.length) rollback(`🔒 ロックされています: ${hits.join(', ')}。変えるならロックマネージャーで（🔒 を押すと開きます）`);
+    }
     if (actor.kind === 'ai' || viaWindow) {
       const hits = [...new Set(result.changes.flatMap((c) => lockedHits(locks, sheetRoot(c.path.replace(/\[\d+,\s*\d+\]$/, '')))))];
       if (hits.length) rollback(`🔒 この操作は、ロックされた値も変えてしまいます: ${hits.join(', ')}。この値は人が決めるものです。変えるべき理由があれば、ユーザーに提案してください`);
@@ -540,6 +670,14 @@ export class Project {
       // 動かした画像の切り方のロックも付け替える
       for (const f of result.files) {
         for (const k of Object.keys(locks)) {
+          if (k.startsWith('file:')) {
+            const p = k.slice('file:'.length);
+            if (p !== f.from && !(f.dir && isUnder(p, f.from))) continue;
+            if (f.to !== null) locks['file:' + f.to + p.slice(f.from.length)] = locks[k];
+            delete locks[k];
+            changed = true;
+            continue;
+          }
           const img = k.startsWith('sheet:') ? k.slice('sheet:'.length).split('|')[0] : null;
           if (!img || !(img === f.from || (f.dir && isUnder(img, f.from)))) continue;
           if (f.to !== null) locks['sheet:' + f.to + k.slice('sheet:'.length + f.from.length)] = locks[k];
@@ -631,32 +769,13 @@ export class Project {
   }
 
   /**
-   * 人がテキストで文書を書き換えた後に呼ぶ。ロック中の値を人が変えていたら、ロックの値を新しい値にしてから読み直す
-   * （人の編集が「ロックの復元」で消されないように）。変更点を返す。
+   * 人がエディタのテキストで文書を書き換えた後に呼ぶ。変更点を返す。
+   * ロックされた値は、人でもテキストからは変えられない（ロックマネージャーで変える）。変えていたら元に戻す
    */
   async humanTextEdit(actor: Actor): Promise<Change[]> {
     const before = this.docs;
-    const after: Docs = { ...(await readDocs(this.dir)), sheets: (await scanAssets(this.dir)).sheets };
-    const changes = diffDocs(before, after);
-    if (!this.integrity.ok && changes.some((c) => lockedHits(this.lockFileCache, sheetRoot(c.path.replace(/\[\d+,\s*\d+\]$/, ''))).length)) this.requireIntegrity();
-    const locks = await readLockFile(this.dir);
-    let touchedLock = false;
-    for (const c of changes) {
-      if (c.path.startsWith('sheet:')) {
-        // 画像の切り方のロックは、人が書き換えた新しい切り方にする（消したらロックも外す）
-        const root = sheetRoot(c.path);
-        if (!locks[root]) continue;
-        const v = after.sheets.get(root.slice('sheet:'.length));
-        if (v) locks[root].value = structuredClone(v);
-        else delete locks[root];
-        touchedLock = true;
-        continue;
-      }
-      if (locks[c.path] && c.to !== 'removed' && c.to !== 'added') { locks[c.path].value = structuredClone(c.to); touchedLock = true; }
-      if (c.to === 'removed') for (const p of lockedHits(locks, c.path)) { delete locks[p]; touchedLock = true; }
-    }
-    if (touchedLock) await writeLocks(this.dir, actor, locks);
-    await this.reload();
+    await this.reload(); // ロックされた値はここで元に戻る（lockReport に出る）
+    const changes = diffDocs(before, this.docs);
     await appendLog(this.dir, actor, 'text', changes);
     await markTouched(this.dir, actor, changes);
     return changes;
@@ -752,3 +871,13 @@ async function list(dir: string, suffix: string): Promise<string[]> {
 }
 
 const imagesOf = (assets: AssetInfo[]) => new Map(assets.filter((a) => a.w && a.h).map((a) => [a.path, { w: a.w!, h: a.h! }]));
+
+/** ロックマネージャー（人だけが使う専用の画面）からの操作か。ロックを付ける・外す・ロックされた値を変えるのは、ここからだけ */
+export const isKeeper = (a: Actor) => a.kind === 'human' && a.win === 'lock-manager';
+
+async function fileHash(abs: string): Promise<string | null> {
+  try { return createHash('sha256').update(await readFile(abs)).digest('hex'); } catch { return null; }
+}
+
+/** ロックしたファイルの控えの場所（この端末の使用者のフォルダ。Git では共有しない） */
+const lockedCopy = (root: string, sha256: string) => join(agesHome(), 'locked-files', createHash('sha1').update(resolve(root)).digest('hex'), sha256);

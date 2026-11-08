@@ -59,6 +59,21 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
     await project.reload();
     return { ok: project.integrity.ok, lockReport: project.lockReport };
   },
+  async lockState() {
+    return project.lockState();
+  },
+  async describe(path: string) {
+    return project.describe(path);
+  },
+  async lockCandidates(text: string) {
+    return project.lockCandidates(text);
+  },
+  async fileLocked(rel: string) {
+    return !!(await project.effectiveLocks())[`file:${rel}`];
+  },
+  async replaceLockedFile(rel: string, data: Uint8Array, actor: Actor) {
+    await project.replaceLockedFile(rel, Buffer.from(data), actor);
+  },
   async humanTextEdit(actor: Actor) {
     return { changes: await project.humanTextEdit(actor) };
   },

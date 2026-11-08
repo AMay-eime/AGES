@@ -11,6 +11,7 @@ import { InputPlayback, keysToEvents } from '../src/core/input.ts';
 process.env.AGES_HOME = await mkdtemp(join(tmpdir(), 'ages-home-'));
 
 const human = { who: 'yamamoto', kind: 'human' as const, win: 'inspector' };
+const keeper = { who: 'yamamoto', kind: 'human' as const, win: 'lock-manager' };
 const ai = { who: 'ai', kind: 'ai' as const, win: 'cli' };
 
 async function fresh(): Promise<string> {
@@ -57,7 +58,7 @@ test('人が調整した値は、AIが変えるには --force が必要', async 
 
 test('ロックした値は、AIからは --force でも変えられない', async () => {
   const p = await Project.load(await fresh());
-  await p.lock(['main#player.Player.speed'], human, '手触りの核');
+  await p.lock(['main#player.Player.speed'], keeper, '手触りの核');
   await assert.rejects(p.apply([{ op: 'set', path: 'main#player.Player.speed', value: 6 }], ai, { force: true }), /ロックされた値/);
   await assert.rejects(p.apply([{ op: 'removeComponent', target: 'main#player', component: 'Player' }], ai, { force: true }), /ロックされた値/);
   await assert.rejects(p.apply([{ op: 'removeEntity', scene: 'main', id: 'player' }], ai, { force: true }), /ロックされた値/);
@@ -65,13 +66,14 @@ test('ロックした値は、AIからは --force でも変えられない', asy
 
 test('ロックの設定はAIにはできない', async () => {
   const p = await Project.load(await fresh());
-  await assert.rejects(p.lock(['main#player.Player.speed'], ai), /人だけ/);
+  await assert.rejects(p.lock(['main#player.Player.speed'], ai), /ロックマネージャーでだけできます/);
+  await assert.rejects(p.lock(['main#player.Player.speed'], human), /ロックマネージャーでだけできます/, '人でも、エディタからは付けられない');
 });
 
 test('ファイルを直接書き換えられても、ロックした値は次の読み込みで元に戻る', async () => {
   const dir = await fresh();
   const p = await Project.load(dir);
-  await p.lock(['main#player.Player.speed'], human);
+  await p.lock(['main#player.Player.speed'], keeper);
   const file = p.scenePath('main');
   await writeFile(file, (await readFile(file, 'utf8')).replace('"speed": 4.5', '"speed": 9'));
   const again = await Project.load(dir);
@@ -81,11 +83,12 @@ test('ファイルを直接書き換えられても、ロックした値は次�
   assert.equal(log.at(-1)!.op, 'lock-restore');
 });
 
-test('人がロック中の値を編集すると、ロックの値も更新される', async () => {
+test('ロックされた値は、人でもエディタからは変えられない。ロックマネージャーで変えると、ロックの値も更新される', async () => {
   const dir = await fresh();
   const p = await Project.load(dir);
-  await p.lock(['main#player.Player.speed'], human);
-  await p.apply([{ op: 'set', path: 'main#player.Player.speed', value: 5.5 }], human);
+  await p.lock(['main#player.Player.speed'], keeper);
+  await assert.rejects(p.apply([{ op: 'set', path: 'main#player.Player.speed', value: 5.5 }], human), /🔒 ロックされています: main#player\.Player\.speed。変えるならロックマネージャーで/);
+  await p.apply([{ op: 'set', path: 'main#player.Player.speed', value: 5.5 }], keeper);
   const again = await Project.load(dir);
   assert.equal(again.lockReport.length, 0);
 });
@@ -114,7 +117,7 @@ test('要約では値の変更とロックを分けて表示する', async () =>
   const dir = await fresh();
   const p = await Project.load(dir);
   await p.apply([{ op: 'set', path: 'main#player.Player.speed', value: 6 }], human);
-  await p.lock(['main#player.Player.speed'], human);
+  await p.lock(['main#player.Player.speed'], keeper);
   const s = summarize(await readLog(dir));
   assert.match(s, /speed 4\.5→6/);
   assert.match(s, /speed 🔒ロック/);
@@ -133,12 +136,13 @@ test('行列: セル単位で変更でき、範囲外・型違い・形の崩れ
   await assert.rejects(p.apply([{ op: 'setCells', path: 'main#spawner.Spawner.interval', cells: [[0, 0, 1]] }], ai), /行列ではありません/);
 });
 
-test('行列: ロックするとAIはセル単位でも変えられない。人のセル編集はロックの値に反映される', async () => {
+test('行列: ロックするとAIはセル単位でも変えられない。人もロックマネージャーでだけ変えられ、ロックの値に反映される', async () => {
   const dir = await fresh();
   const p = await Project.load(dir);
-  await p.lock([F], human);
+  await p.lock([F], keeper);
   await assert.rejects(p.apply([{ op: 'setCells', path: F, cells: [[0, 0, 1]] }], ai, { force: true }), /ロックされた値/);
-  await p.apply([{ op: 'setCells', path: F, cells: [[0, 0, 1]] }], human);
+  await assert.rejects(p.apply([{ op: 'setCells', path: F, cells: [[0, 0, 1]] }], human), /🔒 ロックされています/);
+  await p.apply([{ op: 'setCells', path: F, cells: [[0, 0, 1]] }], keeper);
   const again = await Project.load(dir);
   assert.equal(again.lockReport.length, 0);
   assert.equal((again.docs.scenes.get('main')!.entities[1].components.Spawner.formation as number[][])[0][0], 1);
@@ -182,7 +186,7 @@ test('エディタ計画: 「AIにおまかせ」でも合意として扱う', a
 test('封印: AIがロックの記録から項目を消しても、ロックは外れず、AIの編集は止まる', async () => {
   const dir = await fresh();
   const p = await Project.load(dir);
-  await p.lock(['main#player.Player.speed'], human);
+  await p.lock(['main#player.Player.speed'], keeper);
   // AIがロックの記録を直接書き換えて、ロックを消し、値も書き換える
   await writeFile(join(dir, '.ages', 'locks.json'), '{}\n');
   const file = p.scenePath('main');
@@ -198,11 +202,11 @@ test('封印: AIがロックの記録から項目を消しても、ロックは�
 test('封印: 人が「前の状態に戻す」とロックが戻り、AIの編集も再開できる', async () => {
   const dir = await fresh();
   const p = await Project.load(dir);
-  await p.lock(['main#player.Player.speed'], human);
+  await p.lock(['main#player.Player.speed'], keeper);
   await writeFile(join(dir, '.ages', 'locks.json'), '{}\n');
   const again = await Project.load(dir);
-  await assert.rejects(again.lock(['main#player.Player.fireInterval'], human), /確認が必要/);
-  await again.restoreLocks(human);
+  await assert.rejects(again.lock(['main#player.Player.fireInterval'], keeper), /確認が必要/);
+  await again.restoreLocks(keeper);
   assert.equal(again.integrity.ok, true);
   assert.ok((await again.effectiveLocks())['main#player.Player.speed']);
   await again.apply([{ op: 'set', path: 'main#player.Player.fireInterval', value: 3 }], ai);
@@ -217,7 +221,7 @@ test('封印: Gitで取り込んだロックの変更は、人が承認するま
   assert.equal(p.integrity.ok, false);
   assert.match(p.integrity.reason!, /まだ人がロックの記録を確認していません/);
   await assert.rejects(p.apply([{ op: 'set', path: 'main#spawner.Spawner.interval', value: 30 }], ai), /止めています/);
-  await p.approveLocks(human);
+  await p.approveLocks(keeper);
   assert.equal(p.integrity.ok, true);
   await assert.rejects(p.apply([{ op: 'set', path: 'main#player.Player.speed', value: 6 }], ai, { force: true }), /ロックされた値/);
   await p.apply([{ op: 'set', path: 'main#spawner.Spawner.interval', value: 30 }], ai);

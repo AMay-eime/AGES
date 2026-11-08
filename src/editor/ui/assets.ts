@@ -171,6 +171,7 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
       ['名前を変える（F2）', () => rename(a.path, false)],
       ['別のフォルダへ', () => moveTo(a.path, false)],
       ['場所をコピー', () => { navigator.clipboard?.writeText(a.path); toast(`コピーしました: ${a.path}`); }],
+      [app.state.locks[`file:${a.path}`] ? '🔒 ロック中（ロックマネージャーで）' : '🔒 ロックする…', () => app.openLocks(`file:${a.path}`)],
       ['消す（Delete）', () => remove(a.path, false)],
     ]);
   };
@@ -281,11 +282,12 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
       : a.kind === 'sound' ? h('div', { class: 'tile-icon' }, '🔊', h('button', { class: 'icon tile-play', title: '鳴らす', onclick: (e: Event) => { e.stopPropagation(); open(a); } }, '▶'))
       : h('div', { class: 'tile-icon', style: `font-family:${fontFamily(app, a.path)}` }, 'Aaあ');
     const meta = a.kind === 'image' ? `${a.w ?? '?'}×${a.h ?? '?'}` : a.kind === 'sound' ? (a.sec !== undefined ? `${a.sec}秒` : kb(a.bytes)) : kb(a.bytes);
-    const t = h('div', { class: `tile${a.path === selected ? ' on' : ''}${n ? '' : ' unused'}`, title: `${a.path}\n${KIND_LABEL[a.kind]} ${meta} ${kb(a.bytes)}\n${n ? `${n}か所で使用` : '未使用'}`,
+    const locked = !!app.state.locks[`file:${a.path}`];
+    const t = h('div', { class: `tile${a.path === selected ? ' on' : ''}${n ? '' : ' unused'}`, title: `${a.path}\n${KIND_LABEL[a.kind]} ${meta} ${kb(a.bytes)}\n${n ? `${n}か所で使用` : '未使用'}${locked ? '\n🔒 ロック中（差し替え・移動・削除はできません）' : ''}`,
       onclick: () => { selected = a.path; renderGrid(); renderSide(); el.focus(); },
       ondblclick: () => open(a) },
       h('div', { class: 'tile-pic' }, pic),
-      h('div', { class: 'tile-name' }, baseOf(a.path)),
+      h('div', { class: 'tile-name' }, locked ? '🔒' : '', baseOf(a.path)),
       h('div', { class: 'tile-meta muted' }, showDir ? dirOf(a.path) : `${meta}${n ? '' : ' ・未使用'}`));
     t.addEventListener('contextmenu', (e) => fileMenu(e, a));
     draggable(t, a.path);
@@ -330,12 +332,14 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
     clear(side,
       preview,
       h('div', { class: 'side-path' }, a.path),
+      app.state.locks[`file:${a.path}`] ? h('div', { style: 'color:var(--lock);margin:2px 0' }, '🔒 ロック中（差し替え・移動・削除はできません） ', h('a', { style: 'cursor:pointer;text-decoration:underline', onclick: () => app.openLocks(`file:${a.path}`) }, 'ロックマネージャー')) : null,
       h('div', { class: 'muted' }, [KIND_LABEL[a.kind], a.kind === 'image' ? `${a.w}×${a.h}` : '', a.sec !== undefined ? `${a.sec}秒` : '', kb(a.bytes), sheet ? (sheet.frames ? `コマ${sheet.frames.length}（自由）` : sheet.frame ? `コマ ${sheet.frame[0]}×${sheet.frame[1]}` : '') : ''].filter(Boolean).join('・')),
       h('div', { class: 'row', style: 'flex-wrap:wrap;gap:4px;margin:6px 0' },
         a.kind === 'image' ? h('button', { onclick: () => open(a) }, '✂ 切り方') : null,
         h('button', { onclick: () => rename(a.path, false) }, '名前'),
         h('button', { onclick: () => moveTo(a.path, false) }, '移動'),
-        h('button', { onclick: () => remove(a.path, false), title: refs.length ? '使われているので消せません' : '' }, '消す')),
+        h('button', { onclick: () => remove(a.path, false), title: refs.length ? '使われているので消せません' : '' }, '消す'),
+        h('button', { onclick: () => app.openLocks(`file:${a.path}`), title: 'このファイルそのものをロックする・外す（ロックマネージャーで）' }, '🔒')),
       h('div', { class: 'muted' }, refs.length ? `使っている所 ${refs.length}` : '使っている所はありません'),
       h('ul', { class: 'refs' }, refs.map((r) => h('li', {}, r.endsWith('（コード）') ? h('span', {}, r) : h('a', { onclick: () => go(r) }, r)))));
   };

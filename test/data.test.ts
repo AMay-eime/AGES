@@ -12,6 +12,7 @@ import { readTouched } from '../src/project/oplog.ts';
 
 process.env.AGES_HOME ??= await mkdtemp(join(tmpdir(), 'ages-home-'));
 const human = { who: 'yamamoto', kind: 'human' as const, win: 'inspector' };
+const keeper = { who: 'yamamoto', kind: 'human' as const, win: 'lock-manager' };
 const ai = { who: 'ai', kind: 'ai' as const, win: 'cli' };
 
 const STEP: Field = {
@@ -71,14 +72,14 @@ test('リストのロックと★: リスト全体でロックする（中の要
   const dir = await fresh();
   const p = await Project.load(dir);
   const at = 'main#player.Script.steps';
-  await assert.rejects(p.lock([`${at}[0].dx`], human), /リストの中の要素はロックできません/);
-  await p.lock(['main#player.Script.home.x'], human); // 構造体の中はロックできる
+  await assert.rejects(p.lock([`${at}[0].dx`], keeper), /リストの中の要素はロックできません/);
+  await p.lock(['main#player.Script.home.x'], keeper); // 構造体の中はロックできる
   await assert.rejects(p.apply([{ op: 'set', path: 'main#player.Script.home.x', value: 3 }], ai), /🔒/);
   await assert.rejects(p.apply([{ op: 'set', path: 'main#player.Script.home', value: { x: 3, y: 1 } }], ai), /🔒/, '中にロックのある値を、まるごと変えることもできない');
-  await p.lock([at], human);
+  await p.lock([at], keeper);
   await assert.rejects(p.apply([{ op: 'set', path: `${at}[0].dx`, value: 5 }], ai, { force: true }), /🔒/);
   await assert.rejects(p.apply([{ op: 'insert', path: at }], ai, { force: true }), /🔒/);
-  await p.unlock([at], human);
+  await p.unlock([at], keeper);
   await p.apply([{ op: 'set', path: `${at}[0].dx`, value: 2 }], human);
   assert.ok((await readTouched(dir))[at], '人が中を変えると、リスト全体に★');
   await assert.rejects(p.apply([{ op: 'set', path: `${at}[0].dy`, value: 1 }], ai), /人が調整した値/);
@@ -108,7 +109,7 @@ test('表: 行の追加・ID の変更（指している値も直る）・削除
 test('表のロック: セルごと。AIは ID の変更も削除もできない。人が ID を変えるとロックも付け替わる。直接の書き換えは戻る', async () => {
   const dir = await fresh();
   const p = await Project.load(dir);
-  await p.lock(['$enemies.tough.hp'], human);
+  await p.lock(['$enemies.tough.hp'], keeper);
   await assert.rejects(p.apply([{ op: 'set', path: '$enemies.tough.hp', value: 9 }], ai, { force: true }), /🔒/);
   await assert.rejects(p.apply([{ op: 'renameRow', table: 'enemies', id: 'tough', to: 'heavy' }], ai, { force: true }), /🔒/);
   await p.apply([{ op: 'set', path: '$enemies.tough.speed', value: 0.8 }], ai);

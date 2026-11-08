@@ -122,6 +122,7 @@ export function renderAssets(p: Project, o: AssetListOptions = {}): string[] {
       }
     } else if (a.kind === 'sound') line += a.sec !== undefined ? ` ${a.sec}s` : '';
     else line += ' フォント';
+    if (locks[`file:${a.path}`]) line += ' 🔒ファイル';
     if (o.counts) line += n ? ` ${n}か所` : ' 未使用';
     else if (!n) line += ' 未使用';
     out.push(line);

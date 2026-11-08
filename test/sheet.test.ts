@@ -15,6 +15,7 @@ import { readLog, readTouched, summarize } from '../src/project/oplog.ts';
 
 process.env.AGES_HOME ??= await mkdtemp(join(tmpdir(), 'ages-home-'));
 const human = { who: 'yamamoto', kind: 'human' as const, win: 'sprite' };
+const keeper = { who: 'yamamoto', kind: 'human' as const, win: 'lock-manager' };
 const ai = { who: 'ai', kind: 'ai' as const, win: 'cli' };
 const SHIPS = 'assets/kenney-pixel-shmup/ships.png';
 
@@ -138,7 +139,7 @@ test('setFrame: 名前を変えると参照も直る。使われているコマ�
   assert.equal(again.docs.sheets.get(SHIPS)!.frames!.length, 23);
 });
 
-test('切り方の★と🔒: 人が切った画像は確認が要り、ロックした画像はAIからは変えられない。直接の書き換えは戻る', async () => {
+test('切り方の★と🔒: 人が切った画像は確認が要り、ロックした画像はAIからも人のエディタからも変えられない。直接の書き換えは戻る', async () => {
   const dir = await fresh();
   const p = await Project.load(dir);
   await p.apply([{ op: 'setSheet', image: SHIPS, sheet: { frames: [{ name: 'a', rect: [0, 0, 32, 32] }, { name: 'e', rect: [64, 128, 32, 32] }] } }], human);
@@ -149,7 +150,7 @@ test('切り方の★と🔒: 人が切った画像は確認が要り、ロッ�
   assert.equal(q.docs.sheets.get(SHIPS)!.frames!.length, 24, '前が自由な矩形なので、格子で切っても自由な矩形（名前を引き継ぐ）');
   assert.equal(q.docs.sheets.get(SHIPS)!.frames![0].name, 'a');
   assert.equal(q.docs.sheets.get(SHIPS)!.frames![18].name, 'e');
-  await q.lock([`sheet:${SHIPS}`], human);
+  await q.lock([`sheet:${SHIPS}`], keeper);
   await assert.rejects(cmdSlice(dir, SHIPS, { auto: true, force: true }), /🔒/);
   await assert.rejects(q.apply([{ op: 'setFrame', image: SHIPS, frame: 'a', name: 'b' }], ai, { force: true }), /🔒/);
   // AIがファイルを直接書き換えても、次の読み込みで戻る
@@ -158,8 +159,9 @@ test('切り方の★と🔒: 人が切った画像は確認が要り、ロッ�
   const r = await Project.load(dir);
   assert.ok(r.lockReport.some((l) => /切り方/.test(l)), r.lockReport.join('\n'));
   assert.equal(JSON.parse(await readFile(file, 'utf8')).frames.length, 24);
-  // 人が変えると、ロックの値も新しい切り方になる
-  await r.apply([{ op: 'setFrame', image: SHIPS, frame: 'a', pivot: [0.5, 1] }], human);
+  // 人もエディタからは変えられない。ロックマネージャーから変えると、ロックの値も新しい切り方になる
+  await assert.rejects(r.apply([{ op: 'setFrame', image: SHIPS, frame: 'a', pivot: [0.5, 1] }], human), /🔒 ロックされています: sheet:/);
+  await r.apply([{ op: 'setFrame', image: SHIPS, frame: 'a', pivot: [0.5, 1] }], keeper);
   const s = await Project.load(dir);
   assert.deepEqual(s.lockReport, []);
   assert.deepEqual(s.docs.sheets.get(SHIPS)!.frames![0].pivot, [0.5, 1]);
