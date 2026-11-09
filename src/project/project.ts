@@ -8,17 +8,17 @@ import { registerHooks } from 'node:module';
 import { formatJson, type PrefabDoc, type ProjectConfig, type SceneDoc } from '../core/docs.ts';
 import { Registry, type CheckView, type GameModule } from '../core/registry.ts';
 import { applyOps, diffDocs, getValue, setValue, sheetRoot, splitItem, type Change, type Docs, type Op, type PatchResult } from '../core/patch.ts';
-import { parseAddress } from '../core/docs.ts';
+import { formatAddress, parseAddress } from '../core/docs.ts';
 import { Game } from '../core/game.ts';
 import { RUN_DATE, parseDate, type DateStart } from '../core/clock.ts';
-import { FIELD_TYPES, brief, checkAt, suggest, visit, type Field } from '../core/schema.ts';
+import { FIELD_TYPES, brief, checkAt, fieldAt, suggest, visit, type Field } from '../core/schema.ts';
 import { ROW_ID, type TableDoc } from '../core/table.ts';
 import { appendLog, localTime, lockedHits, markTouched, movePrefixTouched, moveTouched, readLocks as readLockFile, readLog, readTouched, writeLocks, type Actor, type LockMark } from './oplog.ts';
 import { agesHome, lockDiff, verifyLocks, type LockIntegrity } from './seal.ts';
 import { scanAssets, type AssetInfo } from './assets.ts';
 import { assetRefs, codePrefabRefs, codeRefs, codeSceneRefs, isUnder } from '../core/assets.ts';
 import { resolveEntity, resolvePrefab } from '../core/variant.ts';
-import { allowedByDrawers, checkWindows, loadWindows, unlistedWindows, withinEdits, type WindowInfo } from './windows.ts';
+import { allowedByDrawers, checkKept, checkWindows, loadWindows, prefabTags, tagCounts, tagEdit, unlistedWindows, windowAllows, windowTargets, type WindowInfo } from './windows.ts';
 import { Journal, inverseFiles, type DocState, type FileMove, type TxRecord } from './journal.ts';
 import { revert as revertValue, same } from '../core/revert.ts';
 import { FIT_MODES } from '../core/camera.ts';
@@ -109,8 +109,8 @@ export class Project {
     return (this.windowCache ??= loadWindows(this.dir, this.config.editorWindows ?? []));
   }
 
-  /** ウインドウの宣言の問題と、登録し忘れたウインドウ */
-  async checkWindows(): Promise<string[]> {
+  /** ウインドウの宣言の問題と、登録し忘れたウインドウ（warns に ⚠: まだプレハブのない @[タグ]） */
+  async checkWindows(warns: string[] = []): Promise<string[]> {
     const listed = this.config.editorWindows ?? [];
     const part = (c: string, f?: string) => {
       const def = this.registry.components.get(c);
@@ -118,7 +118,26 @@ export class Project {
       return f === undefined || def.fields[f] ? null : `${c} に ${f} はありません${suggest(f, Object.keys(def.fields))}`;
     };
     const types = [...new Set([...this.registry.components.values()].flatMap((d) => Object.values(d.fields).map((f) => f.type)).concat(FIELD_TYPES))];
-    const errs = checkWindows(await this.windows(), (a) => this.addressProblem(a), part, types);
+    // 欄の見せ方の match の頭（住所・部品.フィールド・$表.列）の型
+    const fieldOf = (head: string): Field | string => {
+      if (head.startsWith('$')) {
+        const [t, col] = head.slice(1).split('.');
+        const def = this.registry.tables.get(t);
+        if (!def) return `表 ${t} はありません${suggest(t, [...this.registry.tables.keys()])}`;
+        if (!col) return `列がありません（$表.列 の形。行は書かず、どの行にも効く）`;
+        return def.columns[col] ?? `表 ${t} に列 ${col} はありません${suggest(col, Object.keys(def.columns))}`;
+      }
+      if (head.includes('#') || head.startsWith('@')) {
+        const bad = this.addressProblem(head);
+        if (bad) return bad;
+        const a = parseAddress(head);
+        return (a.component && a.field ? this.registry.components.get(a.component)?.fields[a.field] : undefined) ?? `${head} はフィールドの住所ではありません（例 main#player.Health.hp）`;
+      }
+      const dot = head.indexOf('.');
+      if (dot <= 0 || /[[\]]/.test(head)) return `部品.フィールド の形で書きます（例 Health.hp・Enemy.shotPatterns[].pattern）`;
+      return part(head.slice(0, dot), head.slice(dot + 1)) ?? this.registry.components.get(head.slice(0, dot))!.fields[head.slice(dot + 1)];
+    };
+    const errs = checkWindows(await this.windows(), (a) => this.addressProblem(a), part, types, tagCounts(this.docs.prefabs), warns, fieldOf);
     for (const p of await unlistedWindows(this.dir, listed)) errs.push(`${p}: ages.project.json の editorWindows に書いていないので、エディタに出ません`);
     return errs;
   }
@@ -417,12 +436,15 @@ export class Project {
 
   /** 値の中（リスト・構造体・どれか1つの中まで）の参照を確かめる: 表の行・プレハブ・ファイル */
   private checkNested(at: string, f: Field, v: unknown, errs: string[]): void {
-    const assetPaths = new Set(this.assets.map((a) => a.path));
+    // アセットの場所・表の行の名前は、検証の1回のあいだ作り置く（大きなプロジェクトでは、呼ぶたびに作ると検証が数秒かかる）
+    const c = (this.nestedCache ??= { assets: new Set(this.assets.map((a) => a.path)), rows: new Map() });
+    const assetPaths = c.assets;
     visit(f, v, at, (lf, lv, lat) => {
       if (lf.type === 'row' && typeof lv === 'string' && lv) {
         if (!this.registry.tables.has(lf.table)) { errs.push(`${lat}: 表 ${lf.table} の形がありません${suggest(lf.table, [...this.registry.tables.keys()])}`); return; }
-        const ids = (this.docs.tables.get(lf.table)?.rows ?? []).map((r) => r.id);
-        if (!ids.includes(lv)) errs.push(`${lat}="${lv}": 表 ${lf.table} にその行はありません${suggest(lv, ids)}`);
+        let ids = c.rows.get(lf.table);
+        if (!ids) c.rows.set(lf.table, (ids = new Set((this.docs.tables.get(lf.table)?.rows ?? []).map((r) => r.id))));
+        if (!ids.has(lv)) errs.push(`${lat}="${lv}": 表 ${lf.table} にその行はありません${suggest(lv, [...ids])}`);
       }
       if (lf.type === 'input' && typeof lv === 'string') {
         const known = lf.analog ? KNOWN_AXES : KNOWN_BUTTONS;
@@ -435,13 +457,20 @@ export class Project {
     });
   }
 
+  private nestedCache: { assets: Set<string>; rows: Map<string, Set<string>> } | null = null;
+
   /** 全文書を検証する。問題の一覧を返す（空なら健全）。 */
   validate(): string[] {
+    this.nestedCache = null;
+    try { return this.validateAll(); } finally { this.nestedCache = null; }
+  }
+
+  private validateAll(): string[] {
     const errs: string[] = [];
     const assetPaths = new Map(this.assets.map((a) => [a.path, a]));
     const check = (where: string, comps: Record<string, Record<string, unknown>>) => {
       for (const [name, values] of Object.entries(comps)) {
-        try { this.registry.build(name, values, where); } catch (e) { errs.push((e as Error).message); }
+        errs.push(...this.registry.problems(name, values, where));
         const def = this.registry.components.get(name);
         if (!def) continue;
         for (const [k, f] of Object.entries(def.fields)) {
@@ -670,17 +699,32 @@ export class Project {
     // 独自のウインドウ（AIが書いたコード）からの変更: ロックされた値は変えられない。edits に書いた値だけを変えられる
     const viaWindow = actor.win?.startsWith('window:') ? actor.win.slice('window:'.length) : null;
     let windowEdits: string[] | undefined;
+    const keepTags: { name: string; tags: string[] }[] = [];
     if (viaWindow) {
       const hits = ops.flatMap((op) => { const t = targetOf(op); return [...(t ? lockedHits(locks, t) : []), ...assetSheets(op).filter((k) => locks[k]), ...sceneKeys(op, locks)]; });
       if (hits.length) throw new Error(`🔒 ロックされた値は、ウインドウ ${viaWindow} からは変えられません: ${hits.join(', ')}。変えるならインスペクタで`);
-      // パネルの edits と、見せている欄・部品（fields・components）だけを変えられる
+      // パネルの edits と、見せている欄・部品・行（fields・components・rows）だけを変えられる
       const ext = (await this.windows()).find((w) => w.id === viaWindow);
       windowEdits = ext ? ext.edits ?? [] : undefined;
       if (windowEdits) {
         const info = (await this.windows()).find((w) => w.id === viaWindow)!;
-        const typeAt = (c: string, f: string) => this.registry.components.get(c)?.fields[f]?.type;
-        const outside = ops.map((op) => targetOf(op) ?? (op.op === 'addEntity' ? `${op.scene}#${op.entity.id}` : op.op === 'addComponent' || op.op === 'rename' ? op.target : op.op === 'addRow' || op.op === 'moveRow' ? `$${op.table}.${op.op === 'addRow' ? op.row.id : op.id}` : op.op)).filter((t) => !withinEdits(windowEdits!, t) && !allowedByDrawers(info, t, typeAt));
-        if (outside.length) throw new Error(`ウインドウ ${viaWindow} は、宣言（edits）にない値を変えようとしています: ${outside.join(', ')}。変えるなら ${viaWindow} の edits に足してください（地図に出ます）`);
+        // 値のフィールド（列）の一番外から、その値までの型（型で選ぶ欄の見せ方のため。どれか1つの中は今の値の種類で）
+        const typesAt = (t: string): string[] => {
+          try {
+            const a = parseAddress(t);
+            const f = !a.field ? undefined : a.kind === 'table' ? this.registry.tables.get(a.doc)?.columns[a.field] : this.registry.components.get(a.component ?? '')?.fields[a.field];
+            if (!f) return [];
+            let top: unknown;
+            try { top = getValue(this.docs, this.registry, formatAddress({ ...a, sub: [] })).value; } catch { top = undefined; }
+            const out: string[] = [];
+            for (let i = 0; i <= (a.sub?.length ?? 0); i++) { const sf = fieldAt(f, a.sub!.slice(0, i), top); if (!sf) break; out.push(sf.type); }
+            return out;
+          } catch { return []; }
+        };
+        // @[タグ]: 変える前のタグで通し、変えた後もタグを持つかは keepTags で確かめる（下の「タグの外へ出ない」）
+        const tagsBefore = windowEdits.some((e) => tagEdit(e)) ? prefabTags(this.docs.prefabs) : new Map<string, string[]>();
+        const outside = ops.flatMap((op) => windowTargets(op, targetOf)).filter((t) => !allowedByDrawers(info, t, typesAt) && !windowAllows(windowEdits!, t, tagsBefore, keepTags));
+        if (outside.length) throw new Error(`ウインドウ ${viaWindow} は、宣言（edits）にない値を変えようとしています: ${[...new Set(outside)].join(', ')}。変えるなら ${viaWindow} の edits に足してください（地図に出ます）${outside.some((t) => t.startsWith('@')) && windowEdits.some((e) => tagEdit(e)) ? '。@[タグ] で変えられるのは、変える前からそのタグを持つプレハブと、新しく作るプレハブ' : ''}`);
       }
     }
     if (actor.kind === 'ai' && !opts.force) {
@@ -767,6 +811,11 @@ export class Project {
     if (actor.kind === 'ai' || viaWindow) {
       const hits = [...new Set(result.changes.flatMap((c) => lockedHits(locks, sheetRoot(c.path.replace(/\[\d+,\s*\d+\]$/, '')))))];
       if (hits.length) rollback(`🔒 この操作は、ロックされた値も変えてしまいます: ${hits.join(', ')}。この値は人が決めるものです。変えるべき理由があれば、ユーザーに提案してください`);
+    }
+    // タグの外へ出ない: edits の @[タグ] で変えたプレハブは、変えた後もそのタグを持つこと（作ったもの・名前を変えたもの・元を変えたものも）
+    if (keepTags.length) {
+      const gone = checkKept(keepTags, prefabTags(this.docs.prefabs));
+      if (gone.length) rollback(`ウインドウ ${viaWindow} の変更で、edits の @[タグ] の外へ出るプレハブがあります: ${gone.join(', ')}。タグを残すか、作るときに tags を書いてください`);
     }
     const introduced = this.validate().filter((e) => !before.has(e));
     if (introduced.length) rollback(introduced.join(' / '));
@@ -1062,12 +1111,31 @@ export class Project {
   /** このプロセスが書いたファイルと内容（エディタが「外部からの編集」と区別するため） */
   written = new Map<string, string>();
 
+  /**
+   * ファイルを書きかえる（いったん .ages/tmp に書いてから置きかえる）。
+   * 書いている途中で止まっても、別の書き込みと重なっても、半分だけ書かれたファイルを残さない
+   */
+  private async writeAtomic(path: string, text: string): Promise<void> {
+    const dir = join(this.dir, '.ages', 'tmp');
+    await mkdir(dir, { recursive: true });
+    const tmp = join(dir, `${process.pid}-${++this.tmpSeq}.tmp`);
+    await writeFile(tmp, text);
+    try {
+      await rename(tmp, path);
+    } catch {
+      // 置きかえられない場所（別のドライブなど）では、そのまま書く
+      await rm(tmp, { force: true });
+      await writeFile(path, text);
+    }
+  }
+  private tmpSeq = 0;
+
   async saveDirty(dirty: Iterable<string>): Promise<void> {
     for (const key of dirty) {
       if (key === 'config') {
         const path = join(this.dir, 'ages.project.json');
         const text = JSON.stringify(this.config, null, 2) + '\n';
-        await writeFile(path, text);
+        await this.writeAtomic(path, text);
         this.written.set(path, text);
         continue;
       }
@@ -1078,7 +1146,7 @@ export class Project {
         await mkdir(join(this.dir, 'data'), { recursive: true });
         if (!t) { await rm(path, { force: true }); this.written.set(path, ''); continue; }
         const text = formatTable(t);
-        await writeFile(path, text);
+        await this.writeAtomic(path, text);
         this.written.set(path, text);
         continue;
       }
@@ -1088,7 +1156,7 @@ export class Project {
         const sheet = this.docs.sheets.get(image);
         if (!sheet) { await rm(path, { force: true }); this.written.set(path, ''); continue; }
         const text = formatSheet(sheet);
-        await writeFile(path, text);
+        await this.writeAtomic(path, text);
         this.written.set(path, text);
         continue;
       }
@@ -1098,7 +1166,7 @@ export class Project {
       if (!doc) { await rm(path, { force: true }); this.written.set(path, ''); continue; }
       const text = formatJson(doc);
       await mkdir(join(this.dir, kind === 'scene' ? 'scenes' : 'prefabs'), { recursive: true });
-      await writeFile(path, text);
+      await this.writeAtomic(path, text);
       this.written.set(path, text);
     }
   }

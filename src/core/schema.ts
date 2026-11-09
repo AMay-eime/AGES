@@ -6,12 +6,14 @@ export type Field =
   | { type: 'number'; default: number; min?: number; max?: number; step?: number; desc?: string }
   | { type: 'int'; default: number; min?: number; max?: number; desc?: string }
   | { type: 'bool'; default: boolean; desc?: string }
-  | { type: 'string'; default: string; desc?: string }
+  /** multiline: 複数行の文字（エディタでは広い欄。会話の台詞など） */
+  | { type: 'string'; default: string; multiline?: boolean; desc?: string }
   | { type: 'enum'; default: string; options: string[]; desc?: string }
   | { type: 'color'; default: string; desc?: string }
   | { type: 'vec2'; default: [number, number]; desc?: string }
   | { type: 'ref'; default: string | null; desc?: string }
-  | { type: 'prefab'; default: string; desc?: string }
+  /** プレハブの名前。tags を書くと、エディタで選ぶ一覧がそのタグ（どれか）を持つプレハブだけになる（検証は名前だけ） */
+  | { type: 'prefab'; default: string; tags?: string[]; desc?: string }
   /** プロジェクトの中のファイル（例: assets/ships.png）。kind で種類を絞る。空文字はなし */
   | { type: 'asset'; kind: AssetKind; default: string; desc?: string }
   /** スプライトシートのコマ。番号（0から）か名前。名前で指定すると、切り直してもずれない */
@@ -314,6 +316,7 @@ export function typeOf(f: Field): string {
     case 'enum': return f.options.join('|');
     case 'asset': return `asset<${f.kind}>`;
     case 'row': return `row<${f.table}>`;
+    case 'prefab': return f.tags?.length ? `prefab[${f.tags.join(',')}]` : 'prefab';
     case 'scene': return 'scene';
     case 'ease': return 'ease';
     case 'params': return `params<${f.of}>`;
@@ -338,7 +341,7 @@ export function brief(f: Field): string {
     case 'list': return `${typeOf(f)}=${JSON.stringify(defaultOf(f))}`;
     case 'struct': case 'oneOf': return typeOf(f);
     case 'params': return `params（${f.of} のシェーダーの値）`;
-    case 'number': case 'int': case 'enum': case 'asset': case 'row': case 'scene': case 'ease': return `${typeOf(f)}=${typeof f.default === 'string' ? JSON.stringify(f.default) : f.default}`;
+    case 'number': case 'int': case 'enum': case 'asset': case 'row': case 'prefab': case 'scene': case 'ease': return `${typeOf(f)}=${typeof f.default === 'string' ? JSON.stringify(f.default) : f.default}`;
     default: return `${f.type}=${JSON.stringify(f.default)}`;
   }
 }

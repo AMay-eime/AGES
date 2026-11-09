@@ -1,13 +1,15 @@
 // エディタ拡張の受け皿: 拡張（本体の拡張とプロジェクトの拡張）を持ち、窓口ごとに探す。
 // 本体の機能（src/editor/builtin/）もプロジェクトの拡張と同じ API で書き、ここに並べる（API が足りているかの確かめと、手本を兼ねる）。
 import type { App } from './app.ts';
-import { asExtension, matchField, matchRank, type ComponentDrawer, type EditorApi, type EditorExtension, type EditorWindow, type FieldDrawer } from './window-api.ts';
-import type { Op } from '../core/patch.ts';
+import { asExtension, fieldKey, matchField, matchRank, type ComponentDrawer, type EditorApi, type EditorExtension, type EditorWindow, type FieldDrawer, type RowDrawer } from './window-api.ts';
+import type { Change, Op } from '../core/patch.ts';
+import { defaultOf, type Field } from '../core/schema.ts';
 import { parseAddress } from '../core/docs.ts';
 import { resolvePrefab } from '../core/variant.ts';
 import { h, modal, toast } from './ui/dom.ts';
 import { BUILTIN_EXTENSIONS } from './builtin/index.ts';
 import { createStage } from './stage.ts';
+import { inputWidget } from './ui/inspector.ts';
 import { SaveData } from '../core/save.ts';
 import { ASSET_MIME, PREFAB_MIME } from './ui/assets.ts';
 import { runTrial, startTrial } from '../core/trial.ts';
@@ -23,11 +25,13 @@ export interface LoadedExtension {
 
 /** 拡張に渡す API。win は操作ログに残る名前（プロジェクトの拡張は window:<id>） */
 export function makeApi(app: App, win: string): EditorApi {
+  let queue: Promise<Change[] | null> = Promise.resolve(null);
   return {
     get state() { return app.state; },
     get user() { return app.user; },
     get playing() { return !!app.play; },
-    patch: (ops: Op[]) => app.patch(ops, win),
+    // 拡張ごとに1つずつ順に送る。関数を渡すと、前の変更が終わった後の最新の中身で ops を作る（続けてのクリックで古い値から作らない）
+    patch: (ops) => (queue = queue.then(() => app.patch(typeof ops === 'function' ? ops() : ops, win), () => app.patch(typeof ops === 'function' ? ops() : ops, win))),
     get(path: string) {
       const a = parseAddress(path);
       if (a.kind === 'table') {
@@ -43,24 +47,33 @@ export function makeApi(app: App, win: string): EditorApi {
         try { holder = resolvePrefab(new Map(Object.entries(app.state.prefabs)), a.doc); } catch { holder = undefined; }
       } else holder = app.sceneView(a.doc)?.entities.find((e) => e.id === a.entity);
       const comp = a.component ? holder?.components[a.component] : undefined;
-      if (!a.field) return comp ?? holder;
-      return comp && a.field in comp ? comp[a.field] : app.registry.components.get(a.component!)?.fields[a.field]?.default;
+      if (!a.field) return a.component ? comp : holder;
+      const def = app.registry.components.get(a.component!)?.fields[a.field];
+      const top = comp && a.field in comp ? comp[a.field] : def ? defaultOf(def) : undefined;
+      return nestedValue(top, def, a.sub ?? []);
     },
     select(address: string | null, add = false) {
       if (address === null) return app.select(null);
       const a = parseAddress(address);
+      // 表の行: 表のエディタをその行で開く（選んだ行は api.selection に出る）
+      if (a.kind === 'table') return void app.emit('openTable', { name: a.doc, row: a.entity });
       app.select(a.kind === 'prefab' ? { kind: 'prefab', name: a.doc } : { kind: 'scene', scene: a.doc, id: a.entity! }, { add });
     },
-    play: (opts) => app.startPlay({ ...opts }),
+    play: (opts = {}) => {
+      const { show, ...rest } = opts;
+      app.startPlay(rest);
+      if (show !== false && app.play) app.emit('showPanel', 'game');
+    },
     stop: () => app.stopPlay(),
     table: (name) => app.registry.tableView(name),
     simulate: (frames, keys, seed) => app.simulate(frames, keys, seed),
     sheet: (image: string) => app.registry.sheets.get(image),
     assetUrl: (path) => app.assetUrl(path),
     notify: (text, kind = 'info') => { toast(text, kind === 'info' ? '' : kind, kind === 'bad' ? 8000 : 4000); },
-    get selection() { const s = app.sel; return !s ? null : s.kind === 'prefab' ? `@${s.name}` : `${s.scene}#${s.id}`; },
-    get selected() { const s = app.sel; return !s ? [] : s.kind === 'prefab' ? [`@${s.name}`] : app.selectedIds().map((id) => `${s.scene}#${id}`); },
+    get selection() { if (app.row) return `$${app.row.table}.${app.row.id}`; const s = app.sel; return !s ? null : s.kind === 'prefab' ? `@${s.name}` : `${s.scene}#${s.id}`; },
+    get selected() { if (app.row) return [`$${app.row.table}.${app.row.id}`]; const s = app.sel; return !s ? [] : s.kind === 'prefab' ? [`@${s.name}`] : app.selectedIds().map((id) => `${s.scene}#${id}`); },
     ask: (title, value = '') => askText(title, value),
+    input: (field, value, onChange) => inputWidget(app, field, value, onChange),
     stage: (el, opts) => createStage(app, el, opts),
     // 画面なしで動かす（舞台と同じ作り方。少しずつ回す）
     run: async (opts) => {
@@ -91,6 +104,17 @@ export function makeApi(app: App, win: string): EditorApi {
   };
 }
 
+/** 入れ子の中の値（書いていない所は、その型の既定値） */
+function nestedValue(v: unknown, f: Field | undefined, sub: (string | number)[]): unknown {
+  for (const k of sub) {
+    const inner: Field | undefined = f?.type === 'struct' ? f.fields[String(k)] : f?.type === 'list' ? f.of : undefined;
+    const x = v == null ? undefined : (v as Record<string | number, unknown>)[k];
+    v = x === undefined && inner ? defaultOf(inner) : x;
+    f = inner;
+  }
+  return v;
+}
+
 /** 本体の拡張（いつもある） */
 export function builtinExtensions(app: App): LoadedExtension[] {
   return BUILTIN_EXTENSIONS.map((ext) => ({ ext, api: makeApi(app, 'inspector'), builtin: true }));
@@ -102,13 +126,14 @@ export function projectExtension(app: App, path: string, mod: EditorExtension | 
   return { ext, api: makeApi(app, `window:${ext.id}`), builtin: false, path };
 }
 
-/** この欄に使う見せ方（細かい match ほど先。同じ細かさならプロジェクトの拡張が本体より先） */
-export function fieldDrawerFor(app: App, path: string, component: string, field: string, type: string): { drawer: FieldDrawer; x: LoadedExtension } | undefined {
+/** この欄に使う見せ方（細かい match ほど先。同じ細かさならプロジェクトの拡張が本体より先）。path は欄の住所（入れ子の中・表の欄も） */
+export function fieldDrawerFor(app: App, path: string, type: string): { drawer: FieldDrawer; x: LoadedExtension } | undefined {
   let best: { drawer: FieldDrawer; x: LoadedExtension; rank: number } | undefined;
+  const key = fieldKey(path);
   for (const x of app.extensions) {
     for (const d of x.ext.fields ?? []) {
       for (const m of [d.match].flat()) {
-        if (!matchField(m, path, component, field, type)) continue;
+        if (!matchField(m, path, key, type)) continue;
         const rank = matchRank(m) * 2 + (x.builtin ? 0 : 1);
         if (!best || rank > best.rank) best = { drawer: d, x, rank };
       }
@@ -122,8 +147,13 @@ export function componentDrawersFor(app: App, component: string): { drawer: Comp
   return app.extensions.flatMap((x) => (x.ext.components ?? []).filter((d) => d.component === component).map((drawer) => ({ drawer, x })));
 }
 
+/** この表の行の見せ方（本体の拡張から順に、すべて） */
+export function rowDrawersFor(app: App, table: string): { drawer: RowDrawer; x: LoadedExtension }[] {
+  return app.extensions.flatMap((x) => (x.ext.rows ?? []).filter((d) => d.table === table).map((drawer) => ({ drawer, x })));
+}
+
 /** 右クリックのメニューの項目（拡張の menus から。when で絞る） */
-export function menuItemsFor(app: App, where: 'entity', targets: string[]): [string, () => void][] {
+export function menuItemsFor(app: App, where: 'entity' | 'prefab', targets: string[]): [string, () => void][] {
   const out: [string, () => void][] = [];
   for (const x of app.extensions) {
     for (const m of x.ext.menus ?? []) {

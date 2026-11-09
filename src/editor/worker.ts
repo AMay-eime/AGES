@@ -90,7 +90,13 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   },
 };
 
-port.on('message', async (msg: { id: number; type: string; args: unknown[] }) => {
+// 頼みは1つずつ順に処理する（patch の途中で次の patch が始まると、同じファイルを重ねて書いて壊すことがある）
+let queue: Promise<void> = Promise.resolve();
+port.on('message', (msg: { id: number; type: string; args: unknown[] }) => {
+  queue = queue.then(() => handle(msg));
+});
+
+async function handle(msg: { id: number; type: string; args: unknown[] }): Promise<void> {
   try {
     if (loadError && msg.type !== 'state') throw new Error(`プロジェクトを読み込めません: ${loadError}`);
     const result = await handlers[msg.type](...msg.args);
@@ -100,6 +106,6 @@ port.on('message', async (msg: { id: number; type: string; args: unknown[] }) =>
   } catch (e) {
     port.postMessage({ id: msg.id, ok: false, error: (e as Error).message });
   }
-});
+}
 
 port.postMessage({ ready: true });

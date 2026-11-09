@@ -1,11 +1,12 @@
 // ゲームコードから import { defineComponent, defineSystem } from 'ages' で使う公開API。
 // ブラウザでもNodeでも動く部分だけをここに置く（node: で始まる機能は使わない）。
-export { defineComponent, type ComponentDef, type Field } from './core/schema.ts';
+export { defineComponent, defaultOf, type ComponentDef, type Field } from './core/schema.ts';
+export type { Op } from './core/patch.ts';
 export { defineSystem, defineCheck, type SystemDef, type GameModule, type CheckDef, type CheckView } from './core/registry.ts';
 export { defineTable, type TableDef, type TableView, type Row, type RowOf } from './core/table.ts';
 export type { Ctx } from './core/game.ts';
 export type { Entity } from './core/world.ts';
-export { defineWindow, defineExtension, type EditorWindow, type EditorExtension, type EditorApi, type FieldDrawer, type FieldView, type ComponentDrawer, type ComponentView, type StageOptions, type StageSummary, type StageHandle, type MenuItem } from './editor/window-api.ts';
+export { defineWindow, defineExtension, type EditorWindow, type EditorExtension, type EditorApi, type FieldDrawer, type FieldView, type ComponentDrawer, type ComponentView, type RowDrawer, type RowView, type StageOptions, type StageSummary, type StageHandle, type MenuItem } from './editor/window-api.ts';
 export { Transform, Sprite, Animator, Shape, Text, Camera, Sound, AudioBus, Particles, Effect, PostEffect } from './std/components.ts';
 export { STD_SHADER_CODE, parseShader, type ShaderDef } from './core/shader.ts';
 export type { SoundApi, AudioCmd, BusDef } from './core/audio.ts';

@@ -82,8 +82,16 @@ export function hierarchyPanel(app: App): Panel {
           return h('div', {
             class: `item ${sel?.kind === 'prefab' && sel.name === p.name ? 'sel' : ''}`,
             onclick: () => app.select({ kind: 'prefab', name: p.name }),
+            // 右クリック: 拡張の menus（where: 'prefab'。本体の写す・名前を変える・削除も）
+            oncontextmenu: (ev: MouseEvent) => {
+              ev.preventDefault();
+              if (app.play) return;
+              app.select({ kind: 'prefab', name: p.name });
+              const items = menuItemsFor(app, 'prefab', [`@${p.name}`]);
+              if (items.length) menu(ev.clientX, ev.clientY, items);
+            },
             // ゲームの画面へ運ぶと、落とした所にインスタンス（プレハブとつながった物）を置く
-            draggable: true, title: 'ゲームの画面へ運ぶと、その場所にこのプレハブのインスタンスを置く',
+            draggable: true, title: 'ゲームの画面へ運ぶと、その場所にこのプレハブのインスタンスを置く。右クリックで写す・名前を変える・削除',
             ondragstart: (e: DragEvent) => { e.dataTransfer!.setData(PREFAB_MIME, p.name); e.dataTransfer!.effectAllowed = 'copy'; },
           }, '@' + p.name, h('span', { class: 'muted' }, p.base ? `← @${p.base}${p.desc ? ' ' + p.desc : ''}` : p.desc ?? ''), n ? h('span', { style: 'color:var(--lock)' }, '🔒' + n) : null);
         }),

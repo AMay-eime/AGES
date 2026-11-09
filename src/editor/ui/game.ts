@@ -528,7 +528,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
       const step = 1 / app.state.config.fps;
       let n = 0;
       const most = Math.ceil(5 * Math.max(1, app.playSpeed));
-      while (acc >= step && n++ < most) { app.tick(); acc -= step; }
+      while (acc >= step && n++ < most && app.play) { app.tick(); acc -= step; }
       if (n) app.emit('frame');
     } else acc = 0;
     const w = app.world;
