@@ -20,6 +20,13 @@ export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, l
   }
   out.push(`標準（定義不要。詳細は ages schema）: ${[...p.registry.std].join(' ')}`);
 
+  // シェーダー: 調整できる値（uniform）を1行で。Effect / PostEffect の shader で選び、値は params に
+  const shaders = [...p.registry.shaders.values()];
+  const own = shaders.filter((d) => !d.path.startsWith('std:'));
+  out.push(`## shaders（Effect・PostEffect の shader で選ぶ。値は params.名前。書き方は ages schema <dir> std:flash）`);
+  for (const d of own) out.push(`${d.path} ${d.desc} | ${Object.entries(d.uniforms).map(([k, f]) => `${k}:${brief(f)}`).join(' ') || '（値なし）'}${d.errors.length ? ` ⚠ ${d.errors.length}件の問題（ages check）` : ''}`);
+  out.push(`標準: ${shaders.filter((d) => d.path.startsWith('std:')).map((d) => `${d.path}(${Object.keys(d.uniforms).join(',')})`).join(' ')}`);
+
   out.push('## systems（実行順。r=読む w=書く）');
   p.registry.systems.forEach((s, i) => {
     const rw = [s.reads?.length ? `r:${s.reads.join(',')}` : '', s.writes?.length ? `w:${s.writes.join(',')}` : ''].filter(Boolean).join(' ');

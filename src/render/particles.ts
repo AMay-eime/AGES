@@ -155,5 +155,5 @@ export class ParticleSim {
 }
 
 function snapshot(e: Entity): Entity {
-  return { id: e.id, name: e.name, tags: e.tags, c: { Transform: { ...e.c.Transform }, Particles: { ...e.c.Particles } } };
+  return { id: e.id, name: e.name, tags: e.tags, c: { Transform: { ...e.c.Transform }, Particles: { ...e.c.Particles }, ...(e.c.Effect ? { Effect: { ...e.c.Effect, params: { ...e.c.Effect.params } } } : {}) } };
 }

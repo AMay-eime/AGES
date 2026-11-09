@@ -26,6 +26,9 @@
     },
     "Enemy": {
       "score": 100
+    },
+    "Effect": {
+      "shader": "std:flash"
     }
   }
 }

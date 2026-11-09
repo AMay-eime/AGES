@@ -4,14 +4,14 @@ import type { App } from '../app.ts';
 import type { Panel } from './layout.ts';
 import { clear, h, menu, modal, toast } from './dom.ts';
 import { assetRefs, baseOf, checkAssetPath, dirOf, extOf, isUnder, kindOf, RESERVED_DIRS } from '../../core/assets.ts';
-import type { AssetKind } from '../../core/schema.ts';
+import { ASSET_LABEL, brief, type AssetKind } from '../../core/schema.ts';
 
 /** ドラッグで運ぶアセットの場所（ゲームの画面・インスペクタ・フォルダへ落とせる） */
 export const ASSET_MIME = 'application/x-ages-asset';
 
 type Asset = App['state']['assets'][number];
 
-const KIND_LABEL: Record<AssetKind, string> = { image: '画像', sound: '音', font: 'フォント' };
+const KIND_LABEL: Record<AssetKind, string> = ASSET_LABEL;
 const kb = (n: number) => (n < 1024 ? `${n}B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)}KB` : `${(n / 1024 / 1024).toFixed(1)}MB`);
 
 /** フォントを画面で使える名前にする（見本の表示用） */
@@ -161,6 +161,7 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
   const open = (a: Asset) => {
     if (a.kind === 'image') app.emit('openSprite', a.path);
     else if (a.kind === 'sound') app.previewSound({ clip: a.path });
+    else if (a.kind === 'shader') app.emit('openText', a.path);
   };
   const fileMenu = (e: MouseEvent, a: Asset) => {
     e.preventDefault();
@@ -280,6 +281,7 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
     const pixel = app.state.config.view.filter === 'nearest';
     const pic = a.kind === 'image' ? h('img', { src: app.assetUrl(a.path), loading: 'lazy', alt: '', style: pixel ? 'image-rendering:pixelated' : '' })
       : a.kind === 'sound' ? h('div', { class: 'tile-icon' }, '🔊', h('button', { class: 'icon tile-play', title: '鳴らす', onclick: (e: Event) => { e.stopPropagation(); open(a); } }, '▶'))
+      : a.kind === 'shader' ? h('div', { class: 'tile-icon', title: a.shader?.desc ?? '' }, a.shader?.errors.length ? '⚠' : '✦')
       : h('div', { class: 'tile-icon', style: `font-family:${fontFamily(app, a.path)}` }, 'Aaあ');
     const meta = a.kind === 'image' ? `${a.w ?? '?'}×${a.h ?? '?'}` : a.kind === 'sound' ? (a.sec !== undefined ? `${a.sec}秒` : kb(a.bytes)) : kb(a.bytes);
     const locked = !!app.state.locks[`file:${a.path}`];
@@ -319,6 +321,11 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
     const refs = refsOf().get(a.path) ?? [];
     const preview = a.kind === 'image' ? h('div', { class: 'side-pic' }, h('img', { src: app.assetUrl(a.path), alt: '', style: app.state.config.view.filter === 'nearest' ? 'image-rendering:pixelated' : '' }))
       : a.kind === 'sound' ? h('div', { class: 'row' }, h('button', { onclick: () => open(a) }, '▶ 鳴らす'), h('button', { onclick: () => app.audio.stopAll() }, '■'))
+      : a.kind === 'shader' ? h('div', { class: 'shader-info' },
+        h('div', {}, a.shader?.desc || '（説明なし: 先頭の // コメントに書く）'),
+        ...Object.entries(a.shader?.uniforms ?? {}).map(([k, f]) => h('div', { class: 'muted', style: 'font:var(--mono)' }, `${k}: ${brief(f)}${f.desc ? ' — ' + f.desc : ''}`)),
+        ...(a.shader?.errors ?? []).map((e) => h('div', { style: 'color:var(--bad)' }, e)),
+        h('button', { onclick: () => open(a) }, '中身を開く'))
       : h('div', { class: 'font-sample', contenteditable: 'true', style: `font-family:${fontFamily(app, a.path)}` }, 'あいうえお 漢字 ABC abc 123');
     const sheet = app.state.sheets[a.path];
     const go = (r: string) => {

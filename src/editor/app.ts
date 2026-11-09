@@ -9,6 +9,7 @@ import { modal, toast, h } from './ui/dom.ts';
 import { AudioPlayer } from '../audio/player.ts';
 import { DEFAULT_SOUND, playCmd, type SoundSettings } from '../core/audio.ts';
 import { assetRefs, preloadSet } from '../core/assets.ts';
+import { shaderMap, type ShaderDef } from '../core/shader.ts';
 
 export interface LockMark { who: string; t: string; value: unknown; note?: string }
 export interface TouchMark { who: string; t: string }
@@ -26,7 +27,7 @@ export interface EditorState {
   files: { path: string; size: number; mtime: number }[];
   sheets: Record<string, import('../core/sheet.ts').SheetDef>;
   tables: Record<string, import('../core/table.ts').TableDoc>;
-  assets: { path: string; kind: 'image' | 'sound' | 'font'; bytes: number; w?: number; h?: number; sec?: number }[];
+  assets: { path: string; kind: import('../core/schema.ts').AssetKind; bytes: number; w?: number; h?: number; sec?: number; shader?: ShaderDef }[];
   /** コードの中でアセットの場所を書いている所（場所 → "game/x.ts:12"） */
   codeRefs: Record<string, string[]>;
   /** フォルダの一覧（空のフォルダも） */
@@ -133,6 +134,7 @@ export class App {
       this.registry.sheets = new Map(Object.entries(s.sheets ?? {}));
       this.registry.tableData = new Map(Object.entries(s.tables ?? {}));
       this.registry.images = new Map(s.assets.filter((a) => a.w && a.h).map((a) => [a.path, { w: a.w!, h: a.h! }]));
+      this.registry.shaders = shaderMap(s.assets.flatMap((a) => (a.shader ? [{ ...a.shader, path: a.path }] : [])));
     }
     if (!this.scene || !s.scenes[this.scene]) this.scene = s.config.startScene in s.scenes ? s.config.startScene : Object.keys(s.scenes)[0] ?? '';
     this.rebuildPreview();

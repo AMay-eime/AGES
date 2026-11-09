@@ -172,6 +172,18 @@
           "fadeOut": 1
         }
       }
+    },
+    {
+      "id": "vignette",
+      "name": "Vignette",
+      "components": {
+        "PostEffect": {
+          "shader": "std:vignette",
+          "params": {
+            "amount": 0.35
+          }
+        }
+      }
     }
   ]
 }

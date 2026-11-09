@@ -22,6 +22,7 @@ import { revert as revertValue, same } from '../core/revert.ts';
 import { FIT_MODES } from '../core/camera.ts';
 import { KNOWN_AXES, KNOWN_BUTTONS } from '../core/input.ts';
 import { checkSheet, checkSheetImage, findFrame, frameCount, sheetPathOf, type SheetDef } from '../core/sheet.ts';
+import { shaderMap } from '../core/shader.ts';
 
 // ゲームコードの import ... from 'ages' を、どのフォルダにあるプロジェクトからでもこのエンジンに向ける
 const AGES_INDEX = new URL('../index.ts', import.meta.url).href;
@@ -74,7 +75,7 @@ export class Project {
     this.assetIssues = scan.issues;
     this.registry.sheets = this.docs.sheets;
     this.registry.tableData = this.docs.tables;
-    this.registry.images = imagesOf(scan.assets);
+    this.setAssetMaps(scan.assets);
     this.windowCache = null;
     this.integrity = await verifyLocks(this.dir);
     this.lockReport = await this.enforceLocks();
@@ -83,6 +84,12 @@ export class Project {
       const detail = [d.removed.length ? `消されたロック ${d.removed.length}件` : '', d.added.length ? `増えたロック ${d.added.length}件` : '', d.changed.length ? `値が変わったロック ${d.changed.length}件` : ''].filter(Boolean).join('・');
       this.lockReport.unshift(`⚠ ${this.integrity.reason}${detail ? `（${detail}）` : ''}。人がロックマネージャーで確認するまで、AIからの編集はすべて止めます。最後に封印されたロックは引き続き有効です`);
     }
+  }
+
+  /** アセットの一覧から、画像の大きさとシェーダーの宣言を登録簿へ */
+  private setAssetMaps(assets: AssetInfo[]): void {
+    this.registry.images = imagesOf(assets);
+    this.registry.shaders = shadersOf(assets);
   }
 
   private windowCache: Promise<WindowInfo[]> | null = null;
@@ -234,7 +241,7 @@ export class Project {
     if (filesRestored) {
       const scan = await scanAssets(this.dir);
       this.assets = scan.assets;
-      this.registry.images = imagesOf(scan.assets);
+      this.setAssetMaps(scan.assets);
       this.docs.files = new Set(scan.files);
     }
     return report;
@@ -394,7 +401,7 @@ export class Project {
         const def = this.registry.components.get(name);
         if (!def) continue;
         for (const [k, f] of Object.entries(def.fields)) {
-          if (k in values) this.checkNested(`${where}.${name}.${k}`, f, values[k], errs);
+          if (k in values) this.checkNested(`${where}.${name}.${k}`, f.type === 'params' ? (this.registry.shaderParams(values[f.of]) ?? f) : f, values[k], errs);
           if (f.type === 'prefab' && k in values && values[k] !== '' && !this.docs.prefabs.has(values[k] as string)) {
             errs.push(`${where}.${name}.${k}: プレハブ ${values[k]} はありません${suggest(String(values[k]), [...this.docs.prefabs.keys()])}`);
           }
@@ -403,8 +410,8 @@ export class Project {
             const buses = [...this.docs.prefabs.values()].filter((p) => p.components.AudioBus).map((p) => p.name);
             errs.push(`${where}.${name}.${k}="${values[k]}": 音量の区分は AudioBus の付いたプレハブです${buses.length ? `（ある区分: ${buses.join(', ')}）` : '（まだ区分がありません）'}`);
           }
-          if (f.type === 'asset' && typeof values[k] === 'string' && values[k] && !assetPaths.has(values[k] as string)) {
-            const same = this.assets.filter((a) => a.kind === f.kind).map((a) => a.path);
+          if (f.type === 'asset' && typeof values[k] === 'string' && values[k] && !assetPaths.has(values[k] as string) && !(f.kind === 'shader' && this.registry.shaders.has(values[k] as string))) {
+            const same = f.kind === 'shader' ? [...this.registry.shaders.keys()] : this.assets.filter((a) => a.kind === f.kind).map((a) => a.path);
             errs.push(`${where}.${name}.${k}: ファイル ${values[k]} がありません${suggest(String(values[k]), same)}`);
           }
         }
@@ -445,6 +452,10 @@ export class Project {
           for (const [k, f] of Object.entries(def?.fields ?? {})) {
             const v = values[k];
             if (f.type === 'ref' && typeof v === 'string' && v && !ids.has(v)) errs.push(`${s.name}#${e.id}.${name}.${k}="${v}": シーン ${s.name} にそのIDはありません${suggest(v, all)}`);
+            // 後処理をかけるカメラは、Camera の付いた物
+            if (name === 'PostEffect' && k === 'camera' && typeof v === 'string' && v && ids.has(v) && !s.entities.find((x) => x.id === v)!.components.Camera) {
+              errs.push(`${s.name}#${e.id}.PostEffect.camera="${v}": ${v} に Camera が付いていません（カメラ: ${s.entities.filter((x) => x.components.Camera).map((x) => x.id).join(', ') || 'なし'}）`);
+            }
           }
         }
       }
@@ -462,9 +473,10 @@ export class Project {
           if (k === 'id') continue;
           const f = def.columns[k];
           if (!f) { errs.push(`$${name}.${r.id}: 列 ${k} はありません${suggest(k, Object.keys(def.columns))}`); continue; }
-          const e = checkAt(`$${name}.${r.id}.${k}`, f, v);
+          const rf = f.type === 'params' ? (this.registry.shaderParams(r[f.of]) ?? f) : f;
+          const e = checkAt(`$${name}.${r.id}.${k}`, rf, v);
           if (e) errs.push(e);
-          else this.checkNested(`$${name}.${r.id}.${k}`, f, v, errs);
+          else this.checkNested(`$${name}.${r.id}.${k}`, rf, v, errs);
         }
       });
     }
@@ -490,6 +502,14 @@ export class Project {
       if (!e.length && info?.w && info.h) errs.push(...checkSheetImage(sp, sheet, info.w, info.h));
     }
     errs.push(...this.assetIssues);
+    for (const a of this.assets) {
+      if (!a.shader) continue;
+      errs.push(...a.shader.errors);
+      // 画像の値（sampler2D）の既定値のファイルがあること
+      for (const [k, f] of Object.entries(a.shader.uniforms)) {
+        if (f.type === 'asset' && f.default && !assetPaths.has(f.default)) errs.push(`${a.path}: ${k} の既定値のファイル ${f.default} がありません${suggest(f.default, this.assets.filter((x) => x.kind === 'image').map((x) => x.path))}`);
+      }
+    }
     return errs;
   }
 
@@ -588,7 +608,7 @@ export class Project {
       this.registry.sheets = backup.sheets;
       this.registry.tableData = backup.tables;
       this.assets = backupAssets;
-      this.registry.images = imagesOf(backupAssets);
+      this.setAssetMaps(backupAssets);
       throw new Error(message);
     };
     // ファイルの移動・削除を、検証の前に一覧へ反映する（ファイルそのものは検証が通ってから動かす）
@@ -610,7 +630,7 @@ export class Project {
         return p === path ? undefined : p;
       };
       this.assets = this.assets.flatMap((a) => { const to = moved(a.path); return to === null ? [] : to === undefined ? [a] : [{ ...a, path: to }]; });
-      this.registry.images = imagesOf(this.assets);
+      this.setAssetMaps(this.assets);
       for (const [asset, at] of code) {
         const to = moved(asset);
         if (to === undefined) continue;
@@ -844,7 +864,7 @@ export class Project {
     const scan = files.length ? await scanAssets(this.dir) : null;
     this.docs = { ...after, files: scan ? new Set(scan.files) : this.docs.files, config: this.config, sheets: after.sheets };
     Object.assign(this.config, after.config);
-    if (scan) { this.assets = scan.assets; this.registry.images = imagesOf(scan.assets); }
+    if (scan) { this.assets = scan.assets; this.setAssetMaps(scan.assets); }
     this.registry.prefabs = this.docs.prefabs;
     this.registry.scenes = this.docs.scenes;
     this.registry.sheets = this.docs.sheets;
@@ -853,7 +873,7 @@ export class Project {
     if (introduced.length) {
       this.docs = keep.docs;
       this.assets = keep.assets;
-      this.registry.images = keep.images;
+      this.setAssetMaps(keep.assets);
       Object.assign(this.config, keep.config);
       this.registry.prefabs = this.docs.prefabs;
       this.registry.scenes = this.docs.scenes;
@@ -898,7 +918,7 @@ export class Project {
     await appendLog(this.dir, actor, 'upload', [change], tx);
     const scan = await scanAssets(this.dir);
     this.assets = scan.assets;
-    this.registry.images = imagesOf(scan.assets);
+    this.setAssetMaps(scan.assets);
     this.docs.files = new Set(scan.files);
     return { replaced: had };
   }
@@ -1057,6 +1077,8 @@ async function list(dir: string, suffix: string): Promise<string[]> {
 }
 
 const imagesOf = (assets: AssetInfo[]) => new Map(assets.filter((a) => a.w && a.h).map((a) => [a.path, { w: a.w!, h: a.h! }]));
+/** プロジェクトのシェーダー（標準のものと合わせる）。場所はアセットの今の場所 */
+const shadersOf = (assets: AssetInfo[]) => shaderMap(assets.flatMap((a) => (a.shader ? [{ ...a.shader, path: a.path }] : [])));
 
 /** ロックマネージャー（人だけが使う専用の画面）からの操作か。ロックを付ける・外す・ロックされた値を変えるのは、ここからだけ */
 export const isKeeper = (a: Actor) => a.kind === 'human' && a.win === 'lock-manager';

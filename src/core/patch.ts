@@ -143,6 +143,9 @@ interface Slot {
   at: string;
   /** 変更のあった文書 */
   key: string;
+  /** フィールドを持っているもの（コンポーネントの値・表の行）と、その型（隣の欄を直すとき用） */
+  parent: Record<string, unknown>;
+  siblings: Record<string, Field>;
   /** フィールドの値をまるごと書く */
   write(top: unknown): void;
 }
@@ -190,7 +193,8 @@ function slotOf(docs: Docs, reg: Registry, a: Address, path: string): Slot {
     const has = a.field in row;
     const topValue = has ? row[a.field] : defaultOf(top);
     const at = `$${a.doc}.${a.entity}.${a.field}`;
-    return { top, topValue, isDefault: !has, sub: a.sub, ...walk(at, top, topValue, a.sub), at, key: `table:${a.doc}`, write: (v) => { row[a.field!] = v; } };
+    const rt = resolveParams(reg, top, row, at, a.sub);
+    return { top: rt, topValue, isDefault: !has, sub: a.sub, ...walk(at, rt, topValue, a.sub), at, key: `table:${a.doc}`, parent: row, siblings: def.columns, write: (v) => { row[a.field!] = v; } };
   }
   if (!a.component || !a.field) throw new Error(`フィールドまでのアドレスが必要です（例: main#player.Mover.speed）。受け取った値: ${path}`);
   const { holder, key } = holderOf(docs, a);
@@ -202,7 +206,31 @@ function slotOf(docs: Docs, reg: Registry, a: Address, path: string): Slot {
   const has = a.field in comp;
   const topValue = has ? comp[a.field] : defaultOf(top);
   const at = `${a.component}.${a.field}`;
-  return { top, topValue, isDefault: !has, sub: a.sub, ...walk(at, top, topValue, a.sub), at, key, write: (v) => { comp[a.field!] = v; } };
+  const rt = resolveParams(reg, top, comp, at, a.sub);
+  return { top: rt, topValue, isDefault: !has, sub: a.sub, ...walk(at, rt, topValue, a.sub), at, key, parent: comp, siblings: def.fields, write: (v) => { comp[a.field!] = v; } };
+}
+
+/** シェーダーの値（params）は、隣の欄で選んだシェーダーの uniform を項目にした構造体として扱う */
+function resolveParams(reg: Registry, f: Field, parent: Record<string, unknown>, at: string, sub: (string | number)[]): Field {
+  if (f.type !== 'params') return f;
+  const path = parent[f.of];
+  const st = reg.shaderParams(path);
+  if (st) return st;
+  if (!sub.length) return f;
+  throw new Error(path ? `${at}: ${f.of} のシェーダー ${path} がありません${suggest(String(path), [...reg.shaders.keys()])}` : `${at}: 先に ${f.of} でシェーダーを選んでください（例 std:flash）`);
+}
+
+/** シェーダーを変えたら、新しいシェーダーにない値は外す（意味を保つ自動の直し） */
+function pruneParams(reg: Registry, sl: Slot, path: string, field: string, changes: Change[]): void {
+  for (const [k, f] of Object.entries(sl.siblings)) {
+    if (f.type !== 'params' || f.of !== field || !sl.parent[k] || typeof sl.parent[k] !== 'object') continue;
+    const st = reg.shaderParams(sl.parent[field]);
+    const cur = sl.parent[k] as Record<string, unknown>;
+    const kept = Object.fromEntries(Object.entries(cur).filter(([n, v]) => st?.fields[n] && !checkAt(n, st.fields[n], v)));
+    if (Object.keys(kept).length === Object.keys(cur).length) continue;
+    changes.push({ path: path.replace(/\.[^.]+$/, `.${k}`), from: cur, to: kept });
+    sl.parent[k] = kept;
+  }
 }
 
 /** 値を読む。フィールドが省略されていれば既定値を返す（isDefault=true）。 */
@@ -288,6 +316,7 @@ function applyOne(docs: Docs, reg: Registry, op: Op, changes: Change[], dirty: S
       sl.write(structuredClone(newTop));
       changes.push({ path: op.path, from, to: op.value });
       dirty.add(sl.key);
+      if (sl.field.type === 'asset' && sl.field.kind === 'shader' && !sl.sub.length) pruneParams(reg, sl, op.path, parseAddress(op.path).field!, changes);
       return;
     }
     case 'setCells': {

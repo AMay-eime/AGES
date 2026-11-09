@@ -54,6 +54,7 @@ const sprite = spritePanel(app);
 const table = tablePanel(app);
 const assets = assetsPanel(app);
 for (const p of [hierarchyPanel(app), projectPanel(app, (path) => text.open(path)), game, matrix, sprite, table, text, assets, logPanel(app), gitPanel(app), inspectorPanel(app)]) layout.add(p);
+app.on('openText', (path) => text.open(String(path)));
 app.on('revealAsset', (path) => { layout.show('assets'); assets.reveal(path as string); });
 app.on('openMatrix', (path) => { matrix.open(path as string); layout.show('matrix'); });
 app.on('openSprite', (image) => { sprite.open(image as string); layout.show('sprite'); sprite.render?.(); });

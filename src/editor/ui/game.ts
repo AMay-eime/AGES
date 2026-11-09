@@ -50,7 +50,14 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     if (renderer || glError || !app.state || app.state.error) return;
     try {
       syncFiles();
-      renderer = new Renderer(canvas, { urlOf: (p) => app.assetUrl(p), sheets: app.registry?.sheets ?? new Map(), filter: app.state.config.view.filter });
+      renderer = new Renderer(canvas, {
+        urlOf: (p) => app.assetUrl(p), sheets: app.registry?.sheets ?? new Map(), filter: app.state.config.view.filter,
+        // シェーダーのコンパイルの結果: エラーはここで知らせ、サーバーに渡して ages check で AI が読めるようにする
+        onShaderResult: (path, hash, error) => {
+          if (error) toast(`シェーダーのエラー\n${error}`, 'bad', 10000);
+          void fetch('/api/shader-result', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path, hash, error }) }).catch(() => {});
+        },
+      });
     } catch (e) {
       glError = (e as Error).message;
       hud.textContent = glError;
@@ -340,7 +347,11 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     } else acc = 0;
     const w = app.world;
     if (!w || !renderer) return;
-    if (app.registry) renderer.opts.sheets = app.registry.sheets;
+    if (app.registry) {
+      renderer.opts.sheets = app.registry.sheets;
+      // シェーダーが変わったら、使っていないものもコンパイルして確かめる
+      if (renderer.opts.shaders !== app.registry.shaders) { renderer.opts.shaders = app.registry.shaders; renderer.compileAll(); }
+    }
     const d = design();
     // シーンの切り替えのフェードは、カメラの視点でだけ画面を覆う（自由な視点では様子を見られるように覆わない）
     const overlay = p && viewMode === 'camera' ? (p.loading ? { color: p.game.transition?.color ?? '#000000', alpha: p.game.transition ? 1 : 0 } : p.game.overlay()) : null;
@@ -348,7 +359,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     if (p?.game !== particleGame) { renderer.particles.clear(); particleGame = p?.game; }
     const selId = app.sel?.kind === 'scene' ? app.sel.id : '';
     const particles = p ? { dt: p.paused || p.loading ? 0 : dt } : { dt, preview: selId && w.get(selId)?.c.Particles ? [selId] : [] };
-    renderer.draw(w, { background: app.state.config.view.background, design: d, view: viewMode === 'free' ? free : undefined, overlay, particles });
+    renderer.draw(w, { background: app.state.config.view.background, design: d, view: viewMode === 'free' ? free : undefined, overlay, particles, post: viewMode !== 'free' });
     drawOverlay(w);
     const cams = renderer.cams.filter((c) => c.id).length;
     const where = viewMode === 'free' ? `自由な視点 ${Math.round(free.zoom * 100)}%（ホイールで拡大・右ドラッグで移動）` : cams ? `カメラ ${cams}台` : '';

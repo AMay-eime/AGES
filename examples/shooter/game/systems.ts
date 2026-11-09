@@ -105,7 +105,8 @@ export const combat = defineSystem({
         destroy(b.id);
         en.c.Health.hp -= b.c.Bullet.damage;
         // 手触りは表 $tweens の行（hitFlash・scorePop）で決める
-        if (en.c.Health.hp > 0) tween(en.id, { 'Sprite.alpha': 1 }, { preset: 'hitFlash', from: { 'Sprite.alpha': 0.25 } });
+        // 敵のプレハブの Effect（std:flash）で白く光らせて戻す
+        if (en.c.Health.hp > 0) tween(en.id, { 'Effect.params.amount': 0 }, { preset: 'hitFlash', from: { 'Effect.params.amount': 1 } });
         if (en.c.Health.hp <= 0) {
           destroy(en.id);
           boom(en);

@@ -18,6 +18,7 @@ import { GameError, type Game } from '../core/game.ts';
 import { baseNameOf, frameCount, listFrames, type SheetDef } from '../core/sheet.ts';
 import { autoRects, carryClips, gridRects, nameFrames, type Pixels, type Rect } from '../core/slice.ts';
 import { decodePng } from '../project/png.ts';
+import { shaderReport } from '../project/shader-status.ts';
 
 const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [引数]
 
@@ -151,12 +152,25 @@ export async function cmdSchema(dir: string, names: string[]): Promise<string> {
   const p = await Project.load(dir);
   const field = (k: string, f: import('../core/schema.ts').Field) => `  ${k} ${brief(f)}${f.desc ? ' — ' + f.desc : ''}${nested(f, '    ')}`;
   const out: string[] = [];
-  const comps = names.length ? names.filter((n) => !n.startsWith('$')) : [...p.registry.components.keys()];
+  const isShader = (n: string) => n.startsWith('std:') || /\.(frag|glsl)$/i.test(n);
+  const comps = names.length ? names.filter((n) => !n.startsWith('$') && !isShader(n)) : [...p.registry.components.keys()];
   const tables = names.length ? names.filter((n) => n.startsWith('$')).map((n) => n.slice(1)) : [...p.registry.tables.keys()];
   for (const n of comps) { const d = p.registry.component(n); out.push(`${d.name}: ${d.desc}`, ...Object.entries(d.fields).map(([k, f]) => field(k, f))); }
   for (const n of tables) { const t = p.registry.table(n); out.push(`$${t.name}: ${t.desc ?? ''}（表。列 id は行の名前）`, ...Object.entries(t.columns).map(([k, f]) => field(k, f))); }
+  for (const n of names.filter(isShader)) {
+    const d = p.registry.shaders.get(n);
+    if (!d) throw new Error(`シェーダー ${n} はありません${suggest(n, [...p.registry.shaders.keys()])}`);
+    out.push(`${d.path}: ${d.desc}（シェーダー。Effect / PostEffect の shader で選び、値は params.名前。トゥイーンは 'Effect.params.名前'）`, ...Object.entries(d.uniforms).map(([k, f]) => field(k, f)));
+    out.push(SHADER_HOWTO);
+    if (d.path.startsWith('std:')) out.push(`--- ${d.path} の中身（新しく書くときの手本）`, d.code.trimEnd());
+    for (const e of d.errors) out.push(`⚠ ${e}`);
+  }
   return out.join('\n');
 }
+
+const SHADER_HOWTO = `書き方（assets/ の下に .frag を置く）: 先頭のコメントが説明。uniform は1行に1つ「uniform float amount; // 0..1 =0 説明」（float・int・bool・vec2・vec3/vec4 は色 =#rrggbb・sampler2D は画像 =assets/x.png）。
+関数 vec4 effect(vec4 c, vec2 uv) だけを書く（c はその点の色、uv はテクスチャの座標）。使えるもの: frameUV(uv)（コマの中の 0〜1、左上が 0）・pick(uv)（その座標の色。コマの外は透明）・u_texel（1px）・u_res（描く先の px）・u_time（秒）・v_color（tint と alpha）。#version・precision・main は書かない。
+コンパイルできるかはエディタが確かめ、エラーは ages check に「ファイル:行」で出る`;
 
 /** 構造体・どれか1つの中の項目の説明（あるものだけ） */
 function nested(f: import('../core/schema.ts').Field, pad: string): string {
@@ -353,7 +367,7 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
   if (g.sceneLog.length > 1) out.push(`scenes: ${g.sceneLog.map((x) => `${x.name}@${x.frame}`).join(' → ')}${g.transition ? `（${g.transition.phase === 'out' ? '消えていく途中' : '出てくる途中'}）` : ''}`);
   if (g.soundCounts.size) out.push(`sounds: ${[...g.soundCounts.entries()].map(([k, v]) => `♪${k}×${v}`).join(' ')}`);
   if (g.particleCounts.size) out.push(`particles: ${[...g.particleCounts.entries()].map(([k, v]) => `✦${k}×${v}`).join(' ')}`);
-  if (g.tweens.length) out.push(`tweens: 動いている ${g.tweens.length}（${[...new Set(g.tweens.map((t) => `${t.comp}.${t.field}`))].join(' ')}）`);
+  if (g.tweens.length) out.push(`tweens: 動いている ${g.tweens.length}（${[...new Set(g.tweens.map((t) => `${t.comp}.${t.field}${t.sub ? "." + t.sub : ""}`))].join(' ')}）`);
   for (const w of g.warnings) out.push(`⚠ ${w}`);
   const byName = new Map<string, number>();
   for (const e of g.world.entities.values()) byName.set(e.prefab ? '@' + e.prefab : e.id, (byName.get(e.prefab ? '@' + e.prefab : e.id) ?? 0) + 1);
@@ -380,8 +394,11 @@ export async function cmdLog(dir: string, f: Args['flags']): Promise<string> {
 
 export async function cmdCheck(dir: string): Promise<string> {
   const p = await Project.load(dir);
-  const errs = [...p.validate(), ...(await p.checkCode()), ...(await p.checkWindows())];
-  return withLockReport(p, errs.length ? errs.map((e) => `error: ${e}`).join('\n') : `ok（シーン${p.docs.scenes.size} プレハブ${p.docs.prefabs.size} コンポーネント${p.registry.components.size} システム${p.registry.systems.length}）`);
+  const sh = await shaderReport(p.dir, p.assets);
+  const errs = [...p.validate(), ...(await p.checkCode()), ...(await p.checkWindows()), ...sh.errors];
+  // シェーダーがコンパイルできるかはブラウザでしか分からない。エディタが開いていれば、変わるたびに確かめる
+  const note = sh.unchecked.length ? `\nシェーダー ${sh.unchecked.join(' ')} はまだコンパイルを確かめていません（エディタを開いていると、変えるたびに確かめて ages check に出ます）` : '';
+  return withLockReport(p, (errs.length ? errs.map((e) => `error: ${e}`).join('\n') : `ok（シーン${p.docs.scenes.size} プレハブ${p.docs.prefabs.size} コンポーネント${p.registry.components.size} システム${p.registry.systems.length}）`) + note);
 }
 
 function imageOf(p: Project, image: string): { w: number; h: number } {

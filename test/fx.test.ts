@@ -72,9 +72,9 @@ test('トゥイーン: 色・遅れ・終わったら消す/出来事。表 $twe
   g.step();
   assert.equal(g.world.get('hud')!.c.Text.color, '#000000');
   assert.equal(g.counts.get('faded'), 1);
-  // 表の手触り（hitFlash: 0.12秒 = 7フレーム）
+  // 表の手触り（hitFlash: 0.15秒 = 9フレーム）
   g.ctx.tween('hud', { 'Transform.sy': 2 }, 'hitFlash');
-  assert.equal(g.tweens[0].frames, 7);
+  assert.equal(g.tweens[0].frames, 9);
   assert.equal(g.tweens[0].ease, 'outQuad');
   g.ctx.tween('hud', { 'Transform.rot': 90 }, { time: 0.05, destroy: true });
   for (let i = 0; i < 3; i++) g.step();
