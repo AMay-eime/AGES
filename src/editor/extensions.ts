@@ -2,7 +2,8 @@
 // 本体の機能（src/editor/builtin/）もプロジェクトの拡張と同じ API で書き、ここに並べる（API が足りているかの確かめと、手本を兼ねる）。
 import type { App } from './app.ts';
 import { asExtension, fieldKey, matchField, matchRank, type ComponentDrawer, type EditorApi, type EditorExtension, type EditorWindow, type FieldDrawer, type RowDrawer } from './window-api.ts';
-import type { Op } from '../core/patch.ts';
+import type { Change, Op } from '../core/patch.ts';
+import { defaultOf, type Field } from '../core/schema.ts';
 import { parseAddress } from '../core/docs.ts';
 import { resolvePrefab } from '../core/variant.ts';
 import { h, modal, toast } from './ui/dom.ts';
@@ -23,11 +24,13 @@ export interface LoadedExtension {
 
 /** 拡張に渡す API。win は操作ログに残る名前（プロジェクトの拡張は window:<id>） */
 export function makeApi(app: App, win: string): EditorApi {
+  let queue: Promise<Change[] | null> = Promise.resolve(null);
   return {
     get state() { return app.state; },
     get user() { return app.user; },
     get playing() { return !!app.play; },
-    patch: (ops: Op[]) => app.patch(ops, win),
+    // 拡張ごとに1つずつ順に送る。関数を渡すと、前の変更が終わった後の最新の中身で ops を作る（続けてのクリックで古い値から作らない）
+    patch: (ops) => (queue = queue.then(() => app.patch(typeof ops === 'function' ? ops() : ops, win), () => app.patch(typeof ops === 'function' ? ops() : ops, win))),
     get(path: string) {
       const a = parseAddress(path);
       if (a.kind === 'table') {
@@ -43,8 +46,10 @@ export function makeApi(app: App, win: string): EditorApi {
         try { holder = resolvePrefab(new Map(Object.entries(app.state.prefabs)), a.doc); } catch { holder = undefined; }
       } else holder = app.sceneView(a.doc)?.entities.find((e) => e.id === a.entity);
       const comp = a.component ? holder?.components[a.component] : undefined;
-      if (!a.field) return comp ?? holder;
-      return comp && a.field in comp ? comp[a.field] : app.registry.components.get(a.component!)?.fields[a.field]?.default;
+      if (!a.field) return a.component ? comp : holder;
+      const def = app.registry.components.get(a.component!)?.fields[a.field];
+      const top = comp && a.field in comp ? comp[a.field] : def ? defaultOf(def) : undefined;
+      return nestedValue(top, def, a.sub ?? []);
     },
     select(address: string | null, add = false) {
       if (address === null) return app.select(null);
@@ -91,6 +96,17 @@ export function makeApi(app: App, win: string): EditorApi {
     on: ((ev: string, fn: (d?: unknown) => void) => app.on(ev === 'show' ? `show:${win.replace(/^window:/, '')}` : ev, fn)) as EditorApi['on'],
     h: h as unknown as EditorApi['h'],
   };
+}
+
+/** 入れ子の中の値（書いていない所は、その型の既定値） */
+function nestedValue(v: unknown, f: Field | undefined, sub: (string | number)[]): unknown {
+  for (const k of sub) {
+    const inner: Field | undefined = f?.type === 'struct' ? f.fields[String(k)] : f?.type === 'list' ? f.of : undefined;
+    const x = v == null ? undefined : (v as Record<string | number, unknown>)[k];
+    v = x === undefined && inner ? defaultOf(inner) : x;
+    f = inner;
+  }
+  return v;
 }
 
 /** 本体の拡張（いつもある） */

@@ -29,8 +29,11 @@ export interface EditorApi {
   /** エディタを使っている人の名前 */
   readonly user: string;
   readonly playing: boolean;
-  /** 値を変える。操作ログには「window:<id>」から人が変更したと記録される。変えられるのは edits と、この拡張が見せている欄・部品だけ */
-  patch(ops: Op[]): Promise<Change[] | null>;
+  /**
+   * 値を変える。操作ログには「window:<id>」から人が変更したと記録される。変えられるのは edits と、この拡張が見せている欄・部品だけ。
+   * 1つずつ順に送る。ops を関数で渡すと、前の変更が終わった後に呼ぶ（その時の api.get・api.table で作る。続けてのクリックで古い値から作らないように）
+   */
+  patch(ops: Op[] | (() => Op[])): Promise<Change[] | null>;
   /** アドレスの値を読む（例: main#spawner.Spawner.interval・$enemies.basic.hp）。省略されていれば既定値、派生のプレハブなら元から受け継いだ値 */
   get(path: string): unknown;
   /** 表を読む（省いた列は既定値で埋めた行。ゲームのコードの ctx.table と同じ。変えるのは patch の set・addRow など） */
