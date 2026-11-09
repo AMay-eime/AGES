@@ -58,6 +58,6 @@ test('MCP: 初期化で使い方の説明を渡し、道具の一覧と呼び出
   assert.match(by[5].result.content[0].text, /最小値 1 未満/);
   assert.match(by[6].result.content[0].text, /再現性: OK/);
   assert.equal(by[7].error.code, -32601);
-  assert.match(by[8].result.content[0].text, /^部品 Health — 体力/m);
+  assert.match(by[8].result.content[0].text, /^部品 Health（game\/components\.ts:\d+） — 体力/m);
   assert.match(by[9].result.content[0].text, /^## tables/);
 });
