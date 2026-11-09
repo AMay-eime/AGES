@@ -23,6 +23,7 @@ import { shaderReport } from '../project/shader-status.ts';
 import { layoutUI } from '../core/ui.ts';
 import { MemoryStore } from '../core/save.ts';
 import { languagesOf } from '../core/i18n.ts';
+import { parseSpawns, spawnTryout, tryoutGone, tryoutScene } from '../core/tryout.ts';
 
 const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [引数]
 
@@ -35,7 +36,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   patch  <dir> <ops.json | -> [--force]   操作の配列（例 [{"op":"set","path":"main#player.Player.speed","value":5}]。一覧は schema <dir> ops）
   table  <dir> <表> [--cols a,b] [--rows id1,id2] [--empty 列]   表を見る（1行1行。--empty はその列が空の行だけ。例 未訳: text --empty en）
                [--export x.csv] [--import x.csv [--force]]   表計算ソフトとの行き来（読み込みは表をまるごと置き換える）
-  run    <dir> [--frames 600] [--scene main] [--seed 1] [--keys "0-120:ArrowLeft+KeyZ;120-200:@move_x=1;30:Mouse0+ptr=240,100"]
+  run    <dir> [--frames 600] [--scene main | --spawn enemy,explosion@40,0（プレハブだけを空のシーンの真ん中に出して試す）] [--seed 1] [--keys "0-120:ArrowLeft+KeyZ;120-200:@move_x=1;30:Mouse0+ptr=240,100"]
                [--input recordings/x.input.json] [--watch player.Health.hp,...] [--every 60] [--until gameOver | scene:result | click:ボタンのID] [--twice] [--dump]
                [--save saves/x.save.json]（この保存データから始める。省くと空） [--save-out saves/y.save.json]（終わりの保存データを書き出す） [--lang en]（言語）
   log    <dir> [--all] [--peek]      前回からの編集の要約（--peek は既読にしない）
@@ -441,8 +442,13 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
   const every = f.every !== undefined ? Number(f.every) : 0;
   const until = typeof f.until === 'string' ? f.until : '';
 
+  // --spawn: 選んだプレハブだけを空のシーンの真ん中に出して試す（出した物がすべて消えたら止まる）
+  const spawns = typeof f.spawn === 'string' ? parseSpawns(f.spawn) : [];
+  if (f.spawn !== undefined && !spawns.length) throw new Error('--spawn にはプレハブの名前が要ります（例 --spawn enemy_fast,explosion@40,0。@ の後は画面の真ん中からのずれ）');
   const once = () => {
-    const game = p.newGame(scene, seed, new MemoryStore(initialSave), typeof f.lang === 'string' ? f.lang : undefined);
+    const lang = typeof f.lang === 'string' ? f.lang : undefined;
+    const game = spawns.length ? p.newGame(undefined, seed, new MemoryStore(initialSave), lang, tryoutScene()) : p.newGame(scene, seed, new MemoryStore(initialSave), lang);
+    const spawned = spawns.length ? spawnTryout(game, spawns, p.config.view.width, p.config.view.height) : [];
     const play = new InputPlayback(events);
     const lines: string[] = [];
     const first = watch.map((w) => readWatch(game, w));
@@ -466,6 +472,7 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
           }
         }
         game.step(inp);
+        if (spawned.length && !stopped && tryoutGone(game, spawned)) stopped = `出した物がすべて消えた @f${game.frame}`;
         if (every && game.frame % every === 0) {
           lines.push(`f${game.frame} ` + watch.map((w) => `${w.split('.').pop()}=${fmt(readWatch(game, w))}`).join(' '));
         }
@@ -483,7 +490,7 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
   const r = once();
   const g = r.game;
   const out: string[] = [];
-  out.push(`run ${scene} seed${seed} ${g.frame}f (${(g.frame / p.config.fps).toFixed(1)}s) ${r.ms.toFixed(0)}ms hash=${g.hash()}${r.stopped ? ' 停止:' + r.stopped : ''}`);
+  out.push(`run ${spawns.length ? `試し(${spawns.map((x) => '@' + x.prefab).join(' ')})` : scene} seed${seed} ${g.frame}f (${(g.frame / p.config.fps).toFixed(1)}s) ${r.ms.toFixed(0)}ms hash=${g.hash()}${r.stopped ? ' 停止:' + r.stopped : ''}`);
   out.push(...r.lines);
   const counts = [...g.counts.entries()].map(([k, v]) => `${k}×${v}`).join(' ');
   out.push(`events: ${counts || 'なし'}`);

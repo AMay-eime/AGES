@@ -1099,8 +1099,9 @@ export class Project {
     return { changes, lockReport: this.lockReport };
   }
 
-  newGame(scene = this.config.startScene, seed = this.config.seed, store?: SaveStore, lang?: string): Game {
-    const doc = this.docs.scenes.get(scene);
+  /** ゲームを作る。doc を渡すと、そのシーン（試しのシーンなど）で始める */
+  newGame(scene = this.config.startScene, seed = this.config.seed, store?: SaveStore, lang?: string, sceneDoc?: SceneDoc): Game {
+    const doc = sceneDoc ?? this.docs.scenes.get(scene);
     if (!doc) throw new Error(`シーン ${scene} はありません${suggest(scene, [...this.docs.scenes.keys()])}`);
     const langs = languagesOf(this.config);
     if (lang && !langs.includes(lang)) throw new Error(`言語 ${lang} はありません${suggest(lang, langs)}（ages.project.json の languages: ${langs.join(', ')}）`);

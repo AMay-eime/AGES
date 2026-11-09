@@ -2,5 +2,6 @@
 import type { EditorExtension } from '../window-api.ts';
 import uiDock from './ui-dock.ts';
 import animatorClip from './animator-clip.ts';
+import tryout from './tryout.ts';
 
-export const BUILTIN_EXTENSIONS: EditorExtension[] = [uiDock, animatorClip];
+export const BUILTIN_EXTENSIONS: EditorExtension[] = [uiDock, animatorClip, tryout];

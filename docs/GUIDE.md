@@ -19,6 +19,7 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
 - 元から部品を外すのは `removeComponent`、足すのは `addComponent`。切り離す（ふつうのプレハブにする）のは `setPrefab` の `base: null`（値は変わらない）
 - 地図の `@x ← @元` が派生、`変:` が元から変えた所。受け継いだ値にロックが付いていると、元を変えてその値が変わる編集は止まる
 - 数値だけが違う行がたくさん並ぶなら、派生より表（table）が向く
+- プレハブだけを試すのは `ages run <dir> --spawn enemy_fast`（空のシーンの真ん中に出し、消えたら止まる。`explosion@40,0` で真ん中からずらす。音のプレハブは1回鳴らす）。人はエディタの「試し」の窓で同じものを見る
 
 ## sprite: 画像・コマ・動き
 部品: Sprite Animator
@@ -111,6 +112,7 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
   - `components: [{ component, hide?, mount(el, comp, api) }]` 部品の欄の上に中身を足す。`hide: 'all'` か名前の並びで標準の欄を隠す。`comp.set(フィールド, 値)`（例 AGES 本体の `src/editor/builtin/ui-dock.ts`）
 - `desc`（何のためか、1行）を必ず書く。パネルがあるなら `title` と `edits`（パネルが変える値の住所。`main#spawner.Spawner.*` のようにまとめても書ける）も。地図にはこの宣言が1行で出る
 - 拡張から変えられるのは、`edits` に書いた値と、見せている欄・部品の値だけ。🔒ロックされた値は拡張からは変えられない。ロックの操作を拡張に作らない（作っても、サーバーが受け付けない）
-- 値を変えるのは `api.patch`・`field.set`・`comp.set` だけ（エディタのサーバーを直接呼ばない）。読むのは `api.get`（派生は元と重ねた値）、知らせるのは `api.notify(文, 'warn')`、画像の切り方は `api.sheet(画像)`
+- 値を変えるのは `api.patch`・`field.set`・`comp.set` だけ（エディタのサーバーを直接呼ばない）。読むのは `api.get`（派生は元と重ねた値）、知らせるのは `api.notify(文, 'warn')`、画像の切り方は `api.sheet(画像)`、選んでいる物は `api.selection`
+- プレハブを小さな画面でくり返し動かすのは `api.stage(el, { spawn: [{ prefab }], seconds, speed, zoom, keys, onCycle })`（本体の「試し」の窓 `src/editor/builtin/tryout.ts` と同じ。値を変えると次の回から新しい値）
 - モジュールの一番外では `document` などのブラウザの物を使わない（地図を作るときに Node で読むため）
 - 作ったら `ages check` で、宣言の誤り（ない住所・ない型や部品・書き忘れ・登録し忘れ）を確かめる

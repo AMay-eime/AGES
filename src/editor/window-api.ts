@@ -32,10 +32,59 @@ export interface EditorApi {
   sheet(image: string): SheetDef | undefined;
   /** 通知（画面の右下に少しのあいだ出る）。kind: info（既定）・warn・bad */
   notify(text: string, kind?: 'info' | 'warn' | 'bad'): void;
+  /** いま選んでいる物の住所（main#player・@enemy）。選んでいなければ null */
+  readonly selection: string | null;
+  /**
+   * 試しの舞台: el に小さな画面を作り、空のシーンにプレハブを出して、くり返し動かす（エディタの「試し」の窓もこれで作っている）。
+   * ゲームと同じ決まりで動く（scenes で絞ったシステムは動かない）。値を変えると、次の回から新しい値で動く。音は鳴らさず、数だけを onCycle で返す
+   */
+  stage(el: HTMLElement, opts: StageOptions): StageHandle;
   on(event: 'change' | 'select' | 'play' | 'frame', fn: () => void): () => void;
   on(event: 'gameEvent', fn: (ev: GameEvent) => void): () => void;
   /** DOMを作る小さなヘルパー: h('div', { class: 'x', onclick }, '中身', ...) */
   h: (tag: string, attrs?: Record<string, unknown>, ...children: unknown[]) => HTMLElement;
+}
+
+export interface StageOptions {
+  /** 出すプレハブ。x・y は画面（設計の大きさ）の真ん中からのずれ(px)、values は出すときに変える値 */
+  spawn: { prefab: string; x?: number; y?: number; values?: Record<string, Record<string, unknown>> }[];
+  /** 1回の長さ（秒。既定 3）。出した物がすべて消えたら、その時点で次の回へ */
+  seconds?: number;
+  /** 速さ（既定 1） */
+  speed?: number;
+  /** 拡大（既定 2） */
+  zoom?: number;
+  /** カメラで最初に出した物を追いかける（既定 false） */
+  follow?: boolean;
+  /** 入力（ages run --keys と同じ書き方。例 "0-60:@fire"） */
+  keys?: string;
+  /** 画面の大きさ(px。既定 240x150) */
+  width?: number;
+  height?: number;
+  /** 1回終わるごとに呼ぶ（その回の数） */
+  onCycle?(summary: StageSummary): void;
+}
+
+export interface StageSummary {
+  /** その回に進めたフレーム数 */
+  frames: number;
+  /** 出した物がすべて消えたか（でなければ時間切れ） */
+  gone: boolean;
+  sounds: Record<string, number>;
+  particles: Record<string, number>;
+  events: Record<string, number>;
+  warnings: string[];
+  /** 動かせなかった理由（ゲームのコードのエラーなど） */
+  error?: string;
+}
+
+export interface StageHandle {
+  /** 設定を変える（次の回から） */
+  set(opts: Partial<StageOptions>): void;
+  /** すぐ最初から */
+  restart(): void;
+  /** 止めて片付ける */
+  destroy(): void;
 }
 
 /** インスペクタの1つの欄（拡張が見せ方を差し替えるときに渡る） */

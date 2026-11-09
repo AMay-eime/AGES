@@ -7,6 +7,7 @@ import { parseAddress } from '../core/docs.ts';
 import { resolvePrefab } from '../core/variant.ts';
 import { h, toast } from './ui/dom.ts';
 import { BUILTIN_EXTENSIONS } from './builtin/index.ts';
+import { createStage } from './stage.ts';
 
 export interface LoadedExtension {
   ext: EditorExtension;
@@ -41,6 +42,8 @@ export function makeApi(app: App, win: string): EditorApi {
     simulate: (frames, keys, seed) => app.simulate(frames, keys, seed),
     sheet: (image: string) => app.registry.sheets.get(image),
     notify: (text, kind = 'info') => { toast(text, kind === 'info' ? '' : kind, kind === 'bad' ? 8000 : 4000); },
+    get selection() { const s = app.sel; return !s ? null : s.kind === 'prefab' ? `@${s.name}` : `${s.scene}#${s.id}`; },
+    stage: (el, opts) => createStage(app, el, opts),
     on: ((ev: string, fn: (d?: unknown) => void) => app.on(ev, fn)) as EditorApi['on'],
     h: h as unknown as EditorApi['h'],
   };
