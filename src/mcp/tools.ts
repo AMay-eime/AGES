@@ -1,13 +1,13 @@
 // AGES の MCP の道具（tools）と、使い方の説明（instructions）。
 // server.ts から使う。テスト（毎回読む量の上限）からも読めるよう、標準入出力を開かないこのファイルに分けてある。
-import { cmdAssets, cmdUndo, cmdCheck, cmdUi, cmdGet, cmdInit, cmdLog, cmdMap, cmdPatch, cmdRun, cmdSchema, cmdSheet, cmdSlice, cmdTable } from '../cli/ages.ts';
+import { cmdAssets, cmdUndo, cmdCheck, cmdUi, cmdGet, cmdInit, cmdLog, cmdMap, cmdFind, cmdPatch, cmdRun, cmdSchema, cmdSheet, cmdSlice, cmdTable } from '../cli/ages.ts';
 import { parseLiteral, splitCell, type Op } from '../core/patch.ts';
 
 /** 使い方の説明（MCP の initialize で毎回渡る）。短く保つ: 機能ごとの手順は ages_schema の guide で要るときに引く */
 export function makeInstructions(defaultProject: string): string {
   return `AGES は、AIと人が一緒に速くゲームを作るためのゲームエンジン兼エディタ。道具の dir を省くと ${defaultProject}。
 - ゲームの企画を受けたら、いきなりコードを書かない。まず ages_init でプロジェクトを作り、EDITOR-PLAN.md で「どんなエディタが必要か」を使用者と決める（「一緒に決めるか、AIにおまかせか」を最初に聞く。おまかせを自分から選ばない）。合意するまでゲームのコードは書かない
-- 作業のたびに最初に ages_map（全体の地図）と ages_log（前回から人が変えたこと）を読む
+- 作業のたびに最初に ages_map（全体の地図）と ages_log（前回から人が変えたこと）を読む。大きなプロジェクトの地図は目次なので、中身は ages_find（名前・説明から探す）か ages_map の section で引く
 - 値は ages_set / ages_patch で変える。JSONやアセットのファイルを直接書き換えない・動かさない。行列はセル単位（住所[行,列]）、リストの中は 住所[番号]、構造体の中は 住所.名前
 - 同じ形の行が並ぶデータ（武器・敵・カードなど）は表にする（住所は $表.行.列、中身は ages_table）
 - 🔒ロックされた値は絶対に変えない（変えられない）。変えるべき理由があれば人に提案する。★人が調整した値は、人に確認してから force
@@ -33,9 +33,15 @@ export function makeTools(defaultProject: string): Tool[] {
   return [
     {
       name: 'ages_map',
-      description: 'プロジェクトの地図。コンポーネント（型・範囲）、システム（実行順・読み書き）、プレハブ、シーン、🔒ロックと★人の調整の印。作業のたびに最初に読む',
-      inputSchema: { type: 'object', properties: { ...dirProp } },
-      run: (_a, dir) => cmdMap(dir),
+      description: 'プロジェクトの地図。コンポーネント、システム（実行順・読み書き）、表、プレハブ、シーン、🔒★の印。作業のたびに最初に読む。大きなプロジェクトでは目次になり、section（components systems tables prefabs scenes など）で中身を引く',
+      inputSchema: { type: 'object', properties: { ...dirProp, section: { type: 'string' } } },
+      run: (a, dir) => cmdMap(dir, a.section),
+    },
+    {
+      name: 'ages_find',
+      description: '部品・フィールド・表の列と行・システム・プレハブ・シーンの物を、名前と説明から探す（例 "移動速度"。空白で区切るとすべてを含むもの）',
+      inputSchema: { type: 'object', properties: { ...dirProp, words: { type: 'string' } }, required: ['words'] },
+      run: (a, dir) => cmdFind(dir, a.words),
     },
     {
       name: 'ages_log',

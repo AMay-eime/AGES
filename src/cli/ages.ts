@@ -5,7 +5,8 @@ import { existsSync } from 'node:fs';
 import { join, resolve, relative, basename, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Project } from '../project/project.ts';
-import { renderAssets, renderMap } from '../project/map.ts';
+import { renderAssets, renderMap, renderMapSection } from '../project/map.ts';
+import { findInProject } from '../project/find.ts';
 import { readCursor, readLog, readTouched, summarize, writeCursor, type Actor } from '../project/oplog.ts';
 import { OP_DOCS, getValue, parseLiteral, splitCell, type Op } from '../core/patch.ts';
 import { readGuide } from '../project/guide.ts';
@@ -28,7 +29,8 @@ import { parseSpawns, spawnTryout, tryoutGone, tryoutScene } from '../core/tryou
 const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [引数]
 
   init   <dir> [--name 名前]          新しいプロジェクトを作る（EDITOR-PLAN.md 付き。ゲームの企画を受けたら最初にこれ）
-  map    <dir>                       プロジェクトの地図（作業のたびに最初に読む）
+  map    <dir> [節]                  プロジェクトの地図（作業のたびに最初に読む）。大きなプロジェクトでは目次になり、節（components systems tables prefabs scenes など）で中身を引く
+  find   <dir> <語 ...>              部品・フィールド・表の列と行・システム・プレハブ・シーンの物を、名前と説明から探す（語は全部を含むもの）
   schema <dir> [名前 ...]             詳しく引く: コンポーネント（型・範囲・説明）/ $表 / std:flash などのシェーダー
                / ops（patch の操作の一覧と書き方）/ guide（機能ごとの手順の目次）/ guide:項目（例 guide:ui）
   get    <dir> <addr> [addr ...]     値を見る（例: main#player / main#player.Player.speed / @enemy / $enemies.basic）
@@ -87,10 +89,19 @@ function compact(obj: Record<string, unknown>): string {
   return Object.entries(obj).map(([k, v]) => `${k}:${fmt(v)}`).join(' ');
 }
 
-export async function cmdMap(dir: string): Promise<string> {
+export async function cmdMap(dir: string, section?: string): Promise<string> {
   const p = await Project.load(dir);
+  const ins = { touched: await readTouched(p.dir), locks: await p.effectiveLocks(), code: await p.codeRefs(), windows: await p.windows(), gotos: codeSceneRefs(await p.codeFiles()) };
+  // 節を1つだけ引く（目次の地図から）
+  if (section) return withLockReport(p, renderMapSection(p, section, ins));
   const plan = await planWarning(p.dir);
-  return withLockReport(p, (plan ? plan + '\n' : '') + renderMap(p, await readTouched(p.dir), await p.effectiveLocks(), await p.codeRefs(), await p.windows(), codeSceneRefs(await p.codeFiles())));
+  return withLockReport(p, (plan ? plan + '\n' : '') + renderMap(p, ins.touched, ins.locks, ins.code, ins.windows, ins.gotos));
+}
+
+/** 名前・説明から探す（目次の地図の中身を引く） */
+export async function cmdFind(dir: string, query: string): Promise<string> {
+  const p = await Project.load(dir);
+  return findInProject(p, query, await readGuide());
 }
 
 /** エディタ計画書が未合意なら警告文を返す */
@@ -646,7 +657,8 @@ async function main(argv: string[]): Promise<void> {
   let out: string;
   switch (cmd) {
     case 'init': out = await cmdInit(dir, typeof a.flags.name === 'string' ? a.flags.name : undefined); break;
-    case 'map': out = await cmdMap(dir); break;
+    case 'map': out = await cmdMap(dir, a.pos[1]); break;
+    case 'find': out = await cmdFind(dir, need(a.pos.slice(1).join(' ') || undefined, '探す語（例 移動速度）')); break;
     case 'schema': out = await cmdSchema(dir, a.pos.slice(1)); break;
     case 'get': out = await cmdGet(dir, a.pos.slice(1)); break;
     case 'set': {
