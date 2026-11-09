@@ -153,8 +153,12 @@ test('ctx.prefab: ゲームのコードからプレハブの中身を読む（�
   const g = p.newGame();
   const v = g.ctx.prefab('enemy_tough')!;
   assert.deepEqual([v.name, v.tags, v.components.Health.hp, v.components.Velocity.vy, v.components.Velocity.vx], ['enemy_tough', ['enemy'], 9, 2, 0]);
-  v.components.Health.hp = 1;
-  assert.equal(g.ctx.prefab('enemy_tough')!.components.Health.hp, 9, '書き換えても元は変わらない');
+  assert.throws(() => { v.components.Health.hp = 1; }, TypeError, '読むだけ（凍らせてある）');
+  assert.equal(g.ctx.prefab('enemy_tough'), v, 'プレハブが変わるまで同じものを返す');
+  await p.apply([{ op: 'set', path: '@enemy.Velocity.vy', value: 5 }], ai);
+  const g2 = p.newGame();
+  assert.equal(g2.ctx.prefab('enemy_tough')!.components.Velocity.vy, 5, '元を変えると派生にも出る');
+  assert.equal(g.ctx.prefab('enemy_tough')!.components.Velocity.vy, 5, '動いているゲームでも、変えた後は新しい中身');
   assert.equal(g.ctx.prefab('nothing'), undefined);
   await rm(dir, { recursive: true, force: true });
 });

@@ -63,10 +63,24 @@ export class World {
 
   /** 指定コンポーネントをすべて持つ、生きているエンティティ */
   query(...components: string[]): Entity[] {
+    // 毎フレーム何度も呼ばれるので、関数を作らずに回す（コンポーネント1つ・2つは専用の道）
     const out: Entity[] = [];
-    for (const e of this.entities.values()) {
-      if (this.doomed.has(e.id)) continue;
-      if (components.every((n) => n in e.c)) out.push(e);
+    const doomed = this.doomed.size ? this.doomed : null;
+    const n = components.length;
+    if (n === 1) {
+      const a = components[0];
+      for (const e of this.entities.values()) if (a in e.c && !(doomed && doomed.has(e.id))) out.push(e);
+      return out;
+    }
+    if (n === 2) {
+      const a = components[0], b = components[1];
+      for (const e of this.entities.values()) if (a in e.c && b in e.c && !(doomed && doomed.has(e.id))) out.push(e);
+      return out;
+    }
+    outer: for (const e of this.entities.values()) {
+      if (doomed && doomed.has(e.id)) continue;
+      for (let i = 0; i < n; i++) if (!(components[i] in e.c)) continue outer;
+      out.push(e);
     }
     return out;
   }
