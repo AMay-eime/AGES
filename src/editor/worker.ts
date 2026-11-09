@@ -14,8 +14,23 @@ try {
   loadError = (e as Error).message;
 }
 
+/**
+ * 重い中身（検証の ⚠・コードの中のアセットの場所）は、変える頼みが来るまで作り置く（エディタは変更のたびに state を取り直すので、毎回作ると1秒ほどかかっていた）。
+ * コードが変わったときは、スレッドごと作り直すので作り置きも捨てられる
+ */
+let heavy: { issues: string[]; codeRefs: Record<string, string[]> } | null = null;
+/** コードの中のアセットの場所は、アセットの一覧が同じなら同じ（コードが変わるとスレッドごと作り直す） */
+let refs: { key: string; value: Record<string, string[]> } | null = null;
+async function codeRefsCached(): Promise<Record<string, string[]>> {
+  const key = project.assets.map((a) => a.path).join('\n');
+  if (refs?.key !== key) refs = { key, value: Object.fromEntries(await project.codeRefs()) };
+  return refs.value;
+}
+const READ_ONLY = new Set(['state', 'lockState', 'describe', 'lockCandidates', 'undoState', 'log']);
+
 async function state() {
   if (loadError) return { error: loadError };
+  heavy ??= { issues: [...project.validate(), ...project.projectChecks().map((m) => `⚠ ${m}`)], codeRefs: await codeRefsCached() };
   return {
     config: project.config,
     scenes: Object.fromEntries(project.docs.scenes),
@@ -26,8 +41,8 @@ async function state() {
     tables: Object.fromEntries(project.docs.tables),
     assets: project.assets,
     saves: [...project.saves.keys()],
-    codeRefs: Object.fromEntries(await project.codeRefs()),
-    issues: [...project.validate(), ...project.projectChecks().map((m) => `⚠ ${m}`)],
+    codeRefs: heavy.codeRefs,
+    issues: heavy.issues,
     lockReport: project.lockReport,
     integrity: { ok: project.integrity.ok, reason: project.integrity.reason, diff: project.lockDiff(), hasBackup: !!project.integrity.backup },
   };
@@ -99,6 +114,7 @@ port.on('message', (msg: { id: number; type: string; args: unknown[] }) => {
 async function handle(msg: { id: number; type: string; args: unknown[] }): Promise<void> {
   try {
     if (loadError && msg.type !== 'state') throw new Error(`プロジェクトを読み込めません: ${loadError}`);
+    if (!READ_ONLY.has(msg.type)) heavy = null;
     const result = await handlers[msg.type](...msg.args);
     const written = project ? Object.fromEntries(project.written) : {};
     project?.written.clear();
