@@ -12,5 +12,8 @@ export type { SoundApi, AudioCmd, BusDef } from './core/audio.ts';
 export { EASES, EASE_NAMES, type EaseName } from './core/ease.ts';
 export type { TweenOptions, TweenValue } from './core/tween.ts';
 export type { ParticleApi } from './core/particles.ts';
+export type { SaveApi, SaveStore } from './core/save.ts';
+export { MemoryStore, LocalStore } from './core/save.ts';
+export type { HitApi, UiApi } from './core/game.ts';
 export { camerasOf, worldToScreen, screenToWorld, visibleCorners, fitView, type CameraView, type FitMode } from './core/camera.ts';
 export type { SheetDef, ClipDef } from './core/sheet.ts';

@@ -24,6 +24,7 @@ import { KNOWN_AXES, KNOWN_BUTTONS } from '../core/input.ts';
 import { checkSheet, checkSheetImage, findFrame, frameCount, sheetPathOf, type SheetDef } from '../core/sheet.ts';
 import { shaderMap } from '../core/shader.ts';
 import { besideLoop } from '../core/ui.ts';
+import type { SaveStore } from '../core/save.ts';
 
 // ゲームコードの import ... from 'ages' を、どのフォルダにあるプロジェクトからでもこのエンジンに向ける
 const AGES_INDEX = new URL('../index.ts', import.meta.url).href;
@@ -77,6 +78,7 @@ export class Project {
     this.registry.sheets = this.docs.sheets;
     this.registry.tableData = this.docs.tables;
     this.setAssetMaps(scan.assets);
+    this.saves = await readSaves(this.dir);
     this.windowCache = null;
     this.integrity = await verifyLocks(this.dir);
     this.lockReport = await this.enforceLocks();
@@ -86,6 +88,9 @@ export class Project {
       this.lockReport.unshift(`⚠ ${this.integrity.reason}${detail ? `（${detail}）` : ''}。人がロックマネージャーで確認するまで、AIからの編集はすべて止めます。最後に封印されたロックは引き続き有効です`);
     }
   }
+
+  /** 保存データのファイル（saves/*.save.json。ages run --save・エディタの「この保存データで始める」で使う） */
+  saves = new Map<string, { data?: Record<string, unknown>; error?: string }>();
 
   /** アセットの一覧から、画像の大きさとシェーダーの宣言を登録簿へ */
   private setAssetMaps(assets: AssetInfo[]): void {
@@ -509,6 +514,17 @@ export class Project {
       if (!e.length && info?.w && info.h) errs.push(...checkSheetImage(sp, sheet, info.w, info.h));
     }
     errs.push(...this.assetIssues);
+    // 保存データのファイル: 形と、物の保存（saveWorld）の中のコンポーネント
+    for (const [path, sv] of this.saves) {
+      if (sv.error) { errs.push(`${path}: ${sv.error}`); continue; }
+      for (const [key, v] of Object.entries(sv.data ?? {})) {
+        const w = v as { $world?: number; entities?: { id: string; c?: Record<string, unknown> }[] };
+        if (w?.$world !== 1) continue;
+        for (const e of w.entities ?? []) for (const name of Object.keys(e.c ?? {})) {
+          if (!this.registry.components.has(name)) errs.push(`${path}: ${key} の ${e.id} の ${name} はないコンポーネントです${suggest(name, [...this.registry.components.keys()])}（読み込むときは捨てられます）`);
+        }
+      }
+    }
     // 当たり判定: with に書いたグループの Collider があること（名前の書き間違い）
     {
       const groups = new Set<string>();
@@ -1021,10 +1037,10 @@ export class Project {
     return { changes, lockReport: this.lockReport };
   }
 
-  newGame(scene = this.config.startScene, seed = this.config.seed): Game {
+  newGame(scene = this.config.startScene, seed = this.config.seed, store?: SaveStore): Game {
     const doc = this.docs.scenes.get(scene);
     if (!doc) throw new Error(`シーン ${scene} はありません${suggest(scene, [...this.docs.scenes.keys()])}`);
-    return new Game(this.registry, this.config, doc, seed);
+    return new Game(this.registry, this.config, doc, seed, { store });
   }
 }
 
@@ -1164,4 +1180,22 @@ function describeTx(changes: Change[]): string {
     : typeof first.to === 'string' && first.to.startsWith('renamed:') ? `→ ${first.to.slice(8)}`
     : first.from !== undefined && typeof first.from !== 'object' && typeof first.to !== 'object' ? `${v(first.from)}→${v(first.to)}` : '変更';
   return `${first.path} ${what}${main.length > 1 ? ` ほか${main.length - 1}件` : ''}`;
+}
+
+/** saves/ の保存データのファイルを読む */
+async function readSaves(dir: string): Promise<Map<string, { data?: Record<string, unknown>; error?: string }>> {
+  const out = new Map<string, { data?: Record<string, unknown>; error?: string }>();
+  let names: string[] = [];
+  try { names = (await readdir(join(dir, 'saves'))).filter((n) => n.endsWith('.save.json')).sort(); } catch { return out; }
+  for (const n of names) {
+    const path = `saves/${n}`;
+    try {
+      const v = JSON.parse(await readFile(join(dir, path), 'utf8'));
+      if (!v || typeof v !== 'object' || Array.isArray(v)) out.set(path, { error: '保存データは { キー: 値 } の形です' });
+      else out.set(path, { data: v });
+    } catch (e) {
+      out.set(path, { error: `JSON として読めません（${(e as Error).message}）` });
+    }
+  }
+  return out;
 }

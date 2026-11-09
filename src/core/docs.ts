@@ -33,6 +33,8 @@ export interface ProjectConfig {
   startScene: string;
   game: string;
   editorWindows?: string[];
+  /** セーブ: settings='auto'（既定）なら、キーの割り当て・音量を変えたら自動で保存し、始めるときに戻す。'manual' なら自分で */
+  save?: { settings?: 'auto' | 'manual' };
 }
 
 /**
