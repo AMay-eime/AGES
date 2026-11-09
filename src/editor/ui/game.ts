@@ -15,7 +15,7 @@ import type { Panel } from './layout.ts';
 import { ASSET_MIME, PREFAB_MIME } from './assets.ts';
 import { baseOf, extOf, kindOf } from '../../core/assets.ts';
 import type { ParticleCmd } from '../../core/particles.ts';
-import { shapeOf } from '../../core/collide.ts';
+import { drawColliders } from '../stage-draw.ts';
 
 const SCREENS: [string, number | null][] = [['パネルに合わせる', null], ['16:9', 16 / 9], ['4:3', 4 / 3], ['1:1', 1], ['9:16（スマホ縦）', 9 / 16], ['9:19.5（細長いスマホ縦）', 9 / 19.5], ['19.5:9（細長いスマホ横）', 19.5 / 9]];
 const FIT_LABEL: Record<FitMode, string> = { contain: '全体を入れる', cover: 'はみ出しを切る', stretch: '伸ばす', expand: '広い分だけ周りも見せる', pixel: '整数倍だけ' };
@@ -432,35 +432,9 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     og.stroke();
     og.setLineDash([]);
   };
-  /** 当たり判定の形（グループごとの色。カメラの範囲の中だけ） */
-  const hitColor = (g: string) => { let n = 0; for (const ch of g) n = (n * 31 + ch.charCodeAt(0)) >>> 0; return `hsla(${n % 360}, 90%, 62%, 0.9)`; };
+  /** 当たり判定の形（グループごとの色。カメラの範囲の中だけ。試しの舞台と同じ描き方） */
   const drawHits = (w: NonNullable<App['world']>) => {
-    if (!renderer) return;
-    og.lineWidth = 1;
-    for (const cam of renderer.cams) {
-      if (cam === renderer.uiView) continue;
-      og.save();
-      og.beginPath();
-      og.rect(cam.vx, cam.vy, cam.vw, cam.vh);
-      og.clip();
-      for (const e of w.entities.values()) {
-        if (e.c.UI || (e.c.Sprite?.layer ?? 0) < cam.layerMin || (e.c.Sprite?.layer ?? 0) > cam.layerMax) continue;
-        const sh = shapeOf(e);
-        if (!sh) continue;
-        og.strokeStyle = hitColor(String(e.c.Collider.group ?? ''));
-        if (sh.kind === 'circle') {
-          const [x, y] = worldToScreen(cam, sh.x, sh.y);
-          const [x2, y2] = worldToScreen(cam, sh.x + sh.r, sh.y);
-          og.beginPath();
-          og.arc(x, y, Math.hypot(x2 - x, y2 - y), 0, Math.PI * 2);
-          og.stroke();
-        } else {
-          const pts = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => worldToScreen(cam, sh.x + a * sh.hw * sh.cos - b * sh.hh * sh.sin, sh.y + a * sh.hw * sh.sin + b * sh.hh * sh.cos));
-          poly(pts.flat());
-        }
-      }
-      og.restore();
-    }
+    if (renderer) drawColliders(og, w, renderer.cams.filter((c) => c !== renderer!.uiView));
   };
   const drawOverlay = (w: NonNullable<App['world']>) => {
     og.clearRect(0, 0, overlay.width, overlay.height);
