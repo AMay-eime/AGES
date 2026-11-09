@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { Project } from '../project/project.ts';
 import { renderAssets, renderMap, renderMapSection } from '../project/map.ts';
 import { findInProject } from '../project/find.ts';
+import { noteRecent, placeOf, readRecent, topRecent } from '../project/recent.ts';
 import { readCursor, readLog, readTouched, summarize, writeCursor, type Actor } from '../project/oplog.ts';
 import { OP_DOCS, getValue, parseLiteral, splitCell, type Op } from '../core/patch.ts';
 import { readGuide } from '../project/guide.ts';
@@ -91,17 +92,19 @@ function compact(obj: Record<string, unknown>): string {
 
 export async function cmdMap(dir: string, section?: string): Promise<string> {
   const p = await Project.load(dir);
-  const ins = { touched: await readTouched(p.dir), locks: await p.effectiveLocks(), code: await p.codeRefs(), windows: await p.windows(), gotos: codeSceneRefs(await p.codeFiles()) };
+  const ins = { touched: await readTouched(p.dir), locks: await p.effectiveLocks(), code: await p.codeRefs(), windows: await p.windows(), gotos: codeSceneRefs(await p.codeFiles()), recent: topRecent(await readRecent(p.dir)) };
   // 節を1つだけ引く（目次の地図から）
   if (section) return withLockReport(p, renderMapSection(p, section, ins));
   const plan = await planWarning(p.dir);
-  return withLockReport(p, (plan ? plan + '\n' : '') + renderMap(p, ins.touched, ins.locks, ins.code, ins.windows, ins.gotos));
+  return withLockReport(p, (plan ? plan + '\n' : '') + renderMap(p, ins.touched, ins.locks, ins.code, ins.windows, ins.gotos, undefined, ins.recent));
 }
 
 /** 名前・説明から探す（目次の地図の中身を引く） */
 export async function cmdFind(dir: string, query: string): Promise<string> {
   const p = await Project.load(dir);
-  return findInProject(p, query, await readGuide());
+  const r = findInProject(p, query, await readGuide(), await readRecent(p.dir));
+  await noteRecent(p.dir, []);
+  return r.text;
 }
 
 /** エディタ計画書が未合意なら警告文を返す */
@@ -177,6 +180,7 @@ export async function cmdSchema(dir: string, names: string[]): Promise<string> {
   const isShader = (n: string) => n.startsWith('std:') || /\.(frag|glsl)$/i.test(n);
   const isDoc = (n: string) => n === 'ops' || n === 'guide' || n.startsWith('guide:');
   const comps = names.length ? names.filter((n) => !n.startsWith('$') && !isShader(n) && !isDoc(n)) : [...p.registry.components.keys()];
+  if (names.length) await noteRecent(p.dir, names.filter((n) => !isShader(n) && !isDoc(n)));
   const tables = names.length ? names.filter((n) => n.startsWith('$')).map((n) => n.slice(1)) : [...p.registry.tables.keys()];
   const topicOf = (comp: string) => [...guide.values()].find((t) => t.parts.includes(comp))?.name;
   for (const n of comps) {
@@ -227,6 +231,7 @@ function nested(f: import('../core/schema.ts').Field, pad: string): string {
 
 export async function cmdGet(dir: string, addrs: string[]): Promise<string> {
   const p = await Project.load(dir);
+  await noteRecent(p.dir, addrs.map(placeOf));
   const touched = await readTouched(p.dir);
   const locks = await p.effectiveLocks();
   const mark = (path: string) => (locks[path] ? '🔒' : touched[path] ? '★' : '');
@@ -276,6 +281,7 @@ function renderTable(p: Project, name: string, rows: Row[], cols: string[] | und
 export async function cmdTable(dir: string, name: string, flags: Record<string, string | true>): Promise<string> {
   const p = await Project.load(dir);
   const def = p.registry.table(name);
+  await noteRecent(p.dir, [`$${name}`]);
   const doc = p.docs.tables.get(name) ?? { name, rows: [] };
   const list = (v: string | true | undefined) => (typeof v === 'string' ? v.split(',').map((x) => x.trim()).filter(Boolean) : undefined);
   if (typeof flags.import === 'string') {
@@ -308,6 +314,7 @@ export async function cmdTable(dir: string, name: string, flags: Record<string, 
 export async function cmdPatch(dir: string, ops: Op[], force: boolean): Promise<string> {
   const p = await Project.load(dir);
   const r = await p.apply(ops, AI_ACTOR, { force });
+  await noteRecent(p.dir, r.changes.map((c) => placeOf(c.path)));
   if (!r.changes.length) return '変更なし（すでに同じ値です）';
   const show = (v: unknown) => (isMatrix(v) ? `行列${matrixSize(v)}` : fmt(v));
   return [...r.changes.map((c) => (c.to === 'added' || c.to === 'removed' ? `ok ${c.path} ${c.to === 'added' ? '追加' : '削除'}`
