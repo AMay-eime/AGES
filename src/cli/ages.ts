@@ -636,7 +636,9 @@ export async function cmdCheck(dir: string): Promise<string> {
   const missNote = miss.size ? `\n未訳: ${[...miss].map(([l, ks]) => `${l} ${ks.length}件`).join('・')}（ages table <dir> text --empty 言語。訳がない間は既定の言語で出る）` : '';
   // シェーダーがコンパイルできるかはブラウザでしか分からない。エディタが開いていれば、変わるたびに確かめる
   const note = sh.unchecked.length ? `\nシェーダー ${sh.unchecked.join(' ')} はまだコンパイルを確かめていません（エディタを開いていると、変えるたびに確かめて ages check に出ます）` : '';
-  return withLockReport(p, (errs.length ? errs.map((e) => `error: ${e}`).join('\n') : `ok（シーン${p.docs.scenes.size} プレハブ${p.docs.prefabs.size} コンポーネント${p.registry.components.size} システム${p.registry.systems.length}）`) + note + missNote);
+  // ゲーム独自の検証（defineCheck）は ⚠（編集は止めないもの）
+  const own = p.projectChecks().map((m) => `\n⚠ ${m}`).join('');
+  return withLockReport(p, (errs.length ? errs.map((e) => `error: ${e}`).join('\n') : `ok（シーン${p.docs.scenes.size} プレハブ${p.docs.prefabs.size} コンポーネント${p.registry.components.size} システム${p.registry.systems.length}）`) + own + note + missNote);
 }
 
 function imageOf(p: Project, image: string): { w: number; h: number } {

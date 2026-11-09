@@ -550,10 +550,11 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     ensureRenderer();
     const p = app.play;
     if (p && !p.paused) {
-      acc += dt;
+      acc += dt * app.playSpeed;
       const step = 1 / app.state.config.fps;
       let n = 0;
-      while (acc >= step && n++ < 5) { app.tick(); acc -= step; }
+      const most = Math.ceil(5 * Math.max(1, app.playSpeed));
+      while (acc >= step && n++ < most) { app.tick(); acc -= step; }
       if (n) app.emit('frame');
     } else acc = 0;
     const w = app.world;
