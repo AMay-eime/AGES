@@ -39,9 +39,9 @@ export interface EditorApi {
   select(address: string | null, add?: boolean): void;
   /**
    * 再生する（エディタの ▶ と同じ）。scene・params・date で始め方を選べる（省くと今のシーンを、再生の設定で）。再生中なら何もしない。
-   * 例 ステージを試す: api.play({ scene: 'battle', params: { stage: 'stage_0001' } })。止めると始めたシーンに戻る
+   * 例 ステージを試す: api.play({ scene: 'battle', params: { stage: 'stage_0001' } })。止めると始めたシーンに戻る。ゲームの画面を前に出す（show: false で出さない）
    */
-  play(opts?: { scene?: string; params?: Record<string, unknown>; date?: string }): void;
+  play(opts?: { scene?: string; params?: Record<string, unknown>; date?: string; show?: boolean }): void;
   /** 再生を止める（実行中の変更を保存するかは人に尋ねる） */
   stop(): Promise<void>;
   /** 画面なしで試し実行する。keys は ages run --keys と同じ書き方（"0-600:@fire;100-200:ArrowLeft"） */
@@ -93,6 +93,8 @@ export interface EditorApi {
   readonly dragTypes: { asset: string; prefab: string };
   on(event: 'change' | 'select' | 'play' | 'frame', fn: () => void): () => void;
   on(event: 'gameEvent', fn: (ev: GameEvent) => void): () => void;
+  /** 再生中にシーンが切り替わったとき */
+  on(event: 'scene', fn: (ev: { from: string; to: string }) => void): () => void;
   /** show で呼ばれたとき（この拡張あて） */
   on(event: 'show', fn: (args: unknown) => void): () => void;
   /** DOMを作る小さなヘルパー: h('div', { class: 'x', onclick }, '中身', ...) */

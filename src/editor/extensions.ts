@@ -53,7 +53,11 @@ export function makeApi(app: App, win: string): EditorApi {
       if (a.kind === 'table') return void app.emit('openTable', { name: a.doc, row: a.entity });
       app.select(a.kind === 'prefab' ? { kind: 'prefab', name: a.doc } : { kind: 'scene', scene: a.doc, id: a.entity! }, { add });
     },
-    play: (opts) => app.startPlay({ ...opts }),
+    play: (opts = {}) => {
+      const { show, ...rest } = opts;
+      app.startPlay(rest);
+      if (show !== false && app.play) app.emit('showPanel', 'game');
+    },
     stop: () => app.stopPlay(),
     table: (name) => app.registry.tableView(name),
     simulate: (frames, keys, seed) => app.simulate(frames, keys, seed),
