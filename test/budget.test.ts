@@ -75,3 +75,21 @@ test('地図: 実行中に変わる値（desc に「自動で変化」）は名�
   assert.match(map, /^Health 体力。0で倒れる \| hp:int 0\.\.999=3 invincibleOnHit:int 0\.\.600=60 \| 自動:invincible$/m);
   assert.match(map, /^Score 得点の表示 \| （フィールドなし） \| 自動:value$/m);
 });
+
+test('地図: 大きなプロジェクトでは要約の地図（型・説明を省く・プレハブは部品の組ごと・前のシーンと同じ物は繰り返さない）', async () => {
+  const { renderMap } = await import('../src/project/map.ts');
+  const { Project } = await import('../src/project/project.ts');
+  const dir = await mkdtemp(join(tmpdir(), 'ages-'));
+  await cp(new URL('../examples/shooter', import.meta.url), dir, { recursive: true });
+  const p = await Project.load(dir);
+  await p.apply([{ op: 'addScene', name: 'main2', copy: 'main' }], { who: 'ai', kind: 'ai', win: 'cli' });
+  const full = renderMap(p);
+  assert.match(full, /^Health 体力。0で倒れる \| hp:int/m, '小さいうちは今までどおり');
+  const small = renderMap(p, {}, {}, new Map(), [], new Map(), 100);
+  assert.match(small, /要約の地図/);
+  assert.match(small, /^Health 体力 \| hp invincibleOnHit \| 自動:invincible$/m);
+  assert.match(small, /^\[Sound\] \d+: .*se_shot/m);
+  assert.match(small, /^ {2}ほか\d+体は main と同じ$/m);
+  assert.ok(small.length < full.length);
+  await rm(dir, { recursive: true, force: true });
+});
