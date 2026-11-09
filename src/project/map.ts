@@ -5,6 +5,7 @@ import { assetRefs, baseOf, dirOf, isUnder } from '../core/assets.ts';
 import type { AssetKind } from '../core/schema.ts';
 import type { Project } from './project.ts';
 import { languagesOf } from '../core/i18n.ts';
+import { overridesOf } from '../core/variant.ts';
 import type { WindowInfo } from './windows.ts';
 import type { LockMark, TouchMark } from './oplog.ts';
 
@@ -79,10 +80,13 @@ export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, l
     }
   }
 
-  if (p.docs.prefabs.size) out.push('## prefabs（@名前 で参照）');
-  for (const pf of p.docs.prefabs.values()) {
+  if (p.docs.prefabs.size) out.push(`## prefabs（@名前 で参照${[...p.docs.prefabs.values()].some((x) => x.base) ? '。← は派生の元、変: は元から変えた所' : ''}）`);
+  for (const raw of p.docs.prefabs.values()) {
+    const pf = p.registry.findPrefab(raw.name) ?? raw;
     const tags = pf.tags?.length ? ` tags:${pf.tags.join(',')}` : '';
-    out.push(`@${pf.name}${pf.desc ? ' ' + pf.desc : ''} [${Object.keys(pf.components).join(' ')}]${tags}${marks(touched, locks, `@${pf.name}`)}`);
+    const own = raw.base ? overridesOf(p.docs.prefabs, raw.name) : [];
+    const variant = raw.base ? ` ← @${raw.base}` : '';
+    out.push(`@${pf.name}${variant}${raw.desc ? ' ' + raw.desc : ''} [${Object.keys(pf.components).join(' ')}]${tags}${own.length ? ` 変:${own.join(',')}` : ''}${marks(touched, locks, `@${pf.name}`)}`);
   }
 
   out.push(`## scenes（シーン#ID "名前" [コンポーネント]）${gotos.size ? `\ngoto の行き先（コード）: ${[...gotos.keys()].join(' ')}` : ''}`);

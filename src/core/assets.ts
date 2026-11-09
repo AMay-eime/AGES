@@ -88,6 +88,17 @@ export function codeSceneRefs(files: Iterable<[string, string]>): Map<string, st
   return out;
 }
 
+/** コードの中でプレハブを名前で指している所: spawn('名前')・sound.play('名前')・sound.volume('区分')（名前 → "game/x.ts:12"） */
+export function codePrefabRefs(files: Iterable<[string, string]>): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const [file, text] of files) {
+    text.split('\n').forEach((line, i) => {
+      for (const m of line.matchAll(/(?:\bspawn|\bsound\.play|\bsound\.volume)\(\s*(['"`])([A-Za-z0-9_-]+)\1/g)) out.set(m[2], [...(out.get(m[2]) ?? []), `${file}:${i + 1}`]);
+    });
+  }
+  return out;
+}
+
 /** コードの中で、アセットの場所を文字列で書いている所（"game/x.ts:12"）。files は 場所 → 中身 */
 export function codeRefs(files: Iterable<[string, string]>, assets: Iterable<string>): Map<string, string[]> {
   const out = new Map<string, string[]>();

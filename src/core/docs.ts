@@ -16,8 +16,12 @@ export interface SceneDoc {
 
 export interface PrefabDoc {
   name: string;
+  /** 派生の元（あれば、元を受け継いで components に書いた値だけを変える。core/variant.ts） */
+  base?: string;
   desc?: string;
   tags?: string[];
+  /** 派生で、元から外した部品 */
+  remove?: string[];
   components: Record<string, Record<string, unknown>>;
 }
 

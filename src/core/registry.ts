@@ -7,6 +7,7 @@ import type { SheetDef } from './sheet.ts';
 import { STD_COMPONENTS } from '../std/components.ts';
 import { STD_SYSTEMS } from '../std/systems.ts';
 import { STD_TABLES, textTable } from '../std/tables.ts';
+import { resolvePrefab } from './variant.ts';
 import type { Ctx } from './game.ts';
 
 export interface SystemDef {
@@ -137,10 +138,19 @@ export class Registry {
     return v;
   }
 
+  /** 使うときのプレハブ（派生なら元と重ねたもの） */
   prefab(name: string): PrefabDoc {
-    const p = this.prefabs.get(name);
-    if (!p) throw new Error(`プレハブ ${name} はありません${suggest(name, [...this.prefabs.keys()])}`);
-    return p;
+    return resolvePrefab(this.prefabs, name);
+  }
+
+  /** あれば使うときのプレハブ（ない・元が見つからなければ undefined） */
+  findPrefab(name: string): PrefabDoc | undefined {
+    try { return this.prefabs.has(name) ? resolvePrefab(this.prefabs, name) : undefined; } catch { return undefined; }
+  }
+
+  /** すべてのプレハブを使うときの形で（元が見つからない派生はそのまま。検証で知らせる） */
+  allPrefabs(): PrefabDoc[] {
+    return [...this.prefabs.keys()].map((n) => { try { return resolvePrefab(this.prefabs, n); } catch { return this.prefabs.get(n)!; } });
   }
 
   /** 既定値で埋めたコンポーネントデータを作る（不正な値は例外） */

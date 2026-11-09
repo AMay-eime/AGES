@@ -11,6 +11,15 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
 - 表計算ソフトと行き来するときは `ages table <dir> <表> --export x.csv` / `--import x.csv`（読み込みは表をまるごと置き換える）
 - 標準の表 `$actions`（操作）・`$tweens`（トゥイーン）・`$text`（言葉）の列は `ages schema <dir> $actions` などで見る
 
+## prefab: プレハブと派生
+- プレハブ（`@名前`）は、コードから `ctx.spawn('名前')` で出す物のひな形。作る・消す・名前を変えるのは patch の `addPrefab` / `removePrefab` / `renamePrefab` / `setPrefab`（ファイルを直接作らない。名前を変えると prefab 型の値・派生の元・🔒★も直る。コードの中は直らないので ⚠ に従って直す）
+- 似た物（速い敵・硬い敵など）は、写すより派生にする: `{"op":"addPrefab","name":"enemy_fast","base":"enemy","components":{"Velocity":{"vy":6}}}`。元の値を受け継ぎ、書いた値だけが変わる。元を直すと、派生の変えていない値も一緒に変わる
+- 派生の値もふつうの住所で読み書きする（`@enemy_fast.Velocity.vy`）。変えた値は フィールドごと（リスト・構造体は丸ごと）。元と同じ値にすると「受け継ぐ」に戻る
+- 元の値に戻すのは `{"op":"revert","path":"@enemy_fast.Velocity.vy"}`（部品ごとなら `@enemy_fast.Velocity`。外した部品も戻る）。派生でない物の revert は既定値に戻す
+- 元から部品を外すのは `removeComponent`、足すのは `addComponent`。切り離す（ふつうのプレハブにする）のは `setPrefab` の `base: null`（値は変わらない）
+- 地図の `@x ← @元` が派生、`変:` が元から変えた所。受け継いだ値にロックが付いていると、元を変えてその値が変わる編集は止まる
+- 数値だけが違う行がたくさん並ぶなら、派生より表（table）が向く
+
 ## sprite: 画像・コマ・動き
 部品: Sprite Animator
 - 画像はプロジェクト内のパスで指定する（`Sprite.image: "assets/x.png"`）。コマは `Sprite.frame`（番号か名前）、動きは `Animator.clip`（標準のシステム std.animator が進める）

@@ -15,7 +15,8 @@ import { ROW_ID, type TableDoc } from '../core/table.ts';
 import { appendLog, localTime, lockedHits, markTouched, movePrefixTouched, moveTouched, readLocks as readLockFile, readLog, readTouched, writeLocks, type Actor, type LockMark } from './oplog.ts';
 import { agesHome, lockDiff, verifyLocks, type LockIntegrity } from './seal.ts';
 import { scanAssets, type AssetInfo } from './assets.ts';
-import { assetRefs, codeRefs, codeSceneRefs, isUnder } from '../core/assets.ts';
+import { assetRefs, codePrefabRefs, codeRefs, codeSceneRefs, isUnder } from '../core/assets.ts';
+import { resolvePrefab } from '../core/variant.ts';
 import { checkWindows, loadWindows, unlistedWindows, withinEdits, type WindowInfo } from './windows.ts';
 import { Journal, inverseFiles, type DocState, type FileMove, type TxRecord } from './journal.ts';
 import { revert as revertValue, same } from '../core/revert.ts';
@@ -306,7 +307,7 @@ export class Project {
       for (const cname of Object.keys(comps)) for (const f of Object.keys(this.registry.components.get(cname)?.fields ?? {})) push(`${base}.${cname}.${f}`);
     };
     for (const sc of this.docs.scenes.values()) for (const e of sc.entities) holder(`${sc.name}#${e.id}`, e.components);
-    for (const pf of this.docs.prefabs.values()) holder(`@${pf.name}`, pf.components);
+    for (const pf of this.registry.allPrefabs()) holder(`@${pf.name}`, pf.components);
     for (const t of this.docs.tables.values()) for (const r of t.rows) for (const c of Object.keys(this.registry.tables.get(t.name)?.columns ?? {})) push(`$${t.name}.${r.id}.${c}`);
     for (const a of this.assets) { if (a.kind === 'image') push(`sheet:${a.path}`); push(`file:${a.path}`); }
     return out;
@@ -414,8 +415,8 @@ export class Project {
             errs.push(`${where}.${name}.${k}: プレハブ ${values[k]} はありません${suggest(String(values[k]), [...this.docs.prefabs.keys()])}`);
           }
           // 音量の区分を指す値は、AudioBus の付いたプレハブであること
-          if ((name === 'Sound' && k === 'bus' || name === 'AudioBus' && k === 'parent') && typeof values[k] === 'string' && values[k] && this.docs.prefabs.has(values[k] as string) && !this.docs.prefabs.get(values[k] as string)!.components.AudioBus) {
-            const buses = [...this.docs.prefabs.values()].filter((p) => p.components.AudioBus).map((p) => p.name);
+          if ((name === 'Sound' && k === 'bus' || name === 'AudioBus' && k === 'parent') && typeof values[k] === 'string' && values[k] && this.docs.prefabs.has(values[k] as string) && !this.registry.findPrefab(values[k] as string)?.components.AudioBus) {
+            const buses = this.registry.allPrefabs().filter((p) => p.components.AudioBus).map((p) => p.name);
             errs.push(`${where}.${name}.${k}="${values[k]}": 音量の区分は AudioBus の付いたプレハブです${buses.length ? `（ある区分: ${buses.join(', ')}）` : '（まだ区分がありません）'}`);
           }
           if (f.type === 'asset' && typeof values[k] === 'string' && values[k] && !assetPaths.has(values[k] as string) && !(f.kind === 'shader' && this.registry.shaders.has(values[k] as string))) {
@@ -495,10 +496,10 @@ export class Project {
       });
     }
     // 音量の区分の親子が輪になっていないこと
-    for (const p of this.docs.prefabs.values()) {
+    for (const p of this.registry.allPrefabs()) {
       if (!p.components.AudioBus) continue;
       const seen = new Set<string>([p.name]);
-      for (let cur = p.components.AudioBus.parent as string | undefined; cur; cur = this.docs.prefabs.get(cur)?.components.AudioBus?.parent as string | undefined) {
+      for (let cur = p.components.AudioBus.parent as string | undefined; cur; cur = this.registry.findPrefab(cur)?.components.AudioBus?.parent as string | undefined) {
         if (seen.has(cur)) { errs.push(`@${p.name}.AudioBus.parent: 区分の親子が輪になっています（${[...seen, cur].join(' → ')}）`); break; }
         seen.add(cur);
       }
@@ -506,7 +507,15 @@ export class Project {
     if (this.config.view.fit && !FIT_MODES.includes(this.config.view.fit)) {
       errs.push(`ages.project.json の view.fit="${this.config.view.fit}" は ${FIT_MODES.join(' | ')} のどれかです${suggest(this.config.view.fit, FIT_MODES)}`);
     }
-    for (const p of this.docs.prefabs.values()) check(`@${p.name}`, p.components);
+    for (const p of this.docs.prefabs.values()) {
+      if (!p.base) { check(`@${p.name}`, p.components); continue; }
+      // 派生: 元がたどれること・外した部品が元にあること。値は、書いた部品を元と重ねた形で確かめる
+      let r: PrefabDoc;
+      try { r = resolvePrefab(this.docs.prefabs, p.name); } catch (e) { errs.push((e as Error).message); continue; }
+      const base = this.registry.findPrefab(p.base);
+      for (const c of p.remove ?? []) if (!base?.components[c]) errs.push(`@${p.name}.remove: 元 @${p.base} に部品 ${c} はありません${suggest(c, Object.keys(base?.components ?? {}))}`);
+      check(`@${p.name}`, Object.fromEntries(Object.keys(p.components ?? {}).map((c) => [c, r.components[c] ?? p.components[c]])));
+    }
     if (!this.docs.scenes.has(this.config.startScene)) errs.push(`開始シーン ${this.config.startScene} がありません`);
     for (const [image, sheet] of this.docs.sheets) {
       const sp = sheetPathOf(image);
@@ -577,9 +586,11 @@ export class Project {
         : op.op === 'setSheet' || op.op === 'setFrame' || op.op === 'setClip' ? `sheet:${op.image}`
         : op.op === 'removeRow' || op.op === 'renameRow' ? `$${op.table}.${op.id}`
         : op.op === 'dockUI' || op.op === 'attachUI' ? `${op.target}.UI`
+        : op.op === 'removePrefab' ? `@${op.name}`
+        : op.op === 'revert' ? op.path
         : null;
-    // シーンを消す・名前を変えると、その中のロック・★の住所も変わる
-    const sceneKeys = (op: Op, rec: Record<string, unknown>) => (op.op === 'removeScene' || op.op === 'renameScene' ? Object.keys(rec).filter((k) => k.startsWith(op.name + '#')) : []);
+    // シーン・プレハブを消す・名前を変えると、その中のロック・★の住所も変わる
+    const sceneKeys = (op: Op, rec: Record<string, unknown>) => { const pre = docPrefix(op); return pre ? Object.keys(rec).filter((k) => k.startsWith(pre)) : []; };
     // アセットの移動・削除で一緒に動く画像の切り方（sheet:<画像>）と、ロックされたファイル（file:<場所>）
     const assetSheets = (op: Op) => {
       if (op.op !== 'moveAsset' && op.op !== 'removeAsset') return [];
@@ -589,7 +600,7 @@ export class Project {
     };
     const keeper = isKeeper(actor);
     // 人がエディタで行っても、ロックの住所が付いて動くだけで値の意味は変わらない操作（名前の変更・場所の変更）
-    const STRUCTURAL = new Set(['renameRow', 'renameScene', 'moveAsset']);
+    const STRUCTURAL = new Set(['renameRow', 'renameScene', 'renamePrefab', 'moveAsset']);
     if (actor.kind === 'ai' && !this.integrity.ok) {
       throw new Error(`🔒 ロックの記録が人の封印と一致しないため、AIからの編集を止めています（${this.integrity.reason}）。ユーザーにロックマネージャーでの確認を頼んでください`);
     }
@@ -647,6 +658,7 @@ export class Project {
     // コードの中で場所を書いているアセットは、消すと動かなくなる
     const code = ops.some((o) => o.op === 'moveAsset' || o.op === 'removeAsset') ? await this.codeRefs() : new Map<string, string[]>();
     const codeScenes = ops.some((o) => o.op === 'removeScene' || o.op === 'renameScene') ? codeSceneRefs(await this.codeFiles()) : new Map<string, string[]>();
+    const codePrefabs = ops.some((o) => o.op === 'removePrefab' || o.op === 'renamePrefab') ? codePrefabRefs(await this.codeFiles()) : new Map<string, string[]>();
     const result = applyOps(this.docs, this.registry, ops);
     const rollback = (message: string): never => {
       this.docs.scenes = backup.scenes;
@@ -672,6 +684,13 @@ export class Project {
       if (op.op === 'removeScene') rollback(`シーン ${op.name} はコードの中で使われているので消せません: ${at.join(', ')}。先にコードを直してください`);
       else warnings.push(`シーン ${op.name} はコードの中にも書かれています（${at.join(', ')}）。コードは直していないので、${op.to} に書き換えてください`);
     }
+    for (const op of ops) {
+      if (op.op !== 'removePrefab' && op.op !== 'renamePrefab') continue;
+      const at = codePrefabs.get(op.name);
+      if (!at) continue;
+      if (op.op === 'removePrefab') rollback(`プレハブ ${op.name} はコードの中で使われているので消せません: ${at.join(', ')}。先にコードを直してください`);
+      else warnings.push(`プレハブ ${op.name} はコードの中にも書かれています（${at.join(', ')}）。コードは直していないので、${op.to} に書き換えてください`);
+    }
     if (result.files.length) {
       const moved = (path: string): string | null | undefined => {
         let p: string | null = path;
@@ -693,8 +712,9 @@ export class Project {
     // 操作の結果として連動して変わる値（コマの名前の変更で書き換わる参照など）にも、ロックは効く。
     // 人（ロックマネージャー以外）は、意味を保つための自動の直し（場所の変更に合わせた参照など）だけを通す
     if (actor.kind === 'human' && !keeper && !fromWindow) {
-      const moved = (c: Change) => (typeof c.to === 'string' && c.to.startsWith('renamed:')) || /^(file|scene):|^config\./.test(c.path);
-      const hits = [...new Set(result.changes.filter((c) => !c.auto && !moved(c)).flatMap((c) => lockedHits(locks, sheetRoot(c.path.replace(/\[\d+,\s*\d+\]$/, '')))))];
+      const moved = (c: Change) => (typeof c.to === 'string' && c.to.startsWith('renamed:')) || /^(file|scene|prefab):|^config\./.test(c.path);
+      // 派生が受け継いでいる値（via）は、元を変えると一緒に変わるので、自動の直しでもロックが効く
+      const hits = [...new Set(result.changes.filter((c) => (!c.auto || c.via) && !moved(c)).flatMap((c) => lockedHits(locks, sheetRoot(c.path.replace(/\[\d+,\s*\d+\]$/, '')))))];
       if (hits.length) rollback(`🔒 ロックされています: ${hits.join(', ')}。変えるならロックマネージャーで（🔒 を押すと開きます）`);
     }
     if (actor.kind === 'ai' || viaWindow) {
@@ -757,12 +777,14 @@ export class Project {
           }
         }
       }
-      // シーンの名前を変えたら、その中のロックも付け替える。消したらロックも外す
+      // シーン・プレハブの名前を変えたら、その中のロックも付け替える。消したらロックも外す
       for (const op of ops) {
-        if (op.op !== 'removeScene' && op.op !== 'renameScene') continue;
+        const pre = docPrefix(op);
+        if (!pre) continue;
+        const to = docPrefix(op, true);
         for (const k of Object.keys(locks)) {
-          if (!k.startsWith(op.name + '#')) continue;
-          if (op.op === 'renameScene') locks[op.to + k.slice(op.name.length)] = locks[k];
+          if (!k.startsWith(pre)) continue;
+          if (to) locks[to + k.slice(pre.length)] = locks[k];
           delete locks[k];
           changed = true;
         }
@@ -788,7 +810,7 @@ export class Project {
       if (changed) await writeLocks(this.dir, actor, locks);
     }
     if (result.files.length) await moveTouched(this.dir, result.files);
-    for (const op of ops) if (op.op === 'removeScene' || op.op === 'renameScene') await movePrefixTouched(this.dir, op.name + '#', op.op === 'renameScene' ? op.to + '#' : null);
+    for (const op of ops) { const pre = docPrefix(op); if (pre) await movePrefixTouched(this.dir, pre, docPrefix(op, true)); }
     if (warnings.length) result.warnings = warnings;
     return result;
   }
@@ -809,6 +831,10 @@ export class Project {
     const files = await this.codeFiles();
     for (const [name, at] of codeSceneRefs(files)) {
       if (!this.docs.scenes.has(name)) errs.push(`${at.join(', ')}: goto('${name}') のシーン ${name} はありません${suggest(name, [...this.docs.scenes.keys()])}`);
+    }
+    // spawn('名前')・sound.play('名前') がプレハブを指していること
+    for (const [name, at] of codePrefabRefs(files)) {
+      if (!this.docs.prefabs.has(name)) errs.push(`${at.join(', ')}: プレハブ ${name} はありません${suggest(name, [...this.docs.prefabs.keys()])}`);
     }
     // t('名前') が表 $text の行を指していること
     const keys = new Set(this.docs.tables.get('text')?.rows.map((r) => String(r.id)) ?? []);
@@ -1190,10 +1216,18 @@ function docLabel(key: string): string {
   return key;
 }
 
+/** シーン・プレハブを消す・名前を変える操作なら、その中の住所の頭（main# / @enemy.）。after なら変えた後の頭（消したなら null） */
+function docPrefix(op: Op, after = false): string | null {
+  if (op.op === 'removeScene' || op.op === 'renameScene') return after ? (op.op === 'renameScene' ? op.to + '#' : null) : op.name + '#';
+  if (op.op === 'removePrefab' || op.op === 'renamePrefab') return after ? (op.op === 'renamePrefab' ? `@${op.to}.` : null) : `@${op.name}.`;
+  return null;
+}
+
 /** 名前の変更・場所の変更の、逆の操作 */
 function inverseOp(op: Op): Op {
   if (op.op === 'renameRow') return { op: 'renameRow', table: op.table, id: op.to, to: op.id };
   if (op.op === 'renameScene') return { op: 'renameScene', name: op.to, to: op.name };
+  if (op.op === 'renamePrefab') return { op: 'renamePrefab', name: op.to, to: op.name };
   if (op.op === 'moveAsset') return { op: 'moveAsset', from: op.to, to: op.from };
   throw new Error(`${op.op} の逆の操作はありません`);
 }

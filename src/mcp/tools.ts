@@ -68,7 +68,7 @@ export function makeTools(defaultProject: string): Tool[] {
     },
     {
       name: 'ages_patch',
-      description: '複数の操作をまとめて行う（すべて成功するか、何も変えないか）。例 [{"op":"set","path":"main#player.Player.speed","value":5}]。op の一覧と書き方は ages_schema の ops（足す・消す・動かす・名前を変える・コマ・シーン・アセットの移動・UI の配置 dockUI / attachUI など）',
+      description: '複数の操作をまとめて行う（すべて成功するか、何も変えないか）。例 [{"op":"set","path":"main#player.Player.speed","value":5}]。op の一覧と書き方は ages_schema の ops（足す・消す・動かす・名前を変える・コマ・シーン・プレハブと派生・アセットの移動・UI の配置 dockUI / attachUI など）',
       inputSchema: { type: 'object', properties: { ...dirProp, ops: { type: 'array', items: { type: 'object' } }, force: { type: 'boolean' } }, required: ['ops'] },
       run: (a, dir) => cmdPatch(dir, a.ops as Op[], !!a.force),
     },
