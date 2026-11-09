@@ -73,14 +73,16 @@ export function findInProject(p: Project, query: string, guide: Map<string, Guid
 
   // シーンと物（同じ ID・同じ部品の物がいくつものシーンにあれば1行にまとめる）
   const ents = new Map<string, { id: string; line: string; scenes: string[] }>();
-  for (const s of p.docs.scenes.values()) {
+  for (const raw of p.docs.scenes.values()) {
+    const s = p.resolvedScene(raw);
     if (hit(s.name, s.desc)) add(`シーン:${s.name}`, `シーン ${s.name}（${s.entities.length}体）${s.desc ? ' — ' + cut(s.desc) : ''}`);
     for (const e of s.entities) {
-      if (!hit(`#${e.id}`, e.name, e.tags?.join(' '))) continue;
-      const key = `${e.id}[${Object.keys(e.components).join(' ')}]`;
+      if (!hit(`#${e.id}`, e.name, e.tags?.join(' '), e.prefab ? `@${e.prefab}` : '')) continue;
+      const inst = e.prefab ? ` ←@${e.prefab}` : '';
+      const key = `${e.id}[${Object.keys(e.components).join(' ')}]${inst}`;
       const prev = ents.get(key);
       if (prev) prev.scenes.push(s.name);
-      else ents.set(key, { id: e.id, line: `#${e.id} "${e.name}" [${Object.keys(e.components).join(' ')}]${e.tags?.length ? ` tags:${e.tags.join(',')}` : ''}`, scenes: [s.name] });
+      else ents.set(key, { id: e.id, line: `#${e.id} "${e.name}"${inst} [${Object.keys(e.components).join(' ')}]${e.tags?.length ? ` tags:${e.tags.join(',')}` : ''}`, scenes: [s.name] });
     }
   }
   for (const { id, line, scenes } of ents.values()) add(`${scenes[0]}#${id}`, `${scenes[0]}${line}${scenes.length > 1 ? `（ほか${scenes.length - 1}シーンにも: ${scenes.slice(1).join(',')}）` : ''}`);

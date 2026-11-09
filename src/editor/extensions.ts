@@ -30,7 +30,7 @@ export function makeApi(app: App, win: string): EditorApi {
       let holder: { components: Record<string, Record<string, unknown>> } | undefined;
       if (a.kind === 'prefab') {
         try { holder = resolvePrefab(new Map(Object.entries(app.state.prefabs)), a.doc); } catch { holder = undefined; }
-      } else holder = app.state.scenes[a.doc]?.entities.find((e) => e.id === a.entity);
+      } else holder = app.sceneView(a.doc)?.entities.find((e) => e.id === a.entity);
       const comp = a.component ? holder?.components[a.component] : undefined;
       if (!a.field) return comp ?? holder;
       return comp && a.field in comp ? comp[a.field] : app.registry.components.get(a.component!)?.fields[a.field]?.default;

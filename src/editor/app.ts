@@ -12,6 +12,7 @@ import { assetRefs, preloadSet } from '../core/assets.ts';
 import { shaderMap, type ShaderDef } from '../core/shader.ts';
 import { LocalStore } from '../core/save.ts';
 import { languagesOf } from '../core/i18n.ts';
+import { resolveEntity } from '../core/variant.ts';
 
 export interface LockMark { who: string; t: string; value: unknown; note?: string }
 export interface TouchMark { who: string; t: string }
@@ -148,6 +149,25 @@ export class App {
     if (!this.scene || !s.scenes[this.scene]) this.scene = s.config.startScene in s.scenes ? s.config.startScene : Object.keys(s.scenes)[0] ?? '';
     this.rebuildPreview();
     this.emit('change');
+  }
+
+  private views = new WeakMap<object, Map<string, SceneDoc>>();
+  /**
+   * シーンの物を、プレハブのインスタンスはプレハブと重ねた中身にしたもの（読むだけ。値を見せる・動かす位置を求めるとき）。
+   * 書くときの住所はそのまま（scene#id.部品.値）でよい（変えた値だけがインスタンスの値として残る）
+   */
+  sceneView(name = this.scene): SceneDoc | undefined {
+    const s = this.state?.scenes[name];
+    if (!s) return undefined;
+    let m = this.views.get(this.state);
+    if (!m) { m = new Map(); this.views.set(this.state, m); }
+    let v = m.get(name);
+    if (!v) {
+      const prefabs = new Map(Object.entries(this.state.prefabs));
+      v = { ...s, entities: s.entities.map((e) => { try { return resolveEntity(prefabs, e); } catch { return e; } }) };
+      m.set(name, v);
+    }
+    return v;
   }
 
   rebuildPreview(): void {
