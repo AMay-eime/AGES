@@ -174,7 +174,10 @@ export class UiState {
     this.cancelled = false;
     this.rects = layoutUI(world, viewW, viewH);
     if (!this.rects.size) { this.focus = this.pressed = this.hover = null; this.down = false; this.over = false; return; }
-    const idx = new Map([...world.entities.keys()].map((k, i) => [k, i]));
+    // 入った順（同じ層・順番のときの手前）。数えるのは UI の物だけ（弾など物が多くても大きな表を作らない）
+    const idx = new Map<string, number>();
+    let order = 0;
+    for (const id of world.entities.keys()) { if (this.rects.has(id)) idx.set(id, order); order++; }
     const ents = [...this.rects.keys()].map((id) => world.get(id)!).filter(Boolean);
     // 位置を Transform に書く（ゲームのコードから読めるように。中心）
     for (const e of ents) {

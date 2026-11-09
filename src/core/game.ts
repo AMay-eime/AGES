@@ -3,7 +3,8 @@ import { World, type Entity } from './world.ts';
 import { Rng } from './rng.ts';
 import { Input, actionsFromRows, type FrameInput } from './input.ts';
 import type { Registry } from './registry.ts';
-import type { SceneDoc, ProjectConfig } from './docs.ts';
+import type { SceneDoc, ProjectConfig, PrefabDoc } from './docs.ts';
+import { baseChain } from './variant.ts';
 import { DEFAULT_SOUND, isSoundPath, playCmd, type AudioCmd, type BusDef, type SoundApi, type SoundSettings } from './audio.ts';
 import { suggest } from './schema.ts';
 import type { RowOf, TableDef, TableView } from './table.ts';
@@ -26,7 +27,7 @@ export interface Ctx {
   time: number;
   view: { width: number; height: number };
   spawn(prefab: string, overrides?: Record<string, Record<string, unknown>>): Entity;
-  /** プレハブの中身を読む（派生は元と重ねた形、書いていない値は既定値。ないなら undefined）。読むだけで、書き換えても何も変わらない */
+  /** プレハブの中身を読む（派生は元と重ねた形、書いていない値は既定値。ないなら undefined）。読むだけ（凍らせてあり、書き換えるとエラー）。プレハブが変わるまで同じものを返すので、毎フレーム呼んでも軽い */
   prefab(name: string): { name: string; tags: string[]; components: Record<string, Record<string, any>> } | undefined;
   destroy(id: string): void;
   /** 出来事を記録する（例: emit('enemyKilled')）。ages run の要約に回数が載る */
@@ -269,13 +270,21 @@ export class Game {
       view: { width: config.view.width, height: config.view.height },
       spawn: (p, o) => this.world.spawn(p, o),
       prefab: (name) => {
+        // プレハブの中身（と派生の元）が変わるまでは作り置きを返す。変わると patch・エディタは中身を新しい物に差しかえるので、物が同じかで見分ける
+        const map = this.registry.prefabs;
+        const hit = this.prefabCache.get(name);
+        if (hit && hit.map === map && hit.chain.every((d) => map.get(d.name) === d)) return hit.value;
         const doc = this.registry.findPrefab(name);
         if (!doc) return undefined;
+        let chain: PrefabDoc[];
+        try { chain = baseChain(map, name); } catch { chain = [map.get(name)!]; }
         const components: Record<string, Record<string, any>> = {};
         for (const [c, data] of Object.entries(doc.components)) {
           try { components[c] = this.registry.build(c, structuredClone(data)); } catch { components[c] = structuredClone(data); }
         }
-        return { name: doc.name, tags: [...(doc.tags ?? [])], components };
+        const value = deepFreeze({ name: doc.name, tags: [...(doc.tags ?? [])], components });
+        this.prefabCache.set(name, { map, chain, value });
+        return value;
       },
       destroy: (id) => this.world.destroy(id),
       shake: (amount, id) => {
@@ -400,7 +409,8 @@ export class Game {
       if (!s) return [];
       const out: string[] = [];
       for (const e of this.world.entities.values()) {
-        if (e.id === skip || !this.world.isAlive(e.id) || !inGroup(e, group)) continue;
+        // 当たりのない物・違うグループを先に外す（形を作るのは候補だけ）
+        if (!e.c.Collider || e.id === skip || !inGroup(e, group) || !this.world.isAlive(e.id)) continue;
         const o = shapeOf(e);
         if (o && overlap(s, o)) out.push(e.id);
       }
@@ -467,6 +477,8 @@ export class Game {
   }
   /** ゲームの中で変えた区分の音量（'' は全体） */
   private busVolumes = new Map<string, number>();
+  /** ctx.prefab の作り置き（プレハブの表と、派生の元までの中身の物で見分ける） */
+  private prefabCache = new Map<string, { map: Map<string, PrefabDoc>; chain: PrefabDoc[]; value: { name: string; tags: string[]; components: Record<string, Record<string, any>> } }>();
 
   private makeSoundApi(): SoundApi {
     const f = () => this.frame;
@@ -681,4 +693,13 @@ export class Game {
   snapshot() {
     return { frame: this.frame, rng: this.rng.state, world: this.world.snapshot(), counts: Object.fromEntries(this.counts), scene: { name: this.sceneName, frame: this.sceneFrame, params: this.sceneParams }, tweens: structuredClone(this.tweens), ui: this.ui.snapshot(), hits: this.hits.snapshot(), save: this.save.all() };
   }
+}
+
+/** 中まで凍らせる（ctx.prefab の作り置きを、ゲームのコードが書き換えられないように） */
+function deepFreeze<T>(v: T): T {
+  if (v && typeof v === 'object' && !Object.isFrozen(v)) {
+    Object.freeze(v);
+    for (const x of Object.values(v as Record<string, unknown>)) deepFreeze(x);
+  }
+  return v;
 }
