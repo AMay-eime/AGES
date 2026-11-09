@@ -417,6 +417,14 @@ export class App {
     void Promise.all(paths.map(each)).then(() => { if (play.loading === loading) play.loading = undefined; this.emit('frame'); });
   }
 
+  /** 再生の速さ（1 が実時間。拡張の api.speed・上のバーの ×1） */
+  private speed = 1;
+  get playSpeed(): number { return this.speed; }
+  set playSpeed(v: number) {
+    this.speed = Math.max(0.1, Math.min(8, Number(v) || 1));
+    this.emit('play');
+  }
+
   togglePause(): void {
     if (!this.play) return;
     this.play.paused = !this.play.paused;

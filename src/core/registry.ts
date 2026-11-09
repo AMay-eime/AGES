@@ -37,17 +37,44 @@ export function defineSystem<T extends SystemDef>(def: T): T {
   return def;
 }
 
+/** ゲーム独自の検証が読むもの（読むだけ。派生・インスタンスは重ねた形、表は既定値で埋めた形） */
+export interface CheckView {
+  table(name: string): TableView;
+  prefab(name: string): PrefabDoc | undefined;
+  /** プレハブ（tag を書くと、そのタグを持つものだけ） */
+  prefabs(tag?: string): PrefabDoc[];
+  scene(name: string): SceneDoc | undefined;
+  readonly scenes: string[];
+}
+
+/** ゲーム独自の検証（ages check とエディタの ⚠ に出る。編集は止めない） */
+export interface CheckDef {
+  name: string;
+  /** 何を確かめるか（1行） */
+  desc: string;
+  /** 見つけた問題を1つ1行で返す（住所を書くと、直す所が分かる。例 '$story_cells.c3_4: 同じ位置に2つのマス'） */
+  run(view: CheckView): string[];
+}
+
+export function defineCheck(def: CheckDef): CheckDef {
+  return def;
+}
+
 /** game/index.ts が export する形 */
 export interface GameModule {
   components: ComponentDef[];
   systems: SystemDef[];
   /** 表の形（defineTable）。中身は data/<名前>.table.json */
   tables?: TableDef[];
+  /** ゲーム独自の検証（defineCheck） */
+  checks?: CheckDef[];
 }
 
 export class Registry {
   components = new Map<string, ComponentDef>();
   systems: SystemDef[] = [];
+  /** ゲーム独自の検証 */
+  checks: CheckDef[] = [];
   prefabs = new Map<string, PrefabDoc>();
   /** シーン（名前 → 中身）。ctx.scene.goto で切り替える先 */
   scenes = new Map<string, SceneDoc>();
@@ -99,6 +126,11 @@ export class Registry {
     }
     // 標準のシステムはゲームのシステムの後に動く
     for (const s of STD_SYSTEMS) r.systems.push(s);
+    for (const c of mod.checks ?? []) {
+      if (typeof c?.run !== 'function' || !c.name) throw new Error('checks には defineCheck({ name, desc, run }) を並べます');
+      if (r.checks.some((x) => x.name === c.name)) throw new Error(`検証 ${c.name} が2回定義されています`);
+      r.checks.push(c);
+    }
     for (const p of prefabs) r.prefabs.set(p.name, p);
     return r;
   }

@@ -9,6 +9,8 @@ import { h, modal, toast } from './ui/dom.ts';
 import { BUILTIN_EXTENSIONS } from './builtin/index.ts';
 import { createStage } from './stage.ts';
 import { inputWidget } from './ui/inspector.ts';
+import { SaveData } from '../core/save.ts';
+import { ASSET_MIME, PREFAB_MIME } from './ui/assets.ts';
 
 export interface LoadedExtension {
   ext: EditorExtension;
@@ -63,7 +65,26 @@ export function makeApi(app: App, win: string): EditorApi {
     ask: (title, value = '') => askText(title, value),
     input: (field, value, onChange) => inputWidget(app, field, value, onChange),
     stage: (el, opts) => createStage(app, el, opts),
-    on: ((ev: string, fn: (d?: unknown) => void) => app.on(ev, fn)) as EditorApi['on'],
+    get game() { return app.play?.game ?? null; },
+    pause: (paused) => {
+      if (!app.play) return;
+      if (paused === undefined || paused !== app.play.paused) app.togglePause();
+    },
+    step: (frames = 1) => {
+      if (!app.play) app.stepOnce(); else { if (!app.play.paused) app.togglePause(); app.stepOnce(); }
+      for (let i = 1; i < frames && app.play; i++) app.stepOnce();
+    },
+    get speed() { return app.playSpeed; },
+    set speed(v: number) { app.playSpeed = v; },
+    get save() {
+      const data = () => app.play?.game.save ?? new SaveData(app.saveStore());
+      return { read: (k: string) => data().read(k), write: (k: string, v: unknown) => data().write(k, v), delete: (k: string) => data().delete(k), keys: () => data().keys() };
+    },
+    schema: (name) => (name.startsWith('$') ? app.registry.tables.get(name.slice(1)) : app.registry.components.get(name)),
+    modal: (build) => { modal(build); },
+    show: (extId, args) => { app.emit('showPanel', `win:${extId}`); app.emit(`show:${extId}`, args); },
+    dragTypes: { asset: ASSET_MIME, prefab: PREFAB_MIME },
+    on: ((ev: string, fn: (d?: unknown) => void) => app.on(ev === 'show' ? `show:${win.replace(/^window:/, '')}` : ev, fn)) as EditorApi['on'],
     h: h as unknown as EditorApi['h'],
   };
 }
