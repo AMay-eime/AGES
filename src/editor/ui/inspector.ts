@@ -4,7 +4,7 @@ import type { App } from '../app.ts';
 import type { Field } from '../../core/schema.ts';
 import { ASSET_LABEL, brief, defaultOf, matrixSize, typeOf, variantDefault, type ListField, type OneOfField, type StructField } from '../../core/schema.ts';
 import { formatSub, getIn, setIn, type EntityData, type PrefabDoc } from '../../core/docs.ts';
-import { resolveEntity, resolvePrefab } from '../../core/variant.ts';
+import { prefabChoices, resolveEntity, resolvePrefab } from '../../core/variant.ts';
 import type { Op } from '../../core/patch.ts';
 import { h, clear, time, modal, toast } from './dom.ts';
 import { findFrame, frameLabel, listFrames, type FrameRef, type SheetDef } from '../../core/sheet.ts';
@@ -15,6 +15,7 @@ import { ASSET_MIME } from './assets.ts';
 import { kindOf } from '../../core/assets.ts';
 import type { Panel } from './layout.ts';
 import { componentDrawersFor, fieldDrawerFor } from '../extensions.ts';
+import type { EditorApi, FieldView } from '../window-api.ts';
 
 interface Live { path: string; comp: string; field: string; set(v: unknown): void; el: HTMLElement }
 
@@ -26,17 +27,8 @@ export function inspectorPanel(app: App): Panel {
 
   // 拡張（欄・部品の見せ方）の後片付け。描き直すたびに呼ぶ
   let cleanups: (() => void)[] = [];
-  /** 拡張の mount を呼ぶ。失敗しても、インスペクタのほかの所は動かす */
-  const mountExt = (box: HTMLElement, id: string, mount: () => void | (() => void)) => {
-    try {
-      const c = mount();
-      if (typeof c === 'function') cleanups.push(c);
-    } catch (e) {
-      box.append(h('span', { style: 'color:var(--bad)', title: (e as Error).stack ?? '' }, `拡張 ${id} のエラー: ${(e as Error).message}`));
-    }
-  };
   const render = () => {
-    for (const c of cleanups) { try { c(); } catch (e) { console.error(e); } }
+    runCleanups(cleanups);
     cleanups = [];
     live = [];
     const sel = app.sel;
@@ -107,7 +99,7 @@ export function inspectorPanel(app: App): Panel {
             x.api.patch([{ op: 'set', path: `${base}.${cname}.${field}`, value: v }]);
           },
         };
-        mountExt(box, x.ext.id, () => drawer.mount(box, view, x.api));
+        mountExt(box, x.ext.id, () => drawer.mount(box, view, x.api), cleanups);
         return box;
       });
       const shown = entries.filter(([fname]) => !hidden.has(fname));
@@ -128,7 +120,6 @@ export function inspectorPanel(app: App): Panel {
             app.patch([{ op: 'set', path, value: v }]);
           }
         };
-        const wctx = { comp: cname, field: fname, holder: holder!.components };
         // リスト・構造体・どれか1つ: 中まで並べて編集する。変更は中の場所ごとの操作で送る（操作ログが細かく残る）
         const nestedEmit = (op: NestedOp) => {
           if (playing) {
@@ -139,6 +130,11 @@ export function inspectorPanel(app: App): Panel {
             render();
           } else app.patch([toOp(path, op)]);
         };
+        // 拡張の欄の見せ方からの変更（入れ子の中も）: 再生中はその場の値に、止めているときは拡張の api で
+        const extSet = (p: string, sub: (string | number)[], v: unknown, final: boolean, api: EditorApi) => {
+          if (playing) { if (!sub.length) commit(v, final); else if (final) nestedEmit({ kind: 'set', sub, value: v }); } else if (final) void api.patch([{ op: 'set', path: p, value: v }]);
+        };
+        const wctx: Ctx = { comp: cname, field: fname, holder: holder!.components, ext: { playing, cleanups, set: extSet } };
         // シェーダーの値: 選んだシェーダーの uniform を並べる
         const pf = f.type === 'params' ? app.registry.shaderParams(values[f.of]) : null;
         const standard = () => f.type === 'matrix'
@@ -147,22 +143,8 @@ export function inspectorPanel(app: App): Panel {
           : isNested(f) ? { el: nestedWidget(app, f, value, path, [], nestedEmit, wctx), set: () => {} }
           : widget(app, f, value, commit, wctx);
         // 欄の見せ方（拡張）があれば、それで作る
-        const fd = fieldDrawerFor(app, path, cname, fname, f.type);
-        let w: { el: HTMLElement; set(v: unknown): void };
-        if (fd) {
-          const box = h('div', { class: 'ctl', 'data-ext': fd.x.ext.id });
-          const view = {
-            path, component: cname, field: fname, def: f, value, isDefault: !has, locked: !!lock, playing, holder: holder!.components,
-            set: (v: unknown, final = true) => {
-              if (lock) { toast(`🔒 ${path} はロックされています`, 'lock'); return; }
-              if (playing) commit(v, final);
-              else if (final) fd.x.api.patch([{ op: 'set', path, value: v }]);
-            },
-            standard: () => { const st = standard().el; st.style.flex = '1'; return st; },
-          };
-          mountExt(box, fd.x.ext.id, () => fd.drawer.mount(box, view, fd.x.api));
-          w = { el: box, set: () => {} };
-        } else w = standard();
+        const drawn = drawnField(app, { path, f, value, isDefault: !has, sub: [], ctx: wctx, standard: () => standard().el });
+        const w: { el: HTMLElement; set(v: unknown): void } = drawn ? { el: drawn, set: () => {} } : standard();
         // ロックされた値は、ここでは見るだけ（変えるのはロックマネージャーで）
         if (lock) { w.el.setAttribute('inert', ''); w.el.classList.add('locked-value'); }
         const lockBtn = h('button', {
@@ -175,7 +157,7 @@ export function inspectorPanel(app: App): Panel {
         const over = variantOf && own(cname, fname) && !!app.state.prefabs[variantOf] ? true : false;
         const revert = over && !lock ? h('button', { class: 'icon tiny', title: `元（@${variantOf}）の値に戻す`, onclick: () => app.patch([{ op: 'revert', path }]) }, '↺') : null;
         const row = h('div', {
-          class: `field ${isNested(f) || f.type === 'params' ? 'wide' : ''} ${has ? '' : 'default'} ${touched ? 'touched' : ''} ${lock ? 'locked' : ''} ${over ? 'override' : ''}`,
+          class: `field ${isWide(f) ? 'wide' : ''} ${has ? '' : 'default'} ${touched ? 'touched' : ''} ${lock ? 'locked' : ''} ${over ? 'override' : ''}`,
         }, h('label', { title: `${fname}: ${brief(f)}${f.desc ? '\n' + f.desc : ''}${touched ? `\n★ ${touched.who} が ${time(touched.t)} に調整` : ''}${variantOf ? (over ? `\n${what}で変えた値（元 @${variantOf} から）` : `\n元 @${variantOf} から受け継いだ値`) : has ? '' : '\n（省略中: 既定値）'}` }, revert, fname), w.el, lockBtn);
         live.push({ path, comp: cname, field: fname, set: w.set, el: row });
         return row;
@@ -276,7 +258,89 @@ function instanceBar(app: App, target: string, e: EntityData): HTMLElement | nul
     h('button', { class: 'tiny', title: 'プレハブから切り離して、今の値をまるごと持つふつうの物にする（値は変わらない）', onclick: () => app.patch([{ op: 'linkPrefab', target, prefab: null }]) }, '切り離す'));
 }
 
-export interface Ctx { comp: string; field: string; holder: Record<string, Record<string, unknown>> }
+export interface Ctx {
+  comp: string;
+  field: string;
+  holder: Record<string, Record<string, unknown>>;
+  /** 拡張の欄の見せ方を使う（入れ子の中も）。ないなら標準の欄だけ（api.input） */
+  ext?: ExtCtx;
+}
+
+/** 拡張の欄の見せ方を使うときの決まり（インスペクタ・表のエディタが渡す） */
+export interface ExtCtx {
+  playing: boolean;
+  /** 表の欄なら、その行（既定値で埋めた値） */
+  row?: { table: string; id: string; values: Record<string, unknown> };
+  /** 拡張の mount の後片付け（描き直すときに呼ぶ） */
+  cleanups: (() => void)[];
+  /** 見せ方の欄から値を変える（p は欄の住所、sub は一番外の欄からの場所。api は拡張のもの） */
+  set(p: string, sub: (string | number)[], v: unknown, final: boolean, api: EditorApi): void;
+}
+
+/** 欄を2段（名前の下に中身）に並べる型 */
+const isWide = (f: Field) => isNested(f) || f.type === 'params' || (f.type === 'string' && !!f.multiline);
+
+/** 拡張の mount を呼ぶ。失敗しても、ほかの所は動かす */
+export function mountExt(box: HTMLElement, id: string, mount: () => void | (() => void), cleanups: (() => void)[]): void {
+  try {
+    const c = mount();
+    if (typeof c === 'function') cleanups.push(c);
+  } catch (e) {
+    box.append(h('span', { style: 'color:var(--bad)', title: (e as Error).stack ?? '' }, `拡張 ${id} のエラー: ${(e as Error).message}`));
+  }
+}
+
+export function runCleanups(cleanups: (() => void)[]): void {
+  for (const c of cleanups) { try { c(); } catch (e) { console.error(e); } }
+}
+
+/** その住所（かその外・中）がロックされているか */
+export function lockAt(locks: Record<string, { who: string }>, path: string): { who: string } | undefined {
+  if (locks[path]) return locks[path];
+  for (const k of Object.keys(locks)) if (path.startsWith(k + '.') || path.startsWith(k + '[') || k.startsWith(path + '.') || k.startsWith(path + '[')) return locks[k];
+  return undefined;
+}
+
+/**
+ * 拡張の欄の見せ方（fields）で作った欄。当たる見せ方がない・ctx.ext がないなら null（標準の欄を使う）。
+ * インスペクタの欄・入れ子の中の欄・表のエディタの欄で同じものを使う
+ */
+export function drawnField(app: App, o: { path: string; f: Field; value: unknown; isDefault: boolean; sub: (string | number)[]; parent?: unknown; ctx: Ctx; standard(): HTMLElement }): HTMLElement | null {
+  const ext = o.ctx.ext;
+  if (!ext) return null;
+  const fd = fieldDrawerFor(app, o.path, o.f.type);
+  if (!fd) return null;
+  const lock = lockAt(app.state.locks, o.path);
+  const box = h('div', { class: 'ctl', 'data-ext': fd.x.ext.id });
+  const view: FieldView = {
+    path: o.path, component: o.ctx.comp, field: o.ctx.field, sub: o.sub, ...(o.sub.length ? { parent: o.parent } : {}), ...(ext.row ? { row: ext.row } : {}),
+    def: o.f, value: o.value, isDefault: o.isDefault, locked: !!lock, playing: ext.playing, holder: o.ctx.holder,
+    set: (v: unknown, final = true) => {
+      if (lock) { toast(`🔒 ${o.path} はロックされています`, 'lock'); return; }
+      ext.set(o.path, o.sub, v, final, fd.x.api);
+    },
+    standard: () => { const st = o.standard(); st.style.flex = '1 1 auto'; return st; },
+  };
+  mountExt(box, fd.x.ext.id, () => fd.drawer.mount(box, view, fd.x.api), ext.cleanups);
+  return box;
+}
+
+/** api.input: インスペクタと同じ標準の欄（拡張の見せ方は使わない）。入れ子は中の操作をこの値に当て、まるごと onChange に渡す */
+let inputSeq = 0;
+export function inputWidget(app: App, f: Field, value: unknown, onChange: (v: unknown, final: boolean) => void): HTMLElement {
+  const ctx: Ctx = { comp: '', field: '', holder: {} };
+  if (f.type === 'matrix' || f.type === 'params') return h('span', { class: 'muted' }, f.type === 'matrix' ? `行列${matrixSize(value)}（api.input では作れません）` : 'シェーダーの値（api.input では作れません）');
+  if (!isNested(f)) return widget(app, f, value, onChange, ctx).el;
+  const box = h('div', { class: 'ctl', style: 'display:block' });
+  const key = `input:${++inputSeq}`;
+  let cur = value;
+  let seen = false;
+  const draw = () => box.replaceChildren(nestedWidget(app, f, cur, key, [], (op) => { cur = applyNested(cur, op); onChange(structuredClone(cur), true); draw(); }, ctx));
+  draw();
+  // リストを開く・閉じるは描き直して見せる（ページから外れたら聞くのをやめる）
+  const off = app.on('nestToggle', () => { if (box.isConnected) { seen = true; draw(); } else if (seen) off(); });
+  return box;
+}
 
 /** 同じ物の Sprite の画像に付いているスプライトシート */
 function sheetOfHolder(app: App, holder: Ctx['holder'], comp = 'Sprite'): { image: string; sheet: SheetDef; w: number; h: number } | null {
@@ -322,11 +386,12 @@ export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, 
     case 'prefab': {
       // 音量の区分を選ぶ欄は、AudioBus の付いたプレハブだけを出す
       const busOnly = (ctx.comp === 'Sound' && ctx.field === 'bus') || (ctx.comp === 'AudioBus' && ctx.field === 'parent');
-      const prefabs = Object.values(app.state.prefabs).filter((p) => !busOnly || p.components.AudioBus).map((p) => p.name);
+      const prefabs = f.type === 'prefab' && f.tags?.length ? prefabChoices(new Map(Object.entries(app.state.prefabs)), f.tags)
+        : Object.values(app.state.prefabs).filter((p) => !busOnly || p.components.AudioBus).map((p) => p.name);
       const options = f.type === 'enum' ? f.options : [...(f.default === '' ? [''] : []), ...prefabs];
       if (f.type === 'prefab' && typeof value === 'string' && !options.includes(value)) options.push(value);
       const label = (o: string) => (o === '' ? (busOnly ? '（なし: 全体の直下）' : '（なし）') : o);
-      const sel = h('select', {}, options.map((o) => h('option', { value: o, selected: o === value }, label(o)))) as HTMLSelectElement;
+      const sel = h('select', { title: f.type === 'prefab' && f.tags?.length ? `タグ ${f.tags.join(' ')} のプレハブ` : '' }, options.map((o) => h('option', { value: o, selected: o === value }, label(o)))) as HTMLSelectElement;
       sel.addEventListener('change', () => commit(sel.value, true));
       wrap.append(sel);
       return { el: wrap, set: (v) => { sel.value = String(v); } };
@@ -491,6 +556,15 @@ export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, 
         wrap.append(sel);
         return { el: wrap, set: (v) => { sel.value = v === null ? '' : String(v); } };
       }
+      // 複数行の文字: 広い欄（離れたときに確定）
+      if (f.type === 'string' && f.multiline) {
+        const text = String(value ?? '');
+        const ta = h('textarea', { rows: Math.min(8, Math.max(2, text.split('\n').length)), style: 'flex:1;min-width:0;resize:vertical;font:inherit' }) as HTMLTextAreaElement;
+        ta.value = text;
+        ta.addEventListener('change', () => commit(ta.value, true));
+        wrap.append(ta);
+        return { el: wrap, set: (v) => { ta.value = String(v ?? ''); } };
+      }
       const t = h('input', { type: 'text', value: value === null ? '' : String(value) }) as HTMLInputElement;
       t.addEventListener('change', () => commit(f.type === 'ref' && t.value === '' ? null : t.value, true));
       wrap.append(t);
@@ -561,7 +635,7 @@ const round = (v: number) => (Number.isInteger(v) ? v : Math.round(v * 1000) / 1
 /** 入れ子の値への操作（sub はフィールドの中の場所） */
 export type NestedOp =
   | { kind: 'set'; sub: (string | number)[]; value: unknown }
-  | { kind: 'insert'; sub: (string | number)[]; value?: unknown }
+  | { kind: 'insert'; sub: (string | number)[]; value?: unknown; index?: number }
   | { kind: 'remove'; sub: (string | number)[] }
   | { kind: 'move'; sub: (string | number)[]; to: number };
 
@@ -570,7 +644,7 @@ export const isNested = (f: Field): f is ListField | StructField | OneOfField =>
 export function toOp(path: string, op: NestedOp): Op {
   const at = path + formatSub(op.sub);
   if (op.kind === 'set') return { op: 'set', path: at, value: op.value };
-  if (op.kind === 'insert') return { op: 'insert', path: at, ...(op.value !== undefined ? { value: op.value } : {}) };
+  if (op.kind === 'insert') return { op: 'insert', path: at, ...(op.value !== undefined ? { value: op.value } : {}), ...(op.index !== undefined ? { index: op.index } : {}) };
   if (op.kind === 'remove') return { op: 'removeItem', path: at };
   return { op: 'moveItem', path: at, to: op.to };
 }
@@ -578,7 +652,11 @@ export function toOp(path: string, op: NestedOp): Op {
 /** 実行中の値に、その場で操作を当てる */
 export function applyNested(top: unknown, op: NestedOp): unknown {
   if (op.kind === 'set') return setIn(top, op.sub, op.value);
-  if (op.kind === 'insert') return setIn(top, op.sub, [...((getIn(top, op.sub) as unknown[]) ?? []), op.value]);
+  if (op.kind === 'insert') {
+    const list = [...((getIn(top, op.sub) as unknown[]) ?? [])];
+    list.splice(op.index ?? list.length, 0, op.value);
+    return setIn(top, op.sub, list);
+  }
   const listSub = op.sub.slice(0, -1), i = op.sub[op.sub.length - 1] as number;
   const list = [...((getIn(top, listSub) as unknown[]) ?? [])];
   const [item] = list.splice(i, 1);
@@ -601,6 +679,10 @@ export const valueSummary = (f: Field, v: unknown): string => {
   }
   if (f.type === 'oneOf') return String((v as { kind?: string } | null)?.kind ?? '');
   if (f.type === 'struct') return '';
+  if (f.type === 'string' && f.multiline) {
+    const text = String(v ?? ''), first = text.split('\n')[0];
+    return (first.length > 24 ? first.slice(0, 22) + '…' : first) + (text.includes('\n') ? ' ⏎…' : '');
+  }
   const s = JSON.stringify(v) ?? '';
   return s.length > 24 ? s.slice(0, 22) + '…' : s;
 };
@@ -608,10 +690,12 @@ export const valueSummary = (f: Field, v: unknown): string => {
 /** リスト・構造体・どれか1つを、中まで編集する部品（入れ子にもなる） */
 export function nestedWidget(app: App, f: Field, value: unknown, path: string, sub: (string | number)[], emit: (op: NestedOp) => void, ctx: Ctx): HTMLElement {
   const key = path + formatSub(sub);
-  const leaf = (lf: Field, lv: unknown, lsub: (string | number)[]): HTMLElement => {
-    if (isNested(lf)) return nestedWidget(app, lf, lv, path, lsub, emit, ctx);
-    if (lf.type === 'matrix') return h('span', { class: 'muted' }, `行列${matrixSize(lv)}（JSON で編集）`);
-    return widget(app, lf, lv, (v, final) => { if (final) emit({ kind: 'set', sub: lsub, value: v }); }, ctx).el;
+  const leaf = (lf: Field, lv: unknown, lsub: (string | number)[], isDefault = false, parent?: unknown): HTMLElement => {
+    const standard = () => isNested(lf) ? nestedWidget(app, lf, lv, path, lsub, emit, ctx)
+      : lf.type === 'matrix' ? h('span', { class: 'muted' }, `行列${matrixSize(lv)}（JSON で編集）`)
+      : widget(app, lf, lv, (v, final) => { if (final) emit({ kind: 'set', sub: lsub, value: v }); }, ctx).el;
+    // 拡張の欄の見せ方（match の [] と .名前 で入れ子の中にも）
+    return drawnField(app, { path: path + formatSub(lsub), f: lf, value: lv, isDefault, sub: lsub, parent, ctx, standard }) ?? standard();
   };
   const row = (label: string, title: string, el: HTMLElement, ...tools: (HTMLElement | null)[]) =>
     h('div', { class: 'nest-row' }, h('span', { class: 'nest-label', title }, label), h('div', { class: 'nest-val' }, el), ...tools);
@@ -621,7 +705,9 @@ export function nestedWidget(app: App, f: Field, value: unknown, path: string, s
     const open = opened.has(key) || list.length <= 3;
     const toggle = h('button', { class: 'icon', title: open ? '閉じる' : '開く', onclick: () => { if (opened.has(key)) opened.delete(key); else opened.add(key); app.emit('nestToggle'); } }, open ? '▾' : '▸');
     const add = h('button', { class: 'icon', title: `最後に足す（${typeOf(f.of)}）`, disabled: f.max !== undefined && list.length >= f.max, onclick: () => emit({ kind: 'insert', sub, value: defaultOf(f.of) }) }, '＋');
-    const items = open ? list.map((v, i) => row(`[${i}]`, `${key}[${i}]`, leaf(f.of, v, [...sub, i]),
+    const full = f.max !== undefined && list.length >= f.max;
+    const items = open ? list.map((v, i) => row(`[${i}]`, `${key}[${i}]`, leaf(f.of, v, [...sub, i], false, list),
+      h('button', { class: 'icon tiny', title: '複製して、すぐ下に置く', disabled: full, onclick: () => emit({ kind: 'insert', sub, value: structuredClone(v), index: i + 1 }) }, '⧉'),
       h('button', { class: 'icon tiny', title: '上へ', disabled: i === 0, onclick: () => emit({ kind: 'move', sub: [...sub, i], to: i - 1 }) }, '↑'),
       h('button', { class: 'icon tiny', title: '下へ', disabled: i === list.length - 1, onclick: () => emit({ kind: 'move', sub: [...sub, i], to: i + 1 }) }, '↓'),
       h('button', { class: 'icon tiny', title: '消す', disabled: f.min !== undefined && list.length <= f.min, onclick: () => emit({ kind: 'remove', sub: [...sub, i] }) }, '×'))) : [];
@@ -630,7 +716,7 @@ export function nestedWidget(app: App, f: Field, value: unknown, path: string, s
   }
   if (f.type === 'struct') {
     const obj = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
-    return h('div', { class: 'nest' }, Object.entries(f.fields).map(([k, sf]) => row(k, `${k}: ${typeOf(sf)}${sf.desc ? '\n' + sf.desc : ''}`, leaf(sf, k in obj ? obj[k] : defaultOf(sf), [...sub, k]))));
+    return h('div', { class: 'nest' }, Object.entries(f.fields).map(([k, sf]) => row(k, `${k}: ${typeOf(sf)}${sf.desc ? '\n' + sf.desc : ''}`, leaf(sf, k in obj ? obj[k] : defaultOf(sf), [...sub, k], !(k in obj), obj))));
   }
   // どれか1つ: 種類を選ぶと、その種類の既定値に入れ替わる
   const o = f as OneOfField;
@@ -640,7 +726,7 @@ export function nestedWidget(app: App, f: Field, value: unknown, path: string, s
   pick.addEventListener('change', () => emit({ kind: 'set', sub, value: variantDefault(pick.value, o.variants[pick.value].fields) }));
   const fields = o.variants[kind]?.fields ?? {};
   return h('div', { class: 'nest' }, row('kind', o.variants[kind]?.desc ?? '種類', pick),
-    Object.entries(fields).map(([k, sf]) => row(k, `${k}: ${typeOf(sf)}${sf.desc ? '\n' + sf.desc : ''}`, leaf(sf, k in obj ? obj[k] : defaultOf(sf), [...sub, k]))));
+    Object.entries(fields).map(([k, sf]) => row(k, `${k}: ${typeOf(sf)}${sf.desc ? '\n' + sf.desc : ''}`, leaf(sf, k in obj ? obj[k] : defaultOf(sf), [...sub, k], !(k in obj), obj))));
 }
 
 /** 「押して決める」の画面。次に押されたボタン（analog なら大きく倒した軸）を返す */

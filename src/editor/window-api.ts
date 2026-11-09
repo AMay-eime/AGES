@@ -31,7 +31,7 @@ export interface EditorApi {
   get(path: string): unknown;
   /** 表を読む（省いた列は既定値で埋めた行。ゲームのコードの ctx.table と同じ。変えるのは patch の set・addRow など） */
   table(name: string): TableView;
-  /** インスペクタで選ぶ（例: main#player / @enemy）。add なら今の選びに足す（シーンの物だけ）。null で選ぶのをやめる */
+  /** 選ぶ（例: main#player / @enemy をインスペクタで、$bullets.shot1 は表のエディタをその行で開く）。add なら今の選びに足す（シーンの物だけ）。null で選ぶのをやめる */
   select(address: string | null, add?: boolean): void;
   /**
    * 再生する（エディタの ▶ と同じ）。scene・params・date で始め方を選べる（省くと今のシーンを、再生の設定で）。再生中なら何もしない。
@@ -48,12 +48,18 @@ export interface EditorApi {
   sheet(image: string): SheetDef | undefined;
   /** 通知（画面の右下に少しのあいだ出る）。kind: info（既定）・warn・bad */
   notify(text: string, kind?: 'info' | 'warn' | 'bad'): void;
-  /** いま選んでいる物の住所（main#player・@enemy）。選んでいなければ null。いくつも選んでいるときは、インスペクタに出ている物 */
+  /** いま選んでいる物の住所（main#player・@enemy・表のエディタで選んだ行は $表.行）。選んでいなければ null。いくつも選んでいるときは、インスペクタに出ている物 */
   readonly selection: string | null;
   /** いま選んでいる物すべての住所（手前の物が最初） */
   readonly selected: string[];
   /** 1行の文字を尋ねる（やめたら null） */
   ask(title: string, value?: string): Promise<string | null>;
+  /**
+   * インスペクタと同じ標準の欄を作る（パネルの中で使う）。型から作る: 数（範囲があればドラッグ）・選択・プレハブ・アセット・表の行・色・入れ子（リスト・構造体・どれか1つ）など。
+   * onChange(値, final): final=false は途中（ドラッグ中）。値を変えるのは onChange の中で api.patch。拡張の欄の見せ方は使わない。
+   * 例: api.input({ type: 'prefab', default: '', tags: ['stage'] }, cur, (v, final) => { if (final) api.patch([{ op: 'set', path, value: v }]); })
+   */
+  input(field: Field, value: unknown, onChange: (value: unknown, final: boolean) => void): HTMLElement;
   /**
    * 試しの舞台: el に小さな画面を作り、空のシーンにプレハブを出して、くり返し動かす（エディタの「試し」の窓もこれで作っている）。
    * ゲームと同じ決まりで動く（scenes で絞ったシステムは動かない）。値を変えると、次の回から新しい値で動く。音は鳴らさず、数だけを onCycle で返す
@@ -107,12 +113,20 @@ export interface StageHandle {
   destroy(): void;
 }
 
-/** インスペクタの1つの欄（拡張が見せ方を差し替えるときに渡る） */
+/** インスペクタ・表のエディタの1つの欄（拡張が見せ方を差し替えるときに渡る）。入れ子の中の欄にも渡る */
 export interface FieldView {
-  /** 欄の住所（例 main#spawner.Spawner.interval・@enemy.Health.hp） */
+  /** 欄の住所（例 main#spawner.Spawner.interval・@enemy.Enemy.shotPatterns[2].pattern・$talks.t1.lines[0].face） */
   readonly path: string;
+  /** 部品の名前（表の欄なら ''） */
   readonly component: string;
+  /** フィールドの名前（表の欄なら列の名前。入れ子の中の欄なら、一番外のフィールド） */
   readonly field: string;
+  /** 入れ子の中の場所（一番外の欄なら []。例 [2, 'pattern']） */
+  readonly sub: (string | number)[];
+  /** 入れ子の中の欄なら、すぐ外の値（構造体・どれか1つ・リスト。読み取り専用。例 parent.enabled で中を畳む） */
+  readonly parent?: unknown;
+  /** 表の欄なら、その行（既定値で埋めた値。読み取り専用） */
+  readonly row?: { table: string; id: string; values: Record<string, unknown> };
   /** 型・範囲・既定値・説明 */
   readonly def: Field;
   /** 今の値（省略されていれば既定値、派生なら受け継いだ値） */
@@ -122,7 +136,7 @@ export interface FieldView {
   /** 🔒 ロックされている（見せるだけ。set は効かない） */
   readonly locked: boolean;
   readonly playing: boolean;
-  /** 同じ物のほかの部品の値（読み取り専用。例 holder.Sprite.image） */
+  /** 同じ物のほかの部品の値（読み取り専用。例 holder.Sprite.image。表の欄なら {}） */
   readonly holder: Record<string, Record<string, unknown>>;
   /** この欄の値を変える。final=false は途中（ドラッグ中など。再生中の画面にだけ反映して、保存しない） */
   set(value: unknown, final?: boolean): void;
@@ -130,11 +144,12 @@ export interface FieldView {
   standard(): HTMLElement;
 }
 
-/** インスペクタの欄の見せ方（Unity の PropertyDrawer） */
+/** インスペクタ・表のエディタの欄の見せ方（Unity の PropertyDrawer） */
 export interface FieldDrawer {
   /**
-   * どの欄に使うか。型（例 'color'）・部品.フィールド（例 'Spawner.formation'）・住所（例 'main#spawner.Spawner.formation'）。
-   * 並べると複数。重なったら 住所 → 部品.フィールド → 型 の順に、細かいものが使われる
+   * どの欄に使うか。型（例 'color'）・部品.フィールド（例 'Spawner.formation'）・$表.列（例 '$talks.face'。どの行にも）・住所（例 'main#spawner.Spawner.formation'）。
+   * 入れ子の中は、リストの項目を []、構造体の中を .名前 で（例 'Stage.elements[].enemy'・'$talks.lines[].face'）。型で選ぶと入れ子の中・表の欄にも効く。
+   * 並べると複数。重なったら 住所 → 部品.フィールド・$表.列 → 型 の順に、細かいものが使われる
    */
   match: string | string[];
   /** el に欄の中身を作る。後片付けが要るなら関数を返す */
@@ -166,7 +181,29 @@ export interface ComponentView {
   set(field: string, value: unknown): void;
 }
 
-/** エディタ拡張。窓口（panel・fields・components）は要る分だけ書く */
+/** 表のエディタの行の見せ方（部品の見せ方の表版）。行を選んだときの右の欄の上に、拡張の中身を足す */
+export interface RowDrawer {
+  /** 表の名前（例 'bullets'。$ は付けない） */
+  table: string;
+  /** 標準の欄を隠す: 'all' か、列の名前の並び */
+  hide?: 'all' | string[];
+  mount(el: HTMLElement, row: RowView, api: EditorApi): void | (() => void);
+}
+
+export interface RowView {
+  readonly table: string;
+  readonly id: string;
+  /** 既定値で埋めた今の値 */
+  readonly values: Record<string, unknown>;
+  /** 変えられる */
+  readonly editable: boolean;
+  /** 🔒 その列がロックされている（set は効かない） */
+  locked(column: string): boolean;
+  /** この行の値を1つ変える（edits に書かなくても変えられる。行を足す・消すのは edits に $表.* を書いて api.patch） */
+  set(column: string, value: unknown): void;
+}
+
+/** エディタ拡張。窓口（panel・fields・components・rows・menus）は要る分だけ書く */
 export interface EditorExtension {
   /** 英数字・_・- （操作ログには window:<id> と残る） */
   id: string;
@@ -190,6 +227,8 @@ export interface EditorExtension {
   fields?: FieldDrawer[];
   /** インスペクタの部品の見せ方 */
   components?: ComponentDrawer[];
+  /** 表のエディタの行の見せ方 */
+  rows?: RowDrawer[];
   /** 右クリックのメニューの項目 */
   menus?: MenuItem[];
 }
@@ -231,13 +270,5 @@ export function asExtension(x: EditorExtension | EditorWindow): EditorExtension 
   return x as EditorExtension;
 }
 
-/** 欄の見せ方の match の、細かさ（住所 3・部品.フィールド 2・型 1） */
-export function matchRank(m: string): number {
-  return m.includes('#') || m.startsWith('@') ? 3 : m.includes('.') ? 2 : 1;
-}
-
-/** 欄の見せ方の match が、この欄に当たるか */
-export function matchField(m: string, path: string, component: string, field: string, type: string): boolean {
-  const r = matchRank(m);
-  return r === 3 ? m === path : r === 2 ? m === `${component}.${field}` : m === type;
-}
+/** 欄の見せ方の match の決まり（細かさ・当たるか）。サーバーの「変えてよい値か」と同じもの */
+export { matchRank, matchField, fieldKey } from '../core/drawers.ts';

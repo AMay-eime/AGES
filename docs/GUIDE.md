@@ -10,6 +10,7 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
 - ゲームのコードは `ctx.table(形).get(ID)`
 - 表計算ソフトと行き来するときは `ages table <dir> <表> --export x.csv` / `--import x.csv`（読み込みは表をまるごと置き換える）
 - 標準の表 `$actions`（操作）・`$tweens`（トゥイーン）・`$text`（言葉）の列は `ages schema <dir> $actions` などで見る
+- 列（フィールドも）の型で、エディタの欄が決まる: 文字の `multiline: true` は複数行の欄（台詞など）、プレハブの `tags: ['stage']` は選ぶ一覧をそのタグのプレハブに絞る
 
 ## prefab: プレハブと派生・インスタンス
 - プレハブ（`@名前`）は、コードから `ctx.spawn('名前')` で出す物のひな形。作る・消す・名前を変えるのは patch の `addPrefab` / `removePrefab` / `renamePrefab` / `setPrefab`（ファイルを直接作らない。名前を変えると prefab 型の値・派生の元・🔒★も直る。コードの中は直らないので ⚠ に従って直す）
@@ -128,16 +129,18 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
 - 標準の Particles を物（プレハブ）に付ける（`ages schema <dir> Particles`）。現れたときに出すのは `burst`、出し続けるのは `rate`。後から出すのは `ctx.particles.burst(id)`
 - 粒の動きは描く側で動かし、ゲームの結果には入らない。出したかどうかは `ages run` の `particles:` で確かめる
 
-## window: プロジェクト独自のエディタ拡張（パネル・インスペクタの欄と部品の見せ方）
+## window: プロジェクト独自のエディタ拡張（パネル・インスペクタと表の欄・部品・行の見せ方）
 - **作る前に地図の `## editor extensions` を見る。** 近いものがあれば、新しく作らずにそれを直す（拡張が増えすぎないように）
 - `editor/<名前>.ext.ts` に `defineExtension` で書き、`ages.project.json` の `editorWindows` に追加する。窓口は要る分だけ:
   - `panel: { title, area?, mount(el, api) }` 調整用の画面（例 `examples/shooter/editor/wave-tuner.window.ts`。パネルだけなら `defineWindow` でもよい）
-  - `fields: [{ match, mount(el, field, api) }]` インスペクタの欄の見せ方。match は 型（`'color'`）・部品.フィールド（`'Health.hp'`）・住所（`'main#player.Health.hp'`）。`field.value` を見せ、`field.set(値)` で変える。`field.standard()` で標準の欄も並べられる（例 `examples/shooter/editor/hp-hearts.ext.ts`）
+  - `fields: [{ match, mount(el, field, api) }]` インスペクタと表のエディタの欄の見せ方。match は 型（`'color'`）・部品.フィールド（`'Health.hp'`）・`$表.列`（`'$talks.face'`。どの行にも）・住所（`'main#player.Health.hp'`）。入れ子の中は `[]` と `.名前`（`'Stage.elements[].enemy'`・`'$talks.lines[].face'`）。`field.value` を見せ、`field.set(値)` で変える。`field.standard()` で標準の欄も並べられる。入れ子の中なら `field.parent`（すぐ外の値）、表なら `field.row`（例 `examples/shooter/editor/hp-hearts.ext.ts`）
   - `components: [{ component, hide?, mount(el, comp, api) }]` 部品の欄の上に中身を足す。`hide: 'all'` か名前の並びで標準の欄を隠す。`comp.set(フィールド, 値)`（例 AGES 本体の `src/editor/builtin/ui-dock.ts`）
+  - `rows: [{ table, hide?, mount(el, row, api) }]` 表のエディタで行を選んだときの右の欄の上に中身を足す（部品の見せ方の表版。`row.values` は既定値で埋めた行、`row.set(列, 値)`・`row.locked(列)`）。表の一覧は標準のまま、行の中身だけを作る
   - `menus: [{ label, where: 'entity', when?(targets, api), run(targets, api) }]` シーンの物の右クリックのメニュー。targets は選んでいる物の住所（例 AGES 本体の `src/editor/builtin/entity-menu.ts`）
 - `desc`（何のためか、1行）を必ず書く。パネルがあるなら `title` と `edits`（パネルが変える値の住所。`main#spawner.Spawner.*` のようにまとめても書ける）も。地図にはこの宣言が1行で出る
-- 拡張から変えられるのは、`edits` に書いた値と、見せている欄・部品の値だけ。🔒ロックされた値は拡張からは変えられない。ロックの操作を拡張に作らない（作っても、サーバーが受け付けない）
-- 値を変えるのは `api.patch`・`field.set`・`comp.set` だけ（エディタのサーバーを直接呼ばない）。読むのは `api.get`（派生は元と重ねた値）、知らせるのは `api.notify(文, 'warn')`、画像の切り方は `api.sheet(画像)`、選んでいる物は `api.selection`（すべては `api.selected`。`api.select(住所, true)` で足す）、1行を尋ねるのは `await api.ask(題, 既定)`
+- 拡張から変えられるのは、`edits` に書いた値と、見せている欄（その中も）・部品・行の値だけ（行を足す・消すのは edits に `$表.*`）。🔒ロックされた値は拡張からは変えられない。ロックの操作を拡張に作らない（作っても、サーバーが受け付けない）
+- 値を変えるのは `api.patch`・`field.set`・`comp.set`・`row.set` だけ（エディタのサーバーを直接呼ばない）。読むのは `api.get`（派生は元と重ねた値）、知らせるのは `api.notify(文, 'warn')`、画像の切り方は `api.sheet(画像)`、選んでいる物は `api.selection`（すべては `api.selected`。`api.select(住所, true)` で足す。表のエディタで選んだ行は `$表.行`、`api.select('$表.行')` で表をその行で開く。変わると `api.on('select')`）、1行を尋ねるのは `await api.ask(題, 既定)`
+- パネルの中に標準の欄（数・選択・プレハブ・アセット・表の行・色・入れ子）を置くのは `api.input(型, 値, (値, final) => …)`。同じ欄を手で作らない
 - 表を読むのは `api.table(名前)`（省いた列は既定値で埋めた行。ctx.table と同じ）か `api.get('$表.行.列')`。再生を始めるのは `api.play({ scene, params })`（ステージを試すボタンなど。止めるのは `api.stop()`）
 - プレハブを小さな画面でくり返し動かすのは `api.stage(el, { spawn: [{ prefab }], seconds, speed, zoom, keys, onCycle })`（本体の「試し」の窓 `src/editor/builtin/tryout.ts` と同じ。値を変えると次の回から新しい値）
 - モジュールの一番外では `document` などのブラウザの物を使わない（地図を作るときに Node で読むため）

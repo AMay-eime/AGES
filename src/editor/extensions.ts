@@ -1,13 +1,14 @@
 // エディタ拡張の受け皿: 拡張（本体の拡張とプロジェクトの拡張）を持ち、窓口ごとに探す。
 // 本体の機能（src/editor/builtin/）もプロジェクトの拡張と同じ API で書き、ここに並べる（API が足りているかの確かめと、手本を兼ねる）。
 import type { App } from './app.ts';
-import { asExtension, matchField, matchRank, type ComponentDrawer, type EditorApi, type EditorExtension, type EditorWindow, type FieldDrawer } from './window-api.ts';
+import { asExtension, fieldKey, matchField, matchRank, type ComponentDrawer, type EditorApi, type EditorExtension, type EditorWindow, type FieldDrawer, type RowDrawer } from './window-api.ts';
 import type { Op } from '../core/patch.ts';
 import { parseAddress } from '../core/docs.ts';
 import { resolvePrefab } from '../core/variant.ts';
 import { h, modal, toast } from './ui/dom.ts';
 import { BUILTIN_EXTENSIONS } from './builtin/index.ts';
 import { createStage } from './stage.ts';
+import { inputWidget } from './ui/inspector.ts';
 
 export interface LoadedExtension {
   ext: EditorExtension;
@@ -46,6 +47,8 @@ export function makeApi(app: App, win: string): EditorApi {
     select(address: string | null, add = false) {
       if (address === null) return app.select(null);
       const a = parseAddress(address);
+      // 表の行: 表のエディタをその行で開く（選んだ行は api.selection に出る）
+      if (a.kind === 'table') return void app.emit('openTable', { name: a.doc, row: a.entity });
       app.select(a.kind === 'prefab' ? { kind: 'prefab', name: a.doc } : { kind: 'scene', scene: a.doc, id: a.entity! }, { add });
     },
     play: (opts) => app.startPlay({ ...opts }),
@@ -55,9 +58,10 @@ export function makeApi(app: App, win: string): EditorApi {
     sheet: (image: string) => app.registry.sheets.get(image),
     assetUrl: (path) => app.assetUrl(path),
     notify: (text, kind = 'info') => { toast(text, kind === 'info' ? '' : kind, kind === 'bad' ? 8000 : 4000); },
-    get selection() { const s = app.sel; return !s ? null : s.kind === 'prefab' ? `@${s.name}` : `${s.scene}#${s.id}`; },
-    get selected() { const s = app.sel; return !s ? [] : s.kind === 'prefab' ? [`@${s.name}`] : app.selectedIds().map((id) => `${s.scene}#${id}`); },
+    get selection() { if (app.row) return `$${app.row.table}.${app.row.id}`; const s = app.sel; return !s ? null : s.kind === 'prefab' ? `@${s.name}` : `${s.scene}#${s.id}`; },
+    get selected() { if (app.row) return [`$${app.row.table}.${app.row.id}`]; const s = app.sel; return !s ? [] : s.kind === 'prefab' ? [`@${s.name}`] : app.selectedIds().map((id) => `${s.scene}#${id}`); },
     ask: (title, value = '') => askText(title, value),
+    input: (field, value, onChange) => inputWidget(app, field, value, onChange),
     stage: (el, opts) => createStage(app, el, opts),
     on: ((ev: string, fn: (d?: unknown) => void) => app.on(ev, fn)) as EditorApi['on'],
     h: h as unknown as EditorApi['h'],
@@ -75,13 +79,14 @@ export function projectExtension(app: App, path: string, mod: EditorExtension | 
   return { ext, api: makeApi(app, `window:${ext.id}`), builtin: false, path };
 }
 
-/** この欄に使う見せ方（細かい match ほど先。同じ細かさならプロジェクトの拡張が本体より先） */
-export function fieldDrawerFor(app: App, path: string, component: string, field: string, type: string): { drawer: FieldDrawer; x: LoadedExtension } | undefined {
+/** この欄に使う見せ方（細かい match ほど先。同じ細かさならプロジェクトの拡張が本体より先）。path は欄の住所（入れ子の中・表の欄も） */
+export function fieldDrawerFor(app: App, path: string, type: string): { drawer: FieldDrawer; x: LoadedExtension } | undefined {
   let best: { drawer: FieldDrawer; x: LoadedExtension; rank: number } | undefined;
+  const key = fieldKey(path);
   for (const x of app.extensions) {
     for (const d of x.ext.fields ?? []) {
       for (const m of [d.match].flat()) {
-        if (!matchField(m, path, component, field, type)) continue;
+        if (!matchField(m, path, key, type)) continue;
         const rank = matchRank(m) * 2 + (x.builtin ? 0 : 1);
         if (!best || rank > best.rank) best = { drawer: d, x, rank };
       }
@@ -93,6 +98,11 @@ export function fieldDrawerFor(app: App, path: string, component: string, field:
 /** この部品に使う見せ方（本体の拡張から順に、すべて） */
 export function componentDrawersFor(app: App, component: string): { drawer: ComponentDrawer; x: LoadedExtension }[] {
   return app.extensions.flatMap((x) => (x.ext.components ?? []).filter((d) => d.component === component).map((drawer) => ({ drawer, x })));
+}
+
+/** この表の行の見せ方（本体の拡張から順に、すべて） */
+export function rowDrawersFor(app: App, table: string): { drawer: RowDrawer; x: LoadedExtension }[] {
+  return app.extensions.flatMap((x) => (x.ext.rows ?? []).filter((d) => d.table === table).map((drawer) => ({ drawer, x })));
 }
 
 /** 右クリックのメニューの項目（拡張の menus から。when で絞る） */
