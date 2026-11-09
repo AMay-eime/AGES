@@ -86,6 +86,10 @@ test('サンプル: 体力が尽きると得点を持って結果のシーンへ
   // 結果のシーンで fire を押し直すと main に戻る
   const again = await cmdRun(dir, { frames: '1400', keys: `0-1100:@fire;${moves};1200-1205:@fire` });
   assert.match(again, /scenes: main@0 → result@1092 → main@\d+/);
+  // --params: 前のシーンから受け取るものを渡して、そのシーンから始める
+  assert.match(await cmdRun(dir, { frames: '5', scene: 'result', params: 'score=420', watch: 'score.Text.text' }), /watch score\.Text\.text: .*SCORE 420/);
+  assert.match(await cmdRun(dir, { frames: '5', scene: 'result', params: '{"score":7}', watch: 'score.Text.text' }), /SCORE 7\b/);
+  await assert.rejects(cmdRun(dir, { frames: '5', scene: 'result', params: 'score' }), /--params の score が読めません/);
 });
 
 /** シーンの型を持つ表（stages）と、goto を書いたコードを足した写し */

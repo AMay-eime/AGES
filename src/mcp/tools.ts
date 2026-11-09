@@ -39,7 +39,7 @@ export function makeTools(defaultProject: string): Tool[] {
     },
     {
       name: 'ages_find',
-      description: '部品・フィールド・表の列と行・システム・プレハブ・シーンの物を、名前と説明から探す（例 "移動速度"。空白で区切るとすべてを含むもの）',
+      description: '部品・フィールド・表の列と行・システム・プレハブ・シーンの物を名前と説明から探す（例 "移動速度"）',
       inputSchema: { type: 'object', properties: { ...dirProp, words: { type: 'string' } }, required: ['words'] },
       run: (a, dir) => cmdFind(dir, a.words),
     },
@@ -92,6 +92,7 @@ export function makeTools(defaultProject: string): Tool[] {
           save: { type: 'string', description: 'この保存データ（saves/x.save.json）から始める。省くと空' },
           saveOut: { type: 'string', description: '終わりの保存データを書き出す' },
           lang: { type: 'string', description: '言語' },
+          params: { type: 'object', description: '始めのシーンの scene.params' },
         },
       },
       run: (a, dir) => {
@@ -101,6 +102,7 @@ export function makeTools(defaultProject: string): Tool[] {
         if (a.twice) f.twice = true;
         if (a.save) f.save = String(a.save);
         if (a.saveOut) f['save-out'] = String(a.saveOut);
+        if (a.params) f.params = JSON.stringify(a.params);
         return cmdRun(dir, f);
       },
     },
@@ -166,11 +168,8 @@ export function makeTools(defaultProject: string): Tool[] {
           count: { type: 'string', description: 'コマの数 列x行（例 4x6）' },
           auto: { type: 'boolean', description: '描かれた部分のかたまりごとに切る（PNGのみ）' },
           spacing: { type: 'number' }, margin: { type: 'number' },
-          skipEmpty: { type: 'boolean', description: '格子で、何も描かれていないコマを除く' },
-          gap: { type: 'number', description: 'auto: この距離(px)以内の部分は1コマにまとめる' },
-          min: { type: 'number', description: 'auto: これより小さいものは捨てる(px)' },
-          pad: { type: 'number', description: 'auto: 矩形を外へ広げる(px)' },
-          pivot: { type: 'string', description: '新しいコマの基準点 横,縦（例 0.5,1 = 下の中央）' },
+          skipEmpty: { type: 'boolean' }, gap: { type: 'number' }, min: { type: 'number' }, pad: { type: 'number' },
+          pivot: { type: 'string', description: '新しいコマの基準点（例 0.5,1）' },
           dry: { type: 'boolean' }, force: { type: 'boolean', description: '人が調整した切り方を、人に確認したうえで変える' },
         },
         required: ['image'],

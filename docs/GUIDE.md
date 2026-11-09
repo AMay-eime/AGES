@@ -26,6 +26,7 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
 - 画像はプロジェクト内のパスで指定する（`Sprite.image: "assets/x.png"`）。コマは `Sprite.frame`（番号か名前）、動きは `Animator.clip`（標準のシステム std.animator が進める）
 - 切り方は `ages sheet <dir> <画像>` で見る。画像を開いて確かめない（何コマあるかは地図にも出る）
 - 切るのは `ages slice <dir> <画像> --grid 32x32 | --count 4x6 | --auto`（`--dry` で保存せずに確かめる。前と同じ場所のコマは名前を引き継ぐ）
+  - 格子の `--skip-empty`（何も描かれていないコマを除く）。auto の `--gap`（この距離 px 以内は1コマにまとめる）・`--min`（これより小さいものは捨てる px）・`--pad`（矩形を外へ広げる px）。`--pivot 0.5,1` は新しいコマの基準点（下の中央）
 - 1コマ・1動きの変更は patch の `setFrame` / `setClip`（例 `{"op":"setFrame","image":"assets/x.png","frame":"x_3","name":"hero_idle","pivot":[0.5,1]}`）。`.sheet.json` を直接書き換えない
 - コマを指定するときは名前を使う（切り直してもずれない）。切り方の🔒・★はシーンの値と同じ扱い
 - 図形は Shape。四角・円は `stroke` を1以上にすると枠だけ（リング・ゲージの枠）。線は `kind: "line"` で、物の位置から `to`（ずれ。回転がかかる）まで、太さは `stroke`。レーザー・予告線は線の物を1つ置き、`to` か `Transform.rot` を変える（細い四角を計算しない）
@@ -54,6 +55,7 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
 ## scene: シーン
 - 切り替えは `ctx.scene.goto('名前', { fade, params })`、次のシーンで `ctx.scene.params`。切り替えても残す物には tag `keep`
 - そのシーンでだけ動くシステムには `scenes: ['名前']`。確かめるのは `ages run --until scene:名前`
+- 前のシーンから params を受け取るシーンを、そのシーンから確かめるのは `ages run --scene 名前 --params stage=s1,level=2`
 - シーンを作る・消す・名前を変える・開始にするのは patch の `addScene` / `removeScene` / `renameScene` / `setScene`（ファイルを直接作らない。名前を変えると参照とロックも直る）
 
 ## assets: アセット（画像・音・フォント）
