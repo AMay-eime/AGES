@@ -14,7 +14,7 @@
 - 手順書: [docs/PROCEDURES.md](docs/PROCEDURES.md)
 - 決定の記録: [docs/DECISIONS.md](docs/DECISIONS.md)
 - 技術設計: [DESIGN.md](DESIGN.md)
-- AIがAGESでゲームを作るときの手順: [AGENTS.md](AGENTS.md)
+- AIがAGESでゲームを作るときの手順: [AGENTS.md](AGENTS.md)（毎回読む目次）・[docs/GUIDE.md](docs/GUIDE.md)（機能ごとの手順。要るときに引く）
 
 ## 必要なもの
 
@@ -35,6 +35,7 @@ npm run check                                  # 事前に npm install が必要
 # AI向けCLI
 node bin/ages.js init ../my-game --name my-game  # 新しいプロジェクト（エディタ計画書つき）
 node bin/ages.js map examples/shooter            # プロジェクトの地図
+node bin/ages.js schema examples/shooter guide   # 機能ごとの手順の目次（guide:ui のように引く。ops で patch の操作の一覧）
 node bin/ages.js get examples/shooter main#player # 値を見る
 node bin/ages.js set examples/shooter main#player.Player.speed 5
 node bin/ages.js table examples/shooter enemies  # 表を見る（$enemies.basic.hp のように住所で読み書き）

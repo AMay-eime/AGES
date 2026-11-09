@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { Project } from '../project/project.ts';
 import { renderAssets, renderMap } from '../project/map.ts';
 import { readCursor, readLog, readTouched, summarize, writeCursor, type Actor } from '../project/oplog.ts';
-import { getValue, parseLiteral, splitCell, type Op } from '../core/patch.ts';
+import { OP_DOCS, getValue, parseLiteral, splitCell, type Op } from '../core/patch.ts';
+import { readGuide } from '../project/guide.ts';
 import { brief, defaultOf, matrixSize, suggest, typeOf, type AssetKind } from '../core/schema.ts';
 import { assetRefs, codeSceneRefs, isUnder } from '../core/assets.ts';
 import { parseAddress } from '../core/docs.ts';
@@ -27,14 +28,11 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
 
   init   <dir> [--name 名前]          新しいプロジェクトを作る（EDITOR-PLAN.md 付き。ゲームの企画を受けたら最初にこれ）
   map    <dir>                       プロジェクトの地図（作業のたびに最初に読む）
-  schema <dir> [Component ...]       コンポーネントの詳細（型・範囲・説明）
+  schema <dir> [名前 ...]             詳しく引く: コンポーネント（型・範囲・説明）/ $表 / std:flash などのシェーダー
+               / ops（patch の操作の一覧と書き方）/ guide（機能ごとの手順の目次）/ guide:項目（例 guide:ui）
   get    <dir> <addr> [addr ...]     値を見る（例: main#player / main#player.Player.speed / @enemy / $enemies.basic）
   set    <dir> <addr> <value> [--force]  行列のセルは addr[行,列]（例 main#spawner.Spawner.formation[2,3] 1）
-  patch  <dir> <ops.json | -> [--force]   操作の配列（set/setCells/insert/removeItem/moveItem/addEntity/removeEntity/addComponent/removeComponent/rename/
-               addRow/removeRow/moveRow/renameRow/setSheet/setFrame/setClip/moveAsset/removeAsset/addScene/removeScene/renameScene/setScene）
-               例 {"op":"moveAsset","from":"assets/a.png","to":"assets/ships/a.png"}（フォルダも可。使っている値と切り方も一緒に動く）
-               シーン: addScene{name,copy?,desc?} / removeScene{name} / renameScene{name,to} / setScene{name,desc?,start?}
-               UI: dockUI{target,edge,margin?}（画面・親の端や角に付ける） / attachUI{target,to,side?,gap?,align?}（別の UI の隣に接して置く）
+  patch  <dir> <ops.json | -> [--force]   操作の配列（例 [{"op":"set","path":"main#player.Player.speed","value":5}]。一覧は schema <dir> ops）
   table  <dir> <表> [--cols a,b] [--rows id1,id2] [--empty 列]   表を見る（1行1行。--empty はその列が空の行だけ。例 未訳: text --empty en）
                [--export x.csv] [--import x.csv [--force]]   表計算ソフトとの行き来（読み込みは表をまるごと置き換える）
   run    <dir> [--frames 600] [--scene main] [--seed 1] [--keys "0-120:ArrowLeft+KeyZ;120-200:@move_x=1;30:Mouse0+ptr=240,100"]
@@ -48,7 +46,6 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   sheet  <dir> <画像>                 画像の切り方（コマの名前・位置・基準点・動き）を見る
   slice  <dir> <画像> --grid 32x32 | --count 4x6 | --auto  画像を切る（前と同じ場所のコマは名前を引き継ぐ）
                [--spacing n] [--margin n] [--skip-empty] [--alpha 1] [--min 2] [--gap 0] [--pad 0] [--pivot 0.5,1] [--dry] [--force]
-  コマ1つ・動き1つの変更は patch の setFrame / setClip（例 {"op":"setFrame","image":"assets/x.png","frame":"x_3","name":"hero_idle","pivot":[0.5,1]}）
 
 アドレス: シーン#ID.コンポーネント.フィールド（例 main#player.Player.speed）、プレハブは @名前.コンポーネント.フィールド、表は $表.行.列
           リストの中は [番号]、構造体・どれか1つの中は .名前（例 main#spawner.Spawner.waves[2].count）
@@ -107,16 +104,20 @@ export async function planWarning(dir: string): Promise<string> {
 
 const ENGINE_DIR = fileURLToPath(new URL('../..', import.meta.url));
 
+/** プロジェクトから見た AGES 本体の場所。共通の親フォルダがあれば相対パス、ドライブ直下まで離れていれば絶対パス（読みやすさのため） */
+function enginePathFrom(target: string): string {
+  const rel = (relative(target, ENGINE_DIR) || '.').split(sep).join('/');
+  const ups = rel.match(/\.\.\//g)?.length ?? 0;
+  return ups >= target.split(sep).filter(Boolean).length ? ENGINE_DIR.replace(/[\\/]$/, '').split(sep).join('/') : rel;
+}
+
 /** 新しいプロジェクトを作る。AIへの手順書とエディタ計画書のひな形も入れる。 */
 export async function cmdInit(dir: string, name?: string): Promise<string> {
   const target = resolve(dir);
   if (existsSync(join(target, 'ages.project.json'))) throw new Error(`${dir} にはすでに AGES のプロジェクトがあります`);
   const projectName = name ?? basename(target);
   if (!/^[\w.-]+$/.test(projectName)) throw new Error(`プロジェクト名 "${projectName}" には英数字・_・-・. だけが使えます（--name で指定できます）`);
-  // 共通の親フォルダがあれば相対パス、ドライブ直下まで離れていれば絶対パス（読みやすさのため）
-  const rel = (relative(target, ENGINE_DIR) || '.').split(sep).join('/');
-  const ups = rel.match(/\.\.\//g)?.length ?? 0;
-  const engine = ups >= target.split(sep).filter(Boolean).length ? ENGINE_DIR.replace(/[\\/]$/, '').split(sep).join('/') : rel;
+  const engine = enginePathFrom(target);
   const tpl = join(ENGINE_DIR, 'templates', 'new-project');
   const created: string[] = [];
   const copy = async (from: string, to: string) => {
@@ -140,6 +141,7 @@ export async function cmdInit(dir: string, name?: string): Promise<string> {
   const agents = (await readFile(join(ENGINE_DIR, 'AGENTS.md'), 'utf8'))
     .replace('`ages` は `node bin/ages.js`（`npm link` で `ages` コマンドになる）。', `\`ages\` は \`node ${engine}/bin/ages.js\`（AGES本体の場所: ${engine}。本体で \`npm link\` すれば \`ages\` だけで動く）。`)
     .replaceAll('docs/PLAN.md', `${engine}/docs/PLAN.md`)
+    .replaceAll('docs/GUIDE.md', `${engine}/docs/GUIDE.md`)
     .replaceAll('`examples/', `\`${engine}/examples/`);
   await writeFile(join(target, 'AGENTS.md'), agents);
   created.push('AGENTS.md');
@@ -158,10 +160,19 @@ export async function cmdSchema(dir: string, names: string[]): Promise<string> {
   const p = await Project.load(dir);
   const field = (k: string, f: import('../core/schema.ts').Field) => `  ${k} ${brief(f)}${f.desc ? ' — ' + f.desc : ''}${nested(f, '    ')}`;
   const out: string[] = [];
+  const guide = await readGuide();
+  // 名前の種類: コンポーネント / $表 / シェーダー（std:… か .frag）/ ops（patch の操作）/ guide・guide:項目（機能ごとの手順）
   const isShader = (n: string) => n.startsWith('std:') || /\.(frag|glsl)$/i.test(n);
-  const comps = names.length ? names.filter((n) => !n.startsWith('$') && !isShader(n)) : [...p.registry.components.keys()];
+  const isDoc = (n: string) => n === 'ops' || n === 'guide' || n.startsWith('guide:');
+  const comps = names.length ? names.filter((n) => !n.startsWith('$') && !isShader(n) && !isDoc(n)) : [...p.registry.components.keys()];
   const tables = names.length ? names.filter((n) => n.startsWith('$')).map((n) => n.slice(1)) : [...p.registry.tables.keys()];
-  for (const n of comps) { const d = p.registry.component(n); out.push(`${d.name}: ${d.desc}`, ...Object.entries(d.fields).map(([k, f]) => field(k, f))); }
+  const topicOf = (comp: string) => [...guide.values()].find((t) => t.parts.includes(comp))?.name;
+  for (const n of comps) {
+    if (!p.registry.components.has(n) && guide.has(n.toLowerCase())) throw new Error(`コンポーネント ${n} はありません。機能の手順なら guide:${n.toLowerCase()}`);
+    const d = p.registry.component(n);
+    const topic = names.length ? topicOf(d.name) : undefined;
+    out.push(`${d.name}: ${d.desc}${topic ? `（使い方: guide:${topic}）` : ''}`, ...Object.entries(d.fields).map(([k, f]) => field(k, f)));
+  }
   for (const n of tables) { const t = p.registry.table(n); out.push(`$${t.name}: ${t.desc ?? ''}（表。列 id は行の名前）`, ...Object.entries(t.columns).map(([k, f]) => field(k, f))); }
   for (const n of names.filter(isShader)) {
     const d = p.registry.shaders.get(n);
@@ -170,6 +181,21 @@ export async function cmdSchema(dir: string, names: string[]): Promise<string> {
     out.push(SHADER_HOWTO);
     if (d.path.startsWith('std:')) out.push(`--- ${d.path} の中身（新しく書くときの手本）`, d.code.trimEnd());
     for (const e of d.errors) out.push(`⚠ ${e}`);
+  }
+  for (const n of names.filter(isDoc)) {
+    if (n === 'ops') {
+      out.push('patch の操作（ages patch <dir> \'[{"op":"set","path":"main#player.Player.speed","value":5}]\'。すべて成功するか、何も変えないか）');
+      for (const [op, doc] of Object.entries(OP_DOCS)) out.push(`  ${op}${doc}`);
+    } else if (n === 'guide') {
+      out.push('機能ごとの手順（ages schema <dir> guide:項目）');
+      for (const t of guide.values()) out.push(`  ${t.name}: ${t.title}${t.parts.length ? `（${t.parts.join(' ')}）` : ''}`);
+    } else {
+      const name = n.slice('guide:'.length);
+      const t = guide.get(name);
+      if (!t) throw new Error(`手順の項目 ${name} はありません${suggest(name, [...guide.keys()])}。一覧は guide`);
+      const engine = enginePathFrom(p.dir);
+      out.push(`## ${t.name}: ${t.title}${t.parts.length ? `（部品: ${t.parts.join(' ')}。中身は ages schema <dir> ${t.parts[0]}）` : ''}`, engine === '.' ? t.body : t.body.replaceAll('`examples/', `\`${engine}/examples/`));
+    }
   }
   return out.join('\n');
 }

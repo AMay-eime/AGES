@@ -100,7 +100,8 @@ test('プロジェクトのシェーダー: assets の .frag を読み、地図�
   assert.equal(p.newGame().world.spawn('enemy').c.Effect.params.steps, 4);
   const map = await cmdMap(dir);
   assert.match(map, /assets\/shaders\/wave\.frag 横に揺らす 水の中のように \| amp:num 0\.\.0\.1=0\.02 steps:int 1\.\.16=4/);
-  assert.match(map, /標準: std:flash\(amount,color\)/);
+  // 標準のシェーダーは、使っているものだけ（敵は wave に変えたので std:flash は出ない）
+  assert.match(map, /^標準: std:vignette\(amount,size,color\)$/m);
   assert.match(await cmdSchema(dir, ['std:flash']), /--- std:flash の中身/);
   // 画像の値（sampler2D）は、ないファイルを知らせる
   await writeFile(join(dir, 'assets/shaders/wave.frag'), WAVE.replace('=assets/kenney-pixel-shmup/tiles.png', '=assets/none.png'));

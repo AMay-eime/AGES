@@ -13,20 +13,26 @@ export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, l
   const out: string[] = [];
   out.push(`# ${c.name}  fps${c.fps} seed${c.seed} view${c.view.width}x${c.view.height} start:${c.startScene} code:${c.game}`);
 
-  out.push('## components（名前 説明 | フィールド:型 範囲=既定値）');
-  for (const def of p.registry.components.values()) {
-    if (p.registry.std.has(def.name)) continue;
-    const fields = Object.entries(def.fields).map(([k, f]) => `${k}:${brief(f)}`).join(' ');
-    out.push(`${def.name} ${def.desc} | ${fields || '（フィールドなし）'}`);
+  // 毎回読む1枚なので、使っていないものの行は出さない（標準の部品・シェーダー・表の説明は ages schema で引く）
+  const own = [...p.registry.components.values()].filter((def) => !p.registry.std.has(def.name));
+  if (own.length) {
+    out.push('## components（名前 説明 | フィールド:型 範囲=既定値）');
+    for (const def of own) {
+      const fields = Object.entries(def.fields).map(([k, f]) => `${k}:${brief(f)}`).join(' ');
+      out.push(`${def.name} ${def.desc} | ${fields || '（フィールドなし）'}`);
+    }
   }
-  out.push(`標準（定義不要。詳細は ages schema）: ${[...p.registry.std].join(' ')}`);
 
-  // シェーダー: 調整できる値（uniform）を1行で。Effect / PostEffect の shader で選び、値は params に
+  // シェーダー: 自分のシェーダーと、使っている標準のものだけ（調整できる値を1行で）
   const shaders = [...p.registry.shaders.values()];
-  const own = shaders.filter((d) => !d.path.startsWith('std:'));
-  out.push(`## shaders（Effect・PostEffect の shader で選ぶ。値は params.名前。書き方は ages schema <dir> std:flash）`);
-  for (const d of own) out.push(`${d.path} ${d.desc} | ${Object.entries(d.uniforms).map(([k, f]) => `${k}:${brief(f)}`).join(' ') || '（値なし）'}${d.errors.length ? ` ⚠ ${d.errors.length}件の問題（ages check）` : ''}`);
-  out.push(`標準: ${shaders.filter((d) => d.path.startsWith('std:')).map((d) => `${d.path}(${Object.keys(d.uniforms).join(',')})`).join(' ')}`);
+  const ownShaders = shaders.filter((d) => !d.path.startsWith('std:'));
+  const used = usedShaders(p);
+  const stdUsed = shaders.filter((d) => d.path.startsWith('std:') && used.has(d.path));
+  if (ownShaders.length || stdUsed.length) {
+    out.push('## shaders（Effect・PostEffect の shader で選ぶ。値は params.名前）');
+    for (const d of ownShaders) out.push(`${d.path} ${d.desc} | ${Object.entries(d.uniforms).map(([k, f]) => `${k}:${brief(f)}`).join(' ') || '（値なし）'}${d.errors.length ? ` ⚠ ${d.errors.length}件の問題（ages check）` : ''}`);
+    if (stdUsed.length) out.push(`標準: ${stdUsed.map((d) => `${d.path}(${Object.keys(d.uniforms).join(',')})`).join(' ')}`);
+  }
 
   // 当たり判定のグループ（Collider.group と、重なり始めを記録する相手 with）
   const groups = collisionGroups(p);
@@ -43,30 +49,43 @@ export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, l
   if (p.saves.size) out.push(`保存データ（ages run --save で、その状態から始める）: ${[...p.saves].map(([path, v]) => (v.error ? `${path} ⚠` : `${path}(${Object.keys(v.data ?? {}).join(',')})`)).join('  ')}`);
 
   out.push('## systems（実行順。r=読む w=書く）');
-  p.registry.systems.forEach((s, i) => {
+  // 標準のシステムは、続いている所を1行にまとめる（中身は ages schema guide で引く）
+  const systems = p.registry.systems;
+  for (let i = 0; i < systems.length; i++) {
+    const s = systems[i];
+    if (s.name.startsWith('std.')) {
+      let j = i;
+      while (j + 1 < systems.length && systems[j + 1].name.startsWith('std.')) j++;
+      out.push(`${i + 1}${j > i ? `-${j + 1}` : ''} 標準: ${systems.slice(i, j + 1).map((x) => x.name).join(' ')}`);
+      i = j;
+      continue;
+    }
     const rw = [s.reads?.length ? `r:${s.reads.join(',')}` : '', s.writes?.length ? `w:${s.writes.join(',')}` : ''].filter(Boolean).join(' ');
     out.push(`${i + 1} ${s.name} ${s.desc}${rw ? ' ' + rw : ''}${s.scenes ? ` シーン:${s.scenes.join(',')}だけ` : ''}`);
-  });
+  }
 
   if (p.registry.tables.size) {
     out.push('## tables（$表.行.列 で参照。中身は ages table <dir> <表>）');
     for (const def of p.registry.tables.values()) {
       const rows = p.docs.tables.get(def.name)?.rows ?? [];
+      const std = p.registry.stdTables.has(def.name);
+      if (std && !rows.length) continue;
       const ids = rows.map((r) => r.id);
       const lk = Object.keys(locks).filter((k) => k.startsWith(`$${def.name}.`)).length;
       const tc = Object.keys(touched).filter((k) => k.startsWith(`$${def.name}.`)).length;
-      const cols = Object.entries(def.columns).map(([k, f]) => `${k}:${brief(f)}`).join(' ');
-      out.push(`$${def.name} ${rows.length}行${def.desc ? ' ' + def.desc : ''} | ${cols} | 行: ${ids.slice(0, 8).join(' ')}${ids.length > 8 ? ' …' : ''}${lk ? ` 🔒${lk}` : ''}${tc ? ` ★${tc}` : ''}`);
+      // 標準の表は列が決まっているので、説明と列を省く（ages schema <dir> $表 で引ける）
+      const head = std ? '（標準）' : `${def.desc ? ' ' + def.desc : ''} | ${Object.entries(def.columns).map(([k, f]) => `${k}:${brief(f)}`).join(' ')}`;
+      out.push(`$${def.name} ${rows.length}行${head} | 行: ${ids.slice(0, 8).join(' ')}${ids.length > 8 ? ' …' : ''}${lk ? ` 🔒${lk}` : ''}${tc ? ` ★${tc}` : ''}`);
     }
   }
 
-  out.push('## prefabs（@名前 で参照）');
+  if (p.docs.prefabs.size) out.push('## prefabs（@名前 で参照）');
   for (const pf of p.docs.prefabs.values()) {
     const tags = pf.tags?.length ? ` tags:${pf.tags.join(',')}` : '';
     out.push(`@${pf.name}${pf.desc ? ' ' + pf.desc : ''} [${Object.keys(pf.components).join(' ')}]${tags}${marks(touched, locks, `@${pf.name}`)}`);
   }
 
-  out.push(`## scenes（シーン#ID "名前" [コンポーネント]。切り替えは ctx.scene.goto。tag keep の物は切り替えても残る）${gotos.size ? `\ngoto の行き先（コード）: ${[...gotos.keys()].join(' ')}` : ''}`);
+  out.push(`## scenes（シーン#ID "名前" [コンポーネント]）${gotos.size ? `\ngoto の行き先（コード）: ${[...gotos.keys()].join(' ')}` : ''}`);
   for (const s of p.docs.scenes.values()) {
     out.push(`${s.name}（${s.entities.length}体）${s.name === c.startScene ? ' 開始' : ''}${s.desc ? ' ' + s.desc : ''}`);
     for (const e of s.entities) {
@@ -76,7 +95,7 @@ export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, l
   }
 
   if (p.assets.length) {
-    out.push('## assets（画像は 幅x高さ、音は 秒。シートは 格子なら コマの大きさ×コマ数、自由なら コマ数と名前。使っている所は ages assets <dir> --refs <場所>）');
+    out.push('## assets（画像 幅x高さ・音 秒・シート 格子のコマの大きさ×数か、自由なコマ数と名前。使っている所は ages assets --refs）');
     out.push(...renderAssets(p, { touched, locks, code }));
   }
   if (c.editorWindows?.length) {
@@ -87,7 +106,8 @@ export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, l
       out.push(`${w.id ?? '?'}「${w.title ?? ''}」${w.desc ? ' ' + w.desc : ''} | 変える: ${edits} | ${w.path}`);
     }
   }
-  out.push(`## 🔒ロック ${Object.keys(locks).length}件（AIは変更不可。理由があれば人に提案する） / ★人が調整 ${Object.keys(touched).length}件（変更前に人へ確認）`);
+  const nl = Object.keys(locks).length, nt = Object.keys(touched).length;
+  if (nl || nt) out.push(`## 🔒ロック ${nl}件（AIは変更不可。理由があれば人に提案する） / ★人が調整 ${nt}件（変更前に人へ確認）`);
   return out.join('\n');
 }
 
@@ -161,6 +181,17 @@ export function compactPaths(paths: string[]): string {
     groups.set(head, [...(groups.get(head) ?? []), leaf]);
   }
   return [...groups].map(([head, leaves]) => leaves.length === 1 ? (leaves[0] ? `${head}.${leaves[0]}` : head) : `${head}.{${leaves.filter(Boolean).join(',')}}`).join(' ');
+}
+
+/** シーン・プレハブの Effect・PostEffect が選んでいるシェーダー */
+function usedShaders(p: Project): Set<string> {
+  const out = new Set<string>();
+  const add = (comps: Record<string, Record<string, unknown>>) => {
+    for (const c of ['Effect', 'PostEffect']) if (typeof comps[c]?.shader === 'string') out.add(comps[c].shader as string);
+  };
+  for (const pf of p.docs.prefabs.values()) add(pf.components);
+  for (const s of p.docs.scenes.values()) for (const e of s.entities) add(e.components);
+  return out;
 }
 
 /** シーン・プレハブの Collider のグループと、それぞれの with */
