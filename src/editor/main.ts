@@ -142,7 +142,7 @@ window.addEventListener('keydown', (e) => {
   if (!scene || !ids.length) return;
   if (mod && k === 'd') {
     e.preventDefault();
-    const r = duplicateOps(scene, ids);
+    const r = duplicateOps(scene, ids, 16, new Map(Object.entries(app.state.prefabs)));
     void app.patch(r.ops, 'hierarchy').then((ok) => { if (ok) app.selectMany(r.ids); });
   } else if ((e.key === 'Delete' || e.key === 'Backspace') && !mod) {
     e.preventDefault();
@@ -151,7 +151,7 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     const step = e.shiftKey ? app.snap() || 10 : 1;
     const [dx, dy] = e.key === 'ArrowLeft' ? [-step, 0] : e.key === 'ArrowRight' ? [step, 0] : e.key === 'ArrowUp' ? [0, -step] : [0, step];
-    const ops = nudgeOps(scene, ids, dx, dy);
+    const ops = nudgeOps(app.sceneView(app.scene) ?? scene, ids, dx, dy);
     if (ops.length) void app.patch(ops, 'game');
   }
 });

@@ -3,7 +3,14 @@
 export interface EntityData {
   id: string;
   name: string;
+  /**
+   * プレハブのインスタンス（あれば、プレハブとつながる）。components にはプレハブと違う値だけを書き、
+   * 使うときにプレハブと重ねる（プレハブを直すと伝わる。core/variant.ts の resolveEntity）
+   */
+  prefab?: string;
   tags?: string[];
+  /** インスタンスで、プレハブから外した部品 */
+  remove?: string[];
   components: Record<string, Record<string, unknown>>;
 }
 

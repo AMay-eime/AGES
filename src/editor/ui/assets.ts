@@ -8,6 +8,8 @@ import { ASSET_LABEL, brief, type AssetKind } from '../../core/schema.ts';
 
 /** ドラッグで運ぶアセットの場所（ゲームの画面・インスペクタ・フォルダへ落とせる） */
 export const ASSET_MIME = 'application/x-ages-asset';
+/** プロジェクトのプレハブをゲームの画面へ運ぶとき（落とした所にインスタンスを置く） */
+export const PREFAB_MIME = 'application/x-ages-prefab';
 
 type Asset = App['state']['assets'][number];
 

@@ -2,6 +2,7 @@
 // キーボード（Ctrl+D・Delete）も同じ操作（edit-ops.ts）を使う
 import { defineExtension } from '../window-api.ts';
 import { duplicateOps, prefabOps, removeOps } from '../edit-ops.ts';
+import { resolveEntity } from '../../core/variant.ts';
 import { parseAddress } from '../../core/docs.ts';
 
 /** 住所の並び → シーンの名前と ID の並び（同じシーンのものだけ） */
@@ -21,7 +22,7 @@ export default defineExtension({
         const { scene, ids } = split(targets);
         const doc = api.state.scenes[scene];
         if (!doc) return;
-        const r = duplicateOps(doc, ids);
+        const r = duplicateOps(doc, ids, 16, new Map(Object.entries(api.state.prefabs)));
         if (await api.patch(r.ops)) r.ids.forEach((id, i) => api.select(`${scene}#${id}`, i > 0));
       },
     },
@@ -39,11 +40,14 @@ export default defineExtension({
       when: (t, api) => t.length === 1 && !api.playing,
       async run(targets, api) {
         const { scene, ids } = split(targets);
-        const e = api.state.scenes[scene]?.entities.find((x) => x.id === ids[0]);
-        if (!e) return;
+        const raw = api.state.scenes[scene]?.entities.find((x) => x.id === ids[0]);
+        if (!raw) return;
+        // インスタンスなら、プレハブと重ねた今の中身から作る。作った後、この物は新しいプレハブにつながる（位置だけが物の値として残る）
+        let e = raw;
+        try { e = resolveEntity(new Map(Object.entries(api.state.prefabs)), raw); } catch { /* プレハブがない: 書いてある値だけで */ }
         const name = await api.ask('プレハブの名前（英数字・_・-）', e.id.replace(/[^A-Za-z0-9_-]/g, '_'));
         if (!name) return;
-        if (await api.patch(prefabOps(e, name))) { api.notify(`@${name} を作りました（コードからは ctx.spawn('${name}')）`); api.select(`@${name}`); }
+        if (await api.patch(prefabOps(e, name, `${scene}#${e.id}`))) { api.notify(`@${name} を作り、${e.id} をつなぎました（コードからは ctx.spawn('${name}')）`); api.select(`@${name}`); }
       },
     },
   ],

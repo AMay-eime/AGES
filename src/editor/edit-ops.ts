@@ -1,7 +1,8 @@
 // シーンの編集操作（複製・削除・ずらす・プレハブにする）の操作（op）を作る。
 // キーボード（Ctrl+D・Delete・矢印）と右クリックのメニュー（本体の拡張 builtin/entity-menu.ts）が同じものを使う。
 import type { Op } from '../core/patch.ts';
-import type { EntityData, SceneDoc } from '../core/docs.ts';
+import type { EntityData, PrefabDoc, SceneDoc } from '../core/docs.ts';
+import { resolveEntity } from '../core/variant.ts';
 
 /** ID の後ろに番号を付けて、まだ使われていない ID にする（enemy → enemy_2） */
 export function freshId(base: string, taken: Set<string>): string {
@@ -11,8 +12,8 @@ export function freshId(base: string, taken: Set<string>): string {
   return `${stem}_${i}`;
 }
 
-/** 物を複製する（offset だけずらす）。作った物の ID も返す */
-export function duplicateOps(scene: SceneDoc, ids: string[], offset = 16): { ops: Op[]; ids: string[] } {
+/** 物を複製する（offset だけずらす）。作った物の ID も返す。プレハブのインスタンスは、同じプレハブのインスタンスとして複製する（prefabs で位置を求める） */
+export function duplicateOps(scene: SceneDoc, ids: string[], offset = 16, prefabs?: Map<string, PrefabDoc>): { ops: Op[]; ids: string[] } {
   const taken = new Set(scene.entities.map((e) => e.id));
   const ops: Op[] = [];
   const out: string[] = [];
@@ -22,9 +23,12 @@ export function duplicateOps(scene: SceneDoc, ids: string[], offset = 16): { ops
     const nid = freshId(e.id, taken);
     taken.add(nid);
     const components = structuredClone(e.components);
-    if (components.Transform) components.Transform = { ...components.Transform, x: Number(components.Transform.x ?? 0) + offset, y: Number(components.Transform.y ?? 0) + offset };
-    else if (components.UI) components.UI = { ...components.UI, x: Number(components.UI.x ?? 0) + offset, y: Number(components.UI.y ?? 0) + offset };
-    ops.push({ op: 'addEntity', scene: scene.name, entity: { id: nid, name: e.name, ...(e.tags?.length ? { tags: [...e.tags] } : {}), components } });
+    // 位置はプレハブと重ねた値から（インスタンスで位置を書いていなくても、ずらした位置を書く）
+    let r = e;
+    if (e.prefab && prefabs) { try { r = resolveEntity(prefabs, e); } catch { /* プレハブがない */ } }
+    if (r.components.Transform) components.Transform = { ...(components.Transform ?? {}), x: Number(r.components.Transform.x ?? 0) + offset, y: Number(r.components.Transform.y ?? 0) + offset };
+    else if (r.components.UI) components.UI = { ...(components.UI ?? {}), x: Number(r.components.UI.x ?? 0) + offset, y: Number(r.components.UI.y ?? 0) + offset };
+    ops.push({ op: 'addEntity', scene: scene.name, entity: { id: nid, name: e.name, ...(e.prefab ? { prefab: e.prefab } : {}), ...(e.tags?.length ? { tags: [...e.tags] } : {}), ...(e.remove?.length ? { remove: [...e.remove] } : {}), components } });
     out.push(nid);
   }
   return { ops, ids: out };
@@ -58,11 +62,13 @@ export function movable(scene: SceneDoc, e: EntityData): 'UI' | 'Transform' | nu
 }
 
 /** 物からプレハブを作る（位置は出すときに決めるので x・y は入れない） */
-export function prefabOps(e: EntityData, name: string): Op[] {
+export function prefabOps(e: EntityData, name: string, link?: string): Op[] {
   const components = structuredClone(e.components);
   if (components.Transform) {
     const { x: _x, y: _y, ...rest } = components.Transform;
     components.Transform = rest;
   }
-  return [{ op: 'addPrefab', name, components, ...(e.tags?.length ? { tags: [...e.tags] } : {}) }];
+  const add: Op = { op: 'addPrefab', name, components, ...(e.tags?.length ? { tags: [...e.tags] } : {}) };
+  // link（シーン#ID）を渡すと、その物を作ったプレハブにつなぐ（位置だけが物の値として残る）
+  return link ? [add, { op: 'linkPrefab', target: link, prefab: name }] : [add];
 }

@@ -16,7 +16,7 @@ import { appendLog, localTime, lockedHits, markTouched, movePrefixTouched, moveT
 import { agesHome, lockDiff, verifyLocks, type LockIntegrity } from './seal.ts';
 import { scanAssets, type AssetInfo } from './assets.ts';
 import { assetRefs, codePrefabRefs, codeRefs, codeSceneRefs, isUnder } from '../core/assets.ts';
-import { resolvePrefab } from '../core/variant.ts';
+import { resolveEntity, resolvePrefab } from '../core/variant.ts';
 import { allowedByDrawers, checkWindows, loadWindows, unlistedWindows, withinEdits, type WindowInfo } from './windows.ts';
 import { Journal, inverseFiles, type DocState, type FileMove, type TxRecord } from './journal.ts';
 import { revert as revertValue, same } from '../core/revert.ts';
@@ -137,7 +137,8 @@ export class Project {
         return null;
       }
       if (a.field) { getValue(this.docs, this.registry, address); return null; }
-      const holder = a.kind === 'prefab' ? this.registry.findPrefab(a.doc) : this.docs.scenes.get(a.doc)?.entities.find((e) => e.id === a.entity);
+      const sc = a.kind === 'scene' ? this.docs.scenes.get(a.doc) : undefined;
+      const holder = a.kind === 'prefab' ? this.registry.findPrefab(a.doc) : sc && this.resolvedScene(sc).entities.find((e) => e.id === a.entity);
       if (!holder) return a.kind === 'prefab' ? `プレハブ ${a.doc} はありません${suggest(a.doc, [...this.docs.prefabs.keys()])}` : `シーン ${a.doc} に ${a.entity} はありません`;
       if (a.component && !holder.components[a.component]) return `${address.split('.')[0]} に ${a.component} は付いていません${suggest(a.component, Object.keys(holder.components))}`;
       return null;
@@ -304,6 +305,11 @@ export class Project {
     }
   }
 
+  /** シーンの物を、プレハブのインスタンスはプレハブと重ねた中身にしたもの（読むだけ。プレハブがない物はそのまま） */
+  resolvedScene(s: SceneDoc): SceneDoc {
+    return { ...s, entities: s.entities.map((e) => { try { return resolveEntity(this.docs.prefabs, e); } catch { return e; } }) };
+  }
+
   /** ロックできる住所の候補（ロックマネージャーで打つときの補完）。text を含むものを最大 limit 件 */
   lockCandidates(text: string, limit = 40): string[] {
     const out: string[] = [];
@@ -312,7 +318,7 @@ export class Project {
     const holder = (base: string, comps: Record<string, Record<string, unknown>>) => {
       for (const cname of Object.keys(comps)) for (const f of Object.keys(this.registry.components.get(cname)?.fields ?? {})) push(`${base}.${cname}.${f}`);
     };
-    for (const sc of this.docs.scenes.values()) for (const e of sc.entities) holder(`${sc.name}#${e.id}`, e.components);
+    for (const sc of this.docs.scenes.values()) for (const e of this.resolvedScene(sc).entities) holder(`${sc.name}#${e.id}`, e.components);
     for (const pf of this.registry.allPrefabs()) holder(`@${pf.name}`, pf.components);
     for (const t of this.docs.tables.values()) for (const r of t.rows) for (const c of Object.keys(this.registry.tables.get(t.name)?.columns ?? {})) push(`$${t.name}.${r.id}.${c}`);
     for (const a of this.assets) { if (a.kind === 'image') push(`sheet:${a.path}`); push(`file:${a.path}`); }
@@ -452,7 +458,15 @@ export class Project {
         }
       }
     };
-    for (const s of this.docs.scenes.values()) {
+    for (const raw of this.docs.scenes.values()) {
+      // プレハブのインスタンスは、プレハブと重ねた中身で検べる（つながるプレハブがあること・外した部品がプレハブにあること）
+      for (const e of raw.entities) {
+        if (!e.prefab) continue;
+        if (!this.docs.prefabs.has(e.prefab)) { errs.push(`${raw.name}#${e.id}.prefab: プレハブ ${e.prefab} はありません${suggest(e.prefab, [...this.docs.prefabs.keys()])}`); continue; }
+        const base = this.registry.findPrefab(e.prefab);
+        for (const c of e.remove ?? []) if (!base?.components[c]) errs.push(`${raw.name}#${e.id}.remove: プレハブ @${e.prefab} に部品 ${c} はありません${suggest(c, Object.keys(base?.components ?? {}))}`);
+      }
+      const s = this.resolvedScene(raw);
       const ids = new Set<string>();
       for (const e of s.entities) {
         if (ids.has(e.id)) errs.push(`${s.name}#${e.id}: IDが重複しています`);
@@ -542,7 +556,7 @@ export class Project {
         if (typeof k === 'string' && k && !keys.has(k)) errs.push(`${where}.Text.key: 表 $text に "${k}" の行がありません${suggest(k, [...keys])}（行を足すなら addRow{table:"text",row:{id:"${k}",${langs[0]}:"…"}}）`);
       };
       for (const pf of this.docs.prefabs.values()) checkKey(`@${pf.name}`, pf.components.Text);
-      for (const sc of this.docs.scenes.values()) for (const e of sc.entities) checkKey(`${sc.name}#${e.id}`, e.components.Text);
+      for (const sc of this.docs.scenes.values()) for (const e of this.resolvedScene(sc).entities) checkKey(`${sc.name}#${e.id}`, e.components.Text);
     }
     // 保存データのファイル: 形と、物の保存（saveWorld）の中のコンポーネント
     for (const [path, sv] of this.saves) {
@@ -565,7 +579,7 @@ export class Project {
         for (const w of (c.with as string[] | undefined) ?? []) withs.push([where, w]);
       };
       for (const pf of this.docs.prefabs.values()) scan(`@${pf.name}`, pf.components.Collider);
-      for (const sc of this.docs.scenes.values()) for (const e of sc.entities) scan(`${sc.name}#${e.id}`, e.components.Collider);
+      for (const sc of this.docs.scenes.values()) for (const e of this.resolvedScene(sc).entities) scan(`${sc.name}#${e.id}`, e.components.Collider);
       for (const [where, w] of withs) if (!groups.has(w)) errs.push(`${where}.Collider.with: グループ "${w}" の Collider がありません${suggest(w, [...groups])}（ある名前: ${[...groups].join(', ') || 'なし'}）`);
     }
     for (const a of this.assets) {

@@ -7,12 +7,13 @@ import type { Registry } from './registry.ts';
 import { baseNameOf, checkSheet, findFrame, sheetPathOf, toExplicit, type FrameDef, type FrameRef, type SheetDef } from './sheet.ts';
 import { frameMapper, remapRef } from './slice.ts';
 import { assetRefs, checkAssetPath, extOf, isUnder, kindOf, leafRefs } from './assets.ts';
-import { baseChain, resolvePrefab } from './variant.ts';
+import { baseChain, resolveEntity, resolvePrefab } from './variant.ts';
 import { same } from './revert.ts';
 
 export type Op =
   | { op: 'set'; path: string; value: unknown }
-  | { op: 'addEntity'; scene: string; entity: { id: string; name?: string; tags?: string[]; components?: Record<string, Record<string, unknown>> } }
+  | { op: 'addEntity'; scene: string; entity: { id: string; name?: string; prefab?: string; tags?: string[]; remove?: string[]; components?: Record<string, Record<string, unknown>> } }
+  | { op: 'linkPrefab'; target: string; prefab: string | null }
   | { op: 'removeEntity'; scene: string; id: string }
   | { op: 'addComponent'; target: string; component: string; values?: Record<string, unknown> }
   | { op: 'removeComponent'; target: string; component: string }
@@ -88,7 +89,8 @@ export const OP_DOCS: Record<Op['op'], string> = {
   insert: '{path,value?,index?} リストに足す（path はリストの住所。index を省くと最後、value を省くと既定値）',
   removeItem: '{path:"…[2]"} リストから消す',
   moveItem: '{path:"…[2]",to} リストの中で動かす（to は動かした後の番号）',
-  addEntity: '{scene,entity:{id,name?,tags?,components?}} 物を足す',
+  addEntity: '{scene,entity:{id,name?,prefab?,tags?,components?}} 物を足す。prefab でプレハブのインスタンス（つながり、components にはプレハブと違う値だけ書く）',
+  linkPrefab: '{target,prefab|null} シーンの物をプレハブにつなぐ（違う値だけが物の値になる）・null で切り離す（今の値をまるごと持つ）。どちらも今の値は変わらない',
   removeEntity: '{scene,id} 物を消す',
   addComponent: '{target,component,values?} コンポーネントを付ける（target は main#player か @enemy）',
   removeComponent: '{target,component} コンポーネントを外す',
@@ -110,7 +112,7 @@ export const OP_DOCS: Record<Op['op'], string> = {
   removePrefab: '{name} プレハブを消す（使われているもの・派生の元は消せない）',
   renamePrefab: '{name,to} プレハブの名前を変える（prefab 型の値・派生の元・🔒★も直る。コードの中は直さない）',
   setPrefab: '{name,desc?,tags?,base?} 説明・タグ・派生の元を変える（base: null で切り離す。どちらも今の値は変わらない）',
-  revert: '{path} 書いた値を消して、派生なら元の値に、そうでなければ既定値に戻す（派生では @x.部品 で部品ごと）',
+  revert: '{path} 書いた値を消して、派生・インスタンスならプレハブ（元）の値に、そうでなければ既定値に戻す（@x.部品・シーン#ID.部品 で部品ごと）',
   dockUI: '{target,edge,margin?} UI を画面（親）の端・角に付ける。edge は topLeft top topRight left center right bottomLeft bottom bottomRight、margin は端からの間(px)。例 {"op":"dockUI","target":"main#hp","edge":"topRight","margin":8}',
   attachUI: '{target,to,side?,gap?,align?} UI を別の UI の隣に接して置く（重ならず、相手と一緒に動く）。side は right left below above、align は start center end。例 {"op":"attachUI","target":"main#lives","to":"hp","side":"below","gap":4}',
 };
@@ -296,7 +298,7 @@ function pruneParams(reg: Registry, sl: Slot, path: string, field: string, chang
 
 /** 値を読む。フィールドが省略されていれば既定値を返す（isDefault=true）。 */
 export function getValue(docs: Docs, reg: Registry, path: string): { value: unknown; isDefault: boolean } {
-  if (path.startsWith('@')) docs = resolvedView(docs, path);
+  if (path.startsWith('@') || (path.includes('#') && !path.startsWith('$') && !path.startsWith('sheet:'))) docs = resolvedView(docs, path);
   if (path.startsWith('sheet:')) {
     const image = path.slice('sheet:'.length).split('|')[0];
     return { value: docs.sheets.get(image) ?? null, isDefault: false };
@@ -337,16 +339,33 @@ export function setValue(docs: Docs, reg: Registry, path: string, value: unknown
       if (inherited !== undefined) comp[a.field] = structuredClone(inherited);
     }
   }
+  const ent = a.kind === 'scene' ? docs.scenes.get(a.doc)?.entities.find((e) => e.id === a.entity) : undefined;
+  if (ent?.prefab && a.component && a.field) {
+    // プレハブのインスタンス: プレハブから受け継いでいる値なら、プレハブの値を写してから書く（変えた値になる）
+    const comp = (ent.components[a.component] ??= {});
+    if (!(a.field in comp)) {
+      const inherited = resolveEntity(docs.prefabs, { ...ent, components: {} }).components[a.component]?.[a.field];
+      if (inherited !== undefined) comp[a.field] = structuredClone(inherited);
+    }
+  }
   const s = slotOf(docs, reg, a, path);
   s.write(setIn(s.topValue, s.sub, structuredClone(value)));
   return s.key;
 }
 
-/** 住所が派生のプレハブを指すなら、そのプレハブを元と重ねたものに差し替えた見え方（読むだけ） */
+/** 住所が派生のプレハブ・プレハブのインスタンスを指すなら、プレハブと重ねたものに差し替えた見え方（読むだけ） */
 function resolvedView(docs: Docs, path: string): Docs {
-  const name = parseAddress(path).doc;
-  if (!docs.prefabs.get(name)?.base) return docs;
-  return { ...docs, prefabs: new Map(docs.prefabs).set(name, resolvePrefab(docs.prefabs, name)) };
+  const a = parseAddress(path);
+  if (a.kind === 'scene') {
+    const sc = docs.scenes.get(a.doc);
+    const i = sc?.entities.findIndex((e) => e.id === a.entity) ?? -1;
+    if (!sc || i < 0 || !sc.entities[i].prefab) return docs;
+    const entities = [...sc.entities];
+    entities[i] = resolveEntity(docs.prefabs, entities[i]);
+    return { ...docs, scenes: new Map(docs.scenes).set(a.doc, { ...sc, entities }) };
+  }
+  if (!docs.prefabs.get(a.doc)?.base) return docs;
+  return { ...docs, prefabs: new Map(docs.prefabs).set(a.doc, resolvePrefab(docs.prefabs, a.doc)) };
 }
 
 /** 操作をまとめて適用する。1つでも失敗したら何も変えない。 */
@@ -358,12 +377,16 @@ export function applyOps(docs: Docs, reg: Registry, ops: Op[]): PatchResult {
   // 派生のプレハブは、元と重ねた写しの上で操作し、終わってから「変えたフィールドだけ」を書き戻す（どの操作もそのまま派生に使える）
   const track = new VariantTrack(work);
   for (const p of [...work.prefabs.values()]) if (p.base) track.add(p.name);
+  // シーンに置いたプレハブのインスタンスも同じ: プレハブと重ねた写しの上で操作し、終わってから「プレハブと違う値だけ」を書き戻す
+  const itrack = new InstanceTrack(work);
+  itrack.addAll();
   ops.forEach((op, i) => {
     try {
       if (op.op === 'moveAsset' || op.op === 'removeAsset') assetOp(work, reg, op, changes, dirty, files);
-      else if (op.op === 'addScene' || op.op === 'removeScene' || op.op === 'renameScene' || op.op === 'setScene') sceneOp(work, reg, op, changes, dirty);
-      else if (op.op === 'addPrefab' || op.op === 'removePrefab' || op.op === 'renamePrefab' || op.op === 'setPrefab' || op.op === 'revert') prefabOp(work, reg, op, changes, dirty, track);
-      else applyOne(work, reg, op, changes, dirty);
+      else if (op.op === 'addScene' || op.op === 'removeScene' || op.op === 'renameScene' || op.op === 'setScene') sceneOp(work, reg, op, changes, dirty, itrack);
+      else if (op.op === 'addPrefab' || op.op === 'removePrefab' || op.op === 'renamePrefab' || op.op === 'setPrefab' || op.op === 'revert') prefabOp(work, reg, op, changes, dirty, track, itrack);
+      else if (op.op === 'linkPrefab') linkPrefab(work, reg, op, changes, dirty, itrack);
+      else applyOne(work, reg, op, changes, dirty, itrack);
     } catch (err) {
       throw new PatchError(i, err instanceof Error ? err.message : String(err));
     }
@@ -371,6 +394,8 @@ export function applyOps(docs: Docs, reg: Registry, ops: Op[]): PatchResult {
   try {
     track.writeBack(dirty);
     track.inherited(changes);
+    itrack.writeBack(dirty);
+    itrack.inherited(changes);
   } catch (err) {
     throw new PatchError(ops.length - 1, err instanceof Error ? err.message : String(err));
   }
@@ -389,7 +414,7 @@ export function applyOps(docs: Docs, reg: Registry, ops: Op[]): PatchResult {
   return { changes, dirty, files };
 }
 
-function applyOne(docs: Docs, reg: Registry, op: Op, changes: Change[], dirty: Set<string>): void {
+function applyOne(docs: Docs, reg: Registry, op: Op, changes: Change[], dirty: Set<string>, itrack?: InstanceTrack): void {
   switch (op.op) {
     case 'set': {
       const a = parseAddress(op.path);
@@ -520,10 +545,14 @@ function applyOne(docs: Docs, reg: Registry, op: Op, changes: Change[], dirty: S
       if (!/^[A-Za-z0-9_-]+$/.test(op.entity.id)) throw new Error(`エンティティID "${op.entity.id}" には英数字・_・- だけが使えます`);
       if (s.entities.some((e) => e.id === op.entity.id)) throw new Error(`シーン ${op.scene} に ${op.entity.id} はすでにあります`);
       const comps = op.entity.components ?? {};
-      for (const [name, values] of Object.entries(comps)) reg.build(name, values, `${op.scene}#${op.entity.id}`);
-      const e: EntityData = { id: op.entity.id, name: op.entity.name ?? op.entity.id, components: structuredClone(comps) };
+      const pf = op.entity.prefab;
+      if (pf !== undefined && (typeof pf !== 'string' || !docs.prefabs.has(pf))) throw new Error(`プレハブ ${pf} はありません${suggest(String(pf), [...docs.prefabs.keys()])}`);
+      // プレハブのインスタンス: プレハブとつながり、components にはプレハブと違う値だけを書く（プレハブと重ねて検証する）
+      const e: EntityData = pf ? { id: op.entity.id, name: op.entity.name ?? op.entity.id, prefab: pf, ...(op.entity.remove?.length ? { remove: [...op.entity.remove] } : {}), components: structuredClone(comps) } : { id: op.entity.id, name: op.entity.name ?? op.entity.id, components: structuredClone(comps) };
+      for (const [name, values] of Object.entries(pf ? resolveEntity(docs.prefabs, e).components : comps)) reg.build(name, values, `${op.scene}#${op.entity.id}`);
       if (op.entity.tags?.length) e.tags = [...op.entity.tags];
       s.entities.push(e);
+      if (pf) itrack?.add(op.scene, e.id, true);
       changes.push({ path: `${op.scene}#${e.id}`, to: 'added' });
       dirty.add(`scene:${op.scene}`);
       return;
@@ -760,7 +789,7 @@ function fixLeaves(docs: Docs, reg: Registry, fix: (f: Field, v: unknown) => unk
 const SCENE_NAME = /^[A-Za-z0-9_-]+$/;
 
 /** シーンを作る・消す・名前を変える・説明と開始シーン */
-function sceneOp(docs: Docs, reg: Registry, op: Extract<Op, { op: 'addScene' | 'removeScene' | 'renameScene' | 'setScene' }>, changes: Change[], dirty: Set<string>): void {
+function sceneOp(docs: Docs, reg: Registry, op: Extract<Op, { op: 'addScene' | 'removeScene' | 'renameScene' | 'setScene' }>, changes: Change[], dirty: Set<string>, itrack?: InstanceTrack): void {
   const need = (name: string) => {
     const s = docs.scenes.get(name);
     if (!s) throw new Error(`シーン ${name} はありません${suggest(String(name), [...docs.scenes.keys()])}`);
@@ -776,6 +805,8 @@ function sceneOp(docs: Docs, reg: Registry, op: Extract<Op, { op: 'addScene' | '
       fresh(op.name);
       const entities = op.copy ? structuredClone(need(op.copy).entities) : [];
       docs.scenes.set(op.name, { name: op.name, ...(op.desc ? { desc: op.desc } : {}), entities });
+      // 写したインスタンスは、写し元と同じようにプレハブとつながったまま（プレハブと違う値だけを書く）
+      if (op.copy) itrack?.copyScene(op.copy, op.name);
       dirty.add(`scene:${op.name}`);
       changes.push({ path: `scene:${op.name}`, to: 'added' });
       return;
@@ -797,6 +828,7 @@ function sceneOp(docs: Docs, reg: Registry, op: Extract<Op, { op: 'addScene' | '
       docs.scenes.delete(op.name);
       s.name = op.to;
       docs.scenes.set(op.to, s);
+      itrack?.renameScene(op.name, op.to);
       dirty.add(`scene:${op.name}`);
       dirty.add(`scene:${op.to}`);
       changes.push({ path: `scene:${op.name}`, from: op.name, to: `renamed:${op.to}` });
@@ -944,8 +976,143 @@ function diffBack(t: Tracked, after: PrefabDoc, base: PrefabDoc): PrefabDoc {
   return { name: after.name, base: after.base, ...(desc ? { desc } : {}), ...(tags ? { tags } : {}), ...(remove.size ? { remove: [...remove] } : {}), components: comps };
 }
 
+interface TrackedEntity {
+  scene: string;
+  id: string;
+  /** 操作の前の、プレハブと重ねた写し */
+  before: EntityData;
+  /** 操作の前のファイルの中身（プレハブとの差） */
+  raw: EntityData;
+  isNew: boolean;
+}
+
+/** シーンに置いたプレハブのインスタンスを、操作のあいだだけプレハブと重ねた写しにしておく（VariantTrack と同じやり方） */
+class InstanceTrack {
+  private docs: Docs;
+  readonly items = new Map<string, TrackedEntity>();
+  constructor(docs: Docs) {
+    this.docs = docs;
+  }
+
+  addAll(): void {
+    for (const sc of this.docs.scenes.values()) for (const e of sc.entities) if (e.prefab) this.add(sc.name, e.id);
+  }
+
+  /** インスタンスを、プレハブと重ねた写しに置き換える（prefab・remove は印として残す） */
+  add(scene: string, id: string, isNew = false): void {
+    const sc = this.docs.scenes.get(scene);
+    const i = sc?.entities.findIndex((e) => e.id === id) ?? -1;
+    if (!sc || i < 0) return;
+    const raw = sc.entities[i];
+    let resolved: EntityData;
+    try { resolved = resolveEntity(this.docs.prefabs, raw); } catch { return; } // プレハブがない: そのまま（検証で知らせる）
+    const copy: EntityData = { id: raw.id, name: raw.name, prefab: raw.prefab, ...(resolved.tags ? { tags: [...resolved.tags] } : {}), ...(raw.remove ? { remove: [...raw.remove] } : {}), components: structuredClone(resolved.components) };
+    sc.entities[i] = copy;
+    this.items.set(`${scene}#${id}`, { scene, id, before: structuredClone(copy), raw: structuredClone(raw), isNew });
+  }
+
+  drop(scene: string, id: string): void {
+    this.items.delete(`${scene}#${id}`);
+  }
+
+  copyScene(from: string, to: string): void {
+    for (const t of [...this.items.values()].filter((x) => x.scene === from)) this.items.set(`${to}#${t.id}`, { ...structuredClone(t), scene: to, isNew: true });
+  }
+
+  renameScene(from: string, to: string): void {
+    for (const [k, t] of [...this.items]) if (t.scene === from) { this.items.delete(k); this.items.set(`${to}#${t.id}`, { ...t, scene: to }); }
+  }
+
+  renamePrefab(from: string, to: string): void {
+    for (const t of this.items.values()) if (t.raw.prefab === from) t.raw = { ...t.raw, prefab: to };
+  }
+
+  /** 写しを、プレハブとの差（変えた値・足した部品・外した部品）に戻す。派生を書き戻した後に呼ぶ */
+  writeBack(dirty: Set<string>): void {
+    for (const t of this.items.values()) {
+      const sc = this.docs.scenes.get(t.scene);
+      const i = sc?.entities.findIndex((e) => e.id === t.id) ?? -1;
+      if (!sc || i < 0) continue;
+      const after = sc.entities[i];
+      if (!after.prefab) continue; // 切り離した（linkPrefab null）: 今の値をまるごと持つ
+      let base: PrefabDoc;
+      try { base = resolvePrefab(this.docs.prefabs, after.prefab); } catch { continue; }
+      const raw = diffEntity(t, after, base);
+      const changed = t.isNew || !same(raw, t.raw);
+      sc.entities[i] = changed ? raw : t.raw;
+      if (changed) dirty.add(`scene:${t.scene}`);
+    }
+  }
+
+  /** プレハブの変更で変わった、インスタンスが受け継いでいる値を、変更の一覧に足す（ロックの検査と記録のため） */
+  inherited(changes: Change[]): void {
+    const covered = (path: string) => changes.some((c) => c.path === path || path.startsWith(c.path + '.') || path.startsWith(c.path + '['));
+    for (const t of this.items.values()) {
+      if (t.isNew) continue;
+      const raw = this.docs.scenes.get(t.scene)?.entities.find((e) => e.id === t.id);
+      if (!raw?.prefab) continue;
+      let now: EntityData;
+      try { now = resolveEntity(this.docs.prefabs, raw); } catch { continue; }
+      const via = '@' + raw.prefab;
+      for (const c of new Set([...Object.keys(t.before.components), ...Object.keys(now.components)])) {
+        const b = t.before.components[c], a = now.components[c], at = `${t.scene}#${t.id}.${c}`;
+        if (!a || !b) {
+          if (a !== b && !covered(at) && !changes.some((x) => x.path.startsWith(at + '.'))) changes.push({ path: at, ...(b ? { from: b } : {}), to: a ? 'added' : 'removed', auto: true, via });
+          continue;
+        }
+        for (const k of new Set([...Object.keys(b), ...Object.keys(a)])) {
+          if (!same(b[k], a[k]) && !covered(`${at}.${k}`)) changes.push({ path: `${at}.${k}`, from: b[k], to: a[k], auto: true, via });
+        }
+      }
+    }
+  }
+}
+
+/** プレハブと重ねた写し（after）を、プレハブ（base）との差に戻す（diffBack と同じ決まり） */
+function diffEntity(t: TrackedEntity, after: EntityData, base: PrefabDoc): EntityData {
+  const asPrefab = (e: EntityData): PrefabDoc => ({ name: e.id, base: e.prefab, ...(e.tags ? { tags: e.tags } : {}), ...(e.remove ? { remove: e.remove } : {}), components: e.components });
+  const d = diffBack({ orig: t.id, before: asPrefab(t.before), raw: asPrefab(t.raw), isNew: t.isNew }, asPrefab(after), base);
+  return { id: after.id, name: after.name, prefab: after.prefab, ...(d.tags ? { tags: d.tags } : {}), ...(d.remove ? { remove: d.remove } : {}), components: d.components };
+}
+
+/** シーンの物をプレハブにつなぐ・切り離す。どちらも、今の中身（重ねた値）は変えない */
+function linkPrefab(docs: Docs, reg: Registry, op: Extract<Op, { op: 'linkPrefab' }>, changes: Change[], dirty: Set<string>, itrack: InstanceTrack): void {
+  const a = parseAddress(op.target);
+  if (a.kind !== 'scene' || !a.entity || a.component) throw new Error(`linkPrefab の target はシーンの物です（例 main#enemy1）。受け取った値: ${op.target}`);
+  const sc = docs.scenes.get(a.doc);
+  if (!sc) throw new Error(`シーン ${a.doc} はありません${suggest(a.doc, [...docs.scenes.keys()])}`);
+  const i = sc.entities.findIndex((e) => e.id === a.entity);
+  if (i < 0) throw new Error(`シーン ${a.doc} に ${a.entity} はありません${suggest(a.entity, sc.entities.map((e) => e.id))}`);
+  const now = sc.entities[i]; // インスタンスなら、すでにプレハブと重ねた写し
+  if ((now.prefab ?? null) === op.prefab) return;
+  const from = now.prefab ?? null;
+  if (op.prefab === null) {
+    const e: EntityData = { id: now.id, name: now.name, ...(now.tags ? { tags: [...now.tags] } : {}), components: structuredClone(now.components) };
+    sc.entities[i] = e;
+    itrack.drop(a.doc, now.id);
+  } else {
+    if (typeof op.prefab !== 'string' || !docs.prefabs.has(op.prefab)) throw new Error(`プレハブ ${op.prefab} はありません${suggest(String(op.prefab), [...docs.prefabs.keys()])}`);
+    const b = resolvePrefab(docs.prefabs, op.prefab);
+    const comps: Record<string, Record<string, unknown>> = {};
+    for (const [c, v] of Object.entries(now.components)) {
+      const bc = b.components[c];
+      if (!bc) { comps[c] = structuredClone(v); continue; }
+      const own: Record<string, unknown> = {};
+      for (const k of Object.keys(v)) if (!same(v[k], bc[k])) own[k] = structuredClone(v[k]);
+      if (Object.keys(own).length) comps[c] = own;
+    }
+    const remove = Object.keys(b.components).filter((c) => !now.components[c]);
+    const tags = now.tags && !same(now.tags, b.tags) ? [...now.tags] : undefined;
+    sc.entities[i] = { id: now.id, name: now.name, prefab: op.prefab, ...(tags ? { tags } : {}), ...(remove.length ? { remove } : {}), components: comps };
+    itrack.drop(a.doc, now.id);
+    itrack.add(a.doc, now.id, true);
+  }
+  dirty.add(`scene:${a.doc}`);
+  changes.push({ path: `${op.target}.prefab`, from, to: op.prefab });
+}
+
 /** プレハブを作る・消す・名前を変える・説明と派生の元、書いた値を戻す */
-function prefabOp(docs: Docs, reg: Registry, op: Extract<Op, { op: 'addPrefab' | 'removePrefab' | 'renamePrefab' | 'setPrefab' | 'revert' }>, changes: Change[], dirty: Set<string>, track: VariantTrack): void {
+function prefabOp(docs: Docs, reg: Registry, op: Extract<Op, { op: 'addPrefab' | 'removePrefab' | 'renamePrefab' | 'setPrefab' | 'revert' }>, changes: Change[], dirty: Set<string>, track: VariantTrack, itrack?: InstanceTrack): void {
   const need = (name: string) => {
     const p = docs.prefabs.get(name);
     if (!p) throw new Error(`プレハブ ${name} はありません${suggest(String(name), [...docs.prefabs.keys()])}`);
@@ -960,6 +1127,8 @@ function prefabOp(docs: Docs, reg: Registry, op: Extract<Op, { op: 'addPrefab' |
     for (const [c, v] of Object.entries(comps)) reg.build(c, v ?? {}, where);
   };
   const derived = (name: string) => [...docs.prefabs.values()].filter((p) => p.base === name).map((p) => p.name);
+  // シーンに置いたインスタンス（シーン#ID）
+  const instances = (name: string) => [...docs.scenes.values()].flatMap((sc) => sc.entities.filter((e) => e.prefab === name).map((e) => ({ sc, e })));
   // 既定値でプレハブを指している所（書いていないので値の検索には出ない。例 Spawner.prefab の既定 "enemy"）
   const byDefault = (name: string) => {
     const out: { at: string; comp: Record<string, unknown>; field: string; key: string }[] = [];
@@ -998,7 +1167,7 @@ function prefabOp(docs: Docs, reg: Registry, op: Extract<Op, { op: 'addPrefab' |
     }
     case 'removePrefab': {
       need(op.name);
-      const used = [...(leafRefs(docs, reg, (f) => f.type === 'prefab').get(op.name) ?? []), ...byDefault(op.name).map((d) => `${d.at}（既定値）`), ...derived(op.name).map((n) => `@${n}（派生の元）`)];
+      const used = [...(leafRefs(docs, reg, (f) => f.type === 'prefab').get(op.name) ?? []), ...byDefault(op.name).map((d) => `${d.at}（既定値）`), ...derived(op.name).map((n) => `@${n}（派生の元）`), ...instances(op.name).map(({ sc, e }) => `${sc.name}#${e.id}（インスタンス）`)];
       if (used.length) throw new Error(`プレハブ ${op.name} は使われているので消せません: ${used.slice(0, 5).join(', ')}${used.length > 5 ? ' …' : ''}。先にその指定を変えてください`);
       docs.prefabs.delete(op.name);
       track.drop(op.name);
@@ -1026,6 +1195,12 @@ function prefabOp(docs: Docs, reg: Registry, op: Extract<Op, { op: 'addPrefab' |
         dirty.add(`prefab:${d}`);
         changes.push({ path: `prefab:${d}.base`, from: op.name, to: op.to, auto: true });
       }
+      for (const { sc, e } of instances(op.name)) {
+        e.prefab = op.to;
+        dirty.add(`scene:${sc.name}`);
+        changes.push({ path: `${sc.name}#${e.id}.prefab`, from: op.name, to: op.to, auto: true });
+      }
+      itrack?.renamePrefab(op.name, op.to);
       fixLeaves(docs, reg, (f, v) => (f.type === 'prefab' && v === op.name ? op.to : undefined), changes, dirty);
       return;
     }
@@ -1082,11 +1257,11 @@ function prefabOp(docs: Docs, reg: Registry, op: Extract<Op, { op: 'addPrefab' |
       if (!a.component) throw new Error(`revert には部品か値までの住所が要ります（例 @enemy_fast.Health.hp）。受け取った値: ${op.path}`);
       if (a.sub.length) throw new Error(`revert はフィールドごとです（リストや構造体の中ではなく ${op.path.replace(/[[.][^.[]*$/, '')} まで）`);
       const { holder, key } = holderOf(docs, a);
-      const variant = a.kind === 'prefab' ? (holder as PrefabDoc).base : undefined;
+      const variant = a.kind === 'prefab' ? (holder as PrefabDoc).base : (holder as EntityData).prefab;
       const base = variant ? resolvePrefab(docs.prefabs, variant) : undefined;
       const bc = base?.components[a.component];
       if (!a.field) {
-        if (!bc) throw new Error(`${op.path}: 部品ごとに戻せるのは、派生が元から受け継いだ部品だけです${variant ? `（${a.component} は @${variant} にありません。外すなら removeComponent）` : ''}`);
+        if (!bc) throw new Error(`${op.path}: 部品ごとに戻せるのは、派生・インスタンスが元から受け継いだ部品だけです（元はプレハブ）${variant ? `（${a.component} は @${variant} にありません。外すなら removeComponent）` : ''}`);
         const from = holder.components[a.component];
         if (same(from, bc)) return;
         holder.components[a.component] = structuredClone(bc);

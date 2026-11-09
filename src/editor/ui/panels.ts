@@ -2,7 +2,7 @@
 import type { App } from '../app.ts';
 import { h, clear, modal, toast, time, menu } from './dom.ts';
 import type { Layout, Panel } from './layout.ts';
-import { importFiles } from './assets.ts';
+import { PREFAB_MIME, importFiles } from './assets.ts';
 import { kindOf } from '../../core/assets.ts';
 import { menuItemsFor } from '../extensions.ts';
 
@@ -74,7 +74,7 @@ export function hierarchyPanel(app: App): Panel {
               const items = menuItemsFor(app, 'entity', app.selectedIds().map((id) => `${app.scene}#${id}`));
               if (items.length) menu(ev.clientX, ev.clientY, items);
             },
-          }, e.name, h('span', { class: 'muted' }, e.id), n ? h('span', { style: 'color:var(--lock)', title: `ロック ${n}件` }, '🔒' + n) : null);
+          }, e.name, h('span', { class: 'muted' }, e.id), e.prefab ? h('span', { class: 'muted', title: `プレハブ @${e.prefab} のインスタンス（つながっている）` }, '←@' + e.prefab) : null, n ? h('span', { style: 'color:var(--lock)', title: `ロック ${n}件` }, '🔒' + n) : null);
         }),
         h('div', { class: 'folder' }, `プレハブ（${Object.keys(s.prefabs).length}）`),
         Object.values(s.prefabs).map((p) => {
@@ -82,6 +82,9 @@ export function hierarchyPanel(app: App): Panel {
           return h('div', {
             class: `item ${sel?.kind === 'prefab' && sel.name === p.name ? 'sel' : ''}`,
             onclick: () => app.select({ kind: 'prefab', name: p.name }),
+            // ゲームの画面へ運ぶと、落とした所にインスタンス（プレハブとつながった物）を置く
+            draggable: true, title: 'ゲームの画面へ運ぶと、その場所にこのプレハブのインスタンスを置く',
+            ondragstart: (e: DragEvent) => { e.dataTransfer!.setData(PREFAB_MIME, p.name); e.dataTransfer!.effectAllowed = 'copy'; },
           }, '@' + p.name, h('span', { class: 'muted' }, p.base ? `← @${p.base}${p.desc ? ' ' + p.desc : ''}` : p.desc ?? ''), n ? h('span', { style: 'color:var(--lock)' }, '🔒' + n) : null);
         }),
         app.registry?.tables.size ? h('div', { class: 'folder' }, `表（${app.registry.tables.size}）`) : null,

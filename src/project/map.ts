@@ -5,7 +5,7 @@ import { assetRefs, baseOf, dirOf, isUnder } from '../core/assets.ts';
 import type { AssetKind } from '../core/schema.ts';
 import type { Project } from './project.ts';
 import { languagesOf } from '../core/i18n.ts';
-import { overridesOf } from '../core/variant.ts';
+import { instanceOverrides, overridesOf } from '../core/variant.ts';
 import type { WindowInfo } from './windows.ts';
 import type { LockMark, TouchMark } from './oplog.ts';
 import { RECENT_WINDOW } from './recent.ts';
@@ -180,17 +180,21 @@ function sectionLines(p: Project, ins: Ins, mode: 'full' | 'compact'): Record<Ma
   r.scenes.push(`## scenes（シーン#ID "名前" [コンポーネント]）${gotos.size ? `\ngoto の行き先（コード）: ${[...gotos.keys()].join(' ')}` : ''}`);
   // 要約の地図では、前のシーンと同じ物（同じ ID・同じ部品）を繰り返さない
   const seen = new Map<string, string>();
-  for (const s of p.docs.scenes.values()) {
+  for (const raw of p.docs.scenes.values()) {
+    const s = p.resolvedScene(raw);
     r.scenes.push(`${s.name}（${s.entities.length}体）${s.name === c.startScene ? ' 開始' : ''}${s.desc ? ' ' + (compact ? firstSentence(s.desc) : s.desc) : ''}`);
     const same = new Map<string, number>();
-    for (const e of s.entities) {
+    s.entities.forEach((e, i) => {
       const tags = e.tags?.length ? ` tags:${e.tags.join(',')}` : '';
       const mk = marks(touched, locks, `${s.name}#${e.id}`);
-      const sig = `${e.id}[${Object.keys(e.components).join(' ')}]${tags}`;
-      if (compact && !mk && seen.has(sig)) { const from = seen.get(sig)!; same.set(from, (same.get(from) ?? 0) + 1); continue; }
+      // プレハブのインスタンスは ←@プレハブ と、プレハブから変えた所（変:）
+      const ov = e.prefab ? instanceOverrides(p.docs.prefabs, raw.entities[i]) : [];
+      const inst = e.prefab ? ` ←@${e.prefab}${!compact && ov.length ? ` 変:${ov.join(',')}` : ''}` : '';
+      const sig = `${e.id}[${Object.keys(e.components).join(' ')}]${tags}${inst}`;
+      if (compact && !mk && seen.has(sig)) { const from = seen.get(sig)!; same.set(from, (same.get(from) ?? 0) + 1); return; }
       if (!seen.has(sig)) seen.set(sig, s.name);
-      r.scenes.push(compact ? `  #${e.id} [${Object.keys(e.components).join(' ')}]${tags}${mk}` : `  ${s.name}#${e.id} "${e.name}" [${Object.keys(e.components).join(' ')}]${tags}${mk}`);
-    }
+      r.scenes.push(compact ? `  #${e.id}${inst} [${Object.keys(e.components).join(' ')}]${tags}${mk}` : `  ${s.name}#${e.id} "${e.name}"${inst} [${Object.keys(e.components).join(' ')}]${tags}${mk}`);
+    });
     for (const [from, n] of same) r.scenes.push(`  ほか${n}体は ${from} と同じ`);
   }
 
@@ -410,7 +414,7 @@ function usedShaders(p: Project): Set<string> {
     for (const c of ['Effect', 'PostEffect']) if (typeof comps[c]?.shader === 'string') out.add(comps[c].shader as string);
   };
   for (const pf of p.docs.prefabs.values()) add(pf.components);
-  for (const s of p.docs.scenes.values()) for (const e of s.entities) add(e.components);
+  for (const s of p.docs.scenes.values()) for (const e of p.resolvedScene(s).entities) add(e.components);
   return out;
 }
 
@@ -424,6 +428,6 @@ export function collisionGroups(p: Project): Map<string, Set<string>> {
     for (const w of (c.with as string[] | undefined) ?? []) out.get(g)!.add(w);
   };
   for (const pf of p.docs.prefabs.values()) add(pf.components.Collider);
-  for (const s of p.docs.scenes.values()) for (const e of s.entities) add(e.components.Collider);
+  for (const s of p.docs.scenes.values()) for (const e of p.resolvedScene(s).entities) add(e.components.Collider);
   return out;
 }

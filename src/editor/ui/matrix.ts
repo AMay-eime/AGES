@@ -39,7 +39,7 @@ export function matrixPanel(app: App): Panel & { open(path: string): void } {
 
   const current = (): CellValue[][] | null => {
     const a = parseAddress(path);
-    const holder = a.kind === 'prefab' ? app.state.prefabs[a.doc] : app.state.scenes[a.doc]?.entities.find((e) => e.id === a.entity);
+    const holder = a.kind === 'prefab' ? app.state.prefabs[a.doc] : app.sceneView(a.doc)?.entities.find((e) => e.id === a.entity);
     const comp = holder?.components[a.component!];
     if (!comp) return null;
     const f = fieldOf();

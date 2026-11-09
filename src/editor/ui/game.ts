@@ -3,6 +3,7 @@
 // - 画像も図形も文字もないもの（カメラ・敵を出す役など）は、編集中だけ◇の印を出して、それをクリックして選べる
 // - 視点は「カメラ」（プレイヤーに見える通り）と「自由」（ホイールで拡大・右ドラッグで移動。カメラの範囲は枠で見える）
 // - 画面の形（16:9・スマホ縦など）と合わせ方（view.fit）を切り替えて、見え方を確かめられる
+import { resolvePrefab } from '../../core/variant.ts';
 import type { App } from '../app.ts';
 import { Renderer } from '../../render/webgl.ts';
 import { camerasOf, fitView, screenToWorld, visibleCorners, worldToScreen, FIT_MODES, type CameraView, type FitMode } from '../../core/camera.ts';
@@ -11,7 +12,7 @@ import { menuItemsFor } from '../extensions.ts';
 import { movable } from '../edit-ops.ts';
 import type { Op } from '../../core/patch.ts';
 import type { Panel } from './layout.ts';
-import { ASSET_MIME } from './assets.ts';
+import { ASSET_MIME, PREFAB_MIME } from './assets.ts';
 import { baseOf, extOf, kindOf } from '../../core/assets.ts';
 import type { ParticleCmd } from '../../core/particles.ts';
 import { shapeOf } from '../../core/collide.ts';
@@ -223,11 +224,32 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
   // ---------- アセットを落として置く ----------
   // 画像は Sprite、音は Sound、フォントは Text を付けた物を、落とした場所に作る
   canvas.addEventListener('dragover', (e) => {
-    if (!e.dataTransfer?.types.includes(ASSET_MIME)) return;
+    if (!e.dataTransfer?.types.includes(ASSET_MIME) && !e.dataTransfer?.types.includes(PREFAB_MIME)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
   });
   canvas.addEventListener('drop', async (e) => {
+    const prefab = e.dataTransfer?.getData(PREFAB_MIME);
+    if (prefab && renderer) {
+      // プレハブ: 落とした所に、プレハブとつながったインスタンスを置く（位置だけが物の値）
+      e.preventDefault();
+      if (app.play) return toast('停止してから置いてください', 'bad');
+      const scene = app.state.scenes[app.scene];
+      if (!scene) return;
+      const p = toCanvas(e);
+      const cam = viewMode === 'free' ? free : [...renderer.cams].reverse().find((c) => inView(c, p.x, p.y)) ?? renderer.cams[0];
+      const [wx, wy] = cam ? screenToWorld(cam, p.x, p.y) : [p.x, p.y];
+      const taken = new Set(scene.entities.map((x) => x.id));
+      let id = prefab;
+      for (let i = 2; taken.has(id); i++) id = `${prefab}_${i}`;
+      const pf = app.state.prefabs[prefab];
+      let comps: Record<string, Record<string, unknown>> = {};
+      try { comps = resolvePrefab(new Map(Object.entries(app.state.prefabs)), prefab).components; } catch { comps = pf?.components ?? {}; }
+      const components: Record<string, Record<string, unknown>> = comps.UI ? {} : { Transform: { x: Math.round(wx), y: Math.round(wy) } };
+      const r = await app.patch([{ op: 'addEntity', scene: app.scene, entity: { id, name: id, prefab, components } }], 'game');
+      if (r) app.select({ kind: 'scene', scene: app.scene, id });
+      return;
+    }
     const path = e.dataTransfer?.getData(ASSET_MIME);
     const kind = path ? kindOf(path) : null;
     if (!path || !kind || !renderer) return;
@@ -258,7 +280,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
   let drag: { lead: Moving; cam: CameraView; wx: number; wy: number; all: Moving[]; moved: boolean } | null = null;
   let band: { x0: number; y0: number; x1: number; y1: number; add: boolean } | null = null;
   let pan: { x: number; y: number; cx: number; cy: number; moved: boolean; e: MouseEvent } | null = null;
-  const sceneDoc = () => app.state.scenes[app.scene];
+  const sceneDoc = () => app.sceneView(app.scene);
   const moving = (id: string): Moving | null => {
     const e = app.preview?.world.get(id);
     const doc = sceneDoc()?.entities.find((x) => x.id === id);

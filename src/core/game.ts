@@ -4,7 +4,7 @@ import { Rng } from './rng.ts';
 import { Input, actionsFromRows, type FrameInput } from './input.ts';
 import type { Registry } from './registry.ts';
 import type { SceneDoc, ProjectConfig, PrefabDoc } from './docs.ts';
-import { baseChain } from './variant.ts';
+import { baseChain, resolveEntity } from './variant.ts';
 import { DEFAULT_SOUND, isSoundPath, playCmd, type AudioCmd, type BusDef, type SoundApi, type SoundSettings } from './audio.ts';
 import { suggest } from './schema.ts';
 import type { RowOf, TableDef, TableView } from './table.ts';
@@ -242,7 +242,8 @@ export class Game {
     // 始めのシーンに渡すもの（ages run --params。ふだんは前のシーンの goto が渡す）
     if (opts.params) this.sceneParams = { ...opts.params };
     if (!registry.scenes.has(scene.name)) registry.scenes.set(scene.name, scene);
-    for (const e of scene.entities) this.world.add(e);
+    // プレハブのインスタンスは、プレハブと重ねた中身で置く（どのプレハブから来たかも覚える）
+    for (const e of scene.entities) this.world.add(resolveEntity(registry.prefabs, e), e.prefab);
     // 操作の名前と割り当て（標準の表 $actions）
     if (registry.tables.has('actions')) {
       this.input.setActions(actionsFromRows(registry.tableView('actions').rows));
@@ -634,7 +635,7 @@ export class Game {
     for (const e of this.world.entities.values()) if (!e.tags.includes('keep') && !keep.has(e.id)) this.world.destroy(e.id);
     this.world.flush();
     const doc = this.registry.scenes.get(t.to)!;
-    for (const e of doc.entities) if (!this.world.entities.has(e.id)) this.world.add(e);
+    for (const e of doc.entities) if (!this.world.entities.has(e.id)) this.world.add(resolveEntity(this.registry.prefabs, e), e.prefab);
     this.sceneName = t.to;
     this.sceneFrame = 0;
     this.sceneParams = t.params;
