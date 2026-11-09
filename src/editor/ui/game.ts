@@ -15,7 +15,7 @@ import type { Panel } from './layout.ts';
 import { ASSET_MIME, PREFAB_MIME } from './assets.ts';
 import { baseOf, extOf, kindOf } from '../../core/assets.ts';
 import type { ParticleCmd } from '../../core/particles.ts';
-import { drawColliders } from '../stage-draw.ts';
+import { drawColliders, makeDraw, visibleRect } from '../stage-draw.ts';
 
 const SCREENS: [string, number | null][] = [['パネルに合わせる', null], ['16:9', 16 / 9], ['4:3', 4 / 3], ['1:1', 1], ['9:16（スマホ縦）', 9 / 16], ['9:19.5（細長いスマホ縦）', 9 / 19.5], ['19.5:9（細長いスマホ横）', 19.5 / 9]];
 const FIT_LABEL: Record<FitMode, string> = { contain: '全体を入れる', cover: 'はみ出しを切る', stretch: '伸ばす', expand: '広い分だけ周りも見せる', pixel: '整数倍だけ' };
@@ -467,6 +467,15 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
       og.fillRect(Math.min(band.x0, band.x1), Math.min(band.y0, band.y1), Math.abs(band.x1 - band.x0), Math.abs(band.y1 - band.y0));
       og.strokeRect(Math.min(band.x0, band.x1), Math.min(band.y0, band.y1), Math.abs(band.x1 - band.x0), Math.abs(band.y1 - band.y0));
     }
+    // 拡張が重ねて描くもの（api.overlay。ワールドの座標で）
+    if (app.overlays.size && renderer) {
+      const cam = viewMode === 'free' ? free : renderer.cams.filter((c) => c !== renderer!.uiView)[0];
+      if (cam) {
+        const g = makeDraw(og, cam, 1, 1);
+        const view = { world: w, game: app.play?.game ?? null, scale: cam.zoom, visible: visibleRect(cam) };
+        for (const fn of app.overlays) { try { fn(g, view); } catch (e) { console.error(e); } }
+      }
+    }
     if (!sel || !renderer) return;
     // 選んでいる物の枠（手前の物は濃く、一緒に選んでいる物は薄く）
     const extra = new Set(app.extra);
@@ -528,7 +537,9 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
       const step = 1 / app.state.config.fps;
       let n = 0;
       const most = Math.ceil(5 * Math.max(1, app.playSpeed));
+      const t0 = performance.now();
       while (acc >= step && n++ < most && app.play) { app.tick(); acc -= step; }
+      if (n) app.perf.stepMs = (performance.now() - t0) / n;
       if (n) app.emit('frame');
     } else acc = 0;
     const w = app.world;
@@ -545,7 +556,12 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     if (p?.game !== particleGame) { renderer.particles.clear(); particleGame = p?.game; }
     const selId = app.sel?.kind === 'scene' ? app.sel.id : '';
     const particles = p ? { dt: p.paused || p.loading ? 0 : dt } : { dt, preview: selId && w.get(selId)?.c.Particles ? [selId] : [] };
+    const td = performance.now();
     renderer.draw(w, { background: app.state.config.view.background, design: d, view: viewMode === 'free' ? free : undefined, overlay, particles, post: viewMode !== 'free' });
+    app.perf.drawMs = performance.now() - td;
+    app.perf.draws = renderer.stats.draws;
+    app.perf.quads = renderer.stats.quads;
+    app.perf.fps = dt > 0 ? app.perf.fps * 0.9 + (1 / dt) * 0.1 : app.perf.fps;
     drawOverlay(w);
     const cams = renderer.cams.filter((c) => c.id).length;
     const where = viewMode === 'free' ? `自由な視点 ${Math.round(free.zoom * 100)}%（ホイールで拡大・右ドラッグで移動）` : cams ? `カメラ ${cams}台` : '';

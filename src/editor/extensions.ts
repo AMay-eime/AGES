@@ -100,6 +100,9 @@ export function makeApi(app: App, win: string): EditorApi {
       if (!app.play) app.stepOnce(); else { if (!app.play.paused) app.togglePause(); app.stepOnce(); }
       for (let i = 1; i < frames && app.play; i++) app.stepOnce();
     },
+    get paused() { return !!app.play?.paused; },
+    get perf() { return { ...app.perf }; },
+    overlay: (fn) => { app.overlays.add(fn); return () => { app.overlays.delete(fn); }; },
     get speed() { return app.playSpeed; },
     set speed(v: number) { app.playSpeed = v; },
     get save() {

@@ -92,6 +92,12 @@ export interface EditorApi {
   step(frames?: number): void;
   /** 再生の速さ（1 が実時間。0.1〜8） */
   speed: number;
+  /** 再生を一時停止しているか（再生していなければ false） */
+  readonly paused: boolean;
+  /** エディタのゲームの画面の重さ（直近のフレーム）: 1フレームの処理(ms)・描画(ms)・描く命令の回数・四角の数・fps */
+  readonly perf: { stepMs: number; drawMs: number; draws: number; quads: number; fps: number };
+  /** エディタのゲームの画面に重ねて描く（毎フレーム。ワールドの座標。描き方は舞台の draw と同じ）。やめる関数を返す。再生中・編集中のどちらでも */
+  overlay(fn: (g: StageDraw, view: OverlayView) => void): () => void;
   /** 保存データ（再生中ならそのゲームの ctx.save と同じもの。止めていれば、このブラウザの保存データ＝次の再生で読まれるもの） */
   readonly save: { read(key: string): unknown; write(key: string, value: unknown): void; delete(key: string): void; keys(): string[] };
   /** 部品の形（'Health'）・表の形（'$enemies'）。フィールドの型・範囲・説明。なければ undefined */
@@ -255,6 +261,18 @@ export interface StageDraw {
 }
 
 /** 描き込むときの様子 */
+/** api.overlay に渡るもの */
+export interface OverlayView {
+  /** 画面に出ている物（再生中ならそのゲーム、編集中なら今のシーン） */
+  readonly world: import('../core/world.ts').World;
+  /** 再生中のゲーム（編集中は null） */
+  readonly game: Game | null;
+  /** ワールドの 1px が画面の何 px か */
+  readonly scale: number;
+  /** 見えているワールドの範囲 */
+  readonly visible: { x: number; y: number; w: number; h: number };
+}
+
 export interface StageView {
   readonly game: Game;
   readonly frame: number;

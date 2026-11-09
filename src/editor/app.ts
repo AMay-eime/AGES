@@ -419,6 +419,11 @@ export class App {
     void Promise.all(paths.map(each)).then(() => { if (play.loading === loading) play.loading = undefined; this.emit('frame'); });
   }
 
+  /** エディタのゲームの画面の重さ（直近のフレーム。拡張の api.perf） */
+  perf = { stepMs: 0, drawMs: 0, draws: 0, quads: 0, fps: 0 };
+  /** ゲームの画面に重ねて描くもの（拡張の api.overlay） */
+  readonly overlays = new Set<(g: import('./window-api.ts').StageDraw, view: import('./window-api.ts').OverlayView) => void>();
+
   /** 再生の速さ（1 が実時間。拡張の api.speed・上のバーの ×1） */
   private speed = 1;
   get playSpeed(): number { return this.speed; }

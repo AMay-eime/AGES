@@ -5,4 +5,3 @@
 .ages/shots/
 # 端末ごとのロックの封印（共有しない）
 .ages/locks.seal
-.ages/tmp/

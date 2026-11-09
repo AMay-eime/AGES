@@ -1112,23 +1112,13 @@ export class Project {
   written = new Map<string, string>();
 
   /**
-   * ファイルを書きかえる（いったん .ages/tmp に書いてから置きかえる）。
-   * 書いている途中で止まっても、別の書き込みと重なっても、半分だけ書かれたファイルを残さない
+   * ファイルを書きかえる。置きかえ（別の所に書いて rename）にはしない: Node の再帰のファイル監視（Linux）は、
+   * 置きかえられたファイルを見失い、その後の外からの変更（git checkout など）に気づかなくなるため。
+   * 書き込みが重ならないことは、エディタの作業スレッドが頼みを1つずつ処理することで守る
    */
   private async writeAtomic(path: string, text: string): Promise<void> {
-    const dir = join(this.dir, '.ages', 'tmp');
-    await mkdir(dir, { recursive: true });
-    const tmp = join(dir, `${process.pid}-${++this.tmpSeq}.tmp`);
-    await writeFile(tmp, text);
-    try {
-      await rename(tmp, path);
-    } catch {
-      // 置きかえられない場所（別のドライブなど）では、そのまま書く
-      await rm(tmp, { force: true });
-      await writeFile(path, text);
-    }
+    await writeFile(path, text);
   }
-  private tmpSeq = 0;
 
   async saveDirty(dirty: Iterable<string>): Promise<void> {
     for (const key of dirty) {
