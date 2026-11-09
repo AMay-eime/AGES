@@ -308,6 +308,8 @@ export interface FieldView {
   set(value: unknown, final?: boolean): void;
   /** 標準の入力欄を作る（中に並べて使うとき） */
   standard(): HTMLElement;
+  /** この欄を名前の行ごと隠す（ほかの値によって要らない欄。例 狙い方に合わない角度） */
+  hide(): void;
 }
 
 /** インスペクタ・表のエディタの欄の見せ方（Unity の PropertyDrawer） */
@@ -383,7 +385,9 @@ export interface EditorExtension {
    * '@[enemy]' はタグ enemy のプレハブすべて（作る・写す・名前・元・消すも。変える前と後の両方でタグを持つこと）、'@[enemy].Enemy.*' はその部品の値だけ
    */
   edits?: string[];
-  /** パネル（Unity の EditorWindow） */
+  /** 拡張の見た目（CSS の文字。エディタに1つの style として入る。クラスの名前は拡張の id から始めると、ほかとぶつからない） */
+  css?: string;
+  /** パネル（Unity の EditorWindow）。パネルの右上の ↗ で別のウインドウに開ける */
   panel?: {
     title?: string;
     /** 最初に置く場所（既定: 下） */

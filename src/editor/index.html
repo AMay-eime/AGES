@@ -60,7 +60,9 @@
   .field { display: grid; grid-template-columns: 110px 1fr auto; gap: 6px; align-items: center; padding: 3px 8px; }
   .field label { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .field.default label { font-style: italic; }
-  .field.touched label::after { content: " ★"; color: var(--warn); }
+  .field.touched > label::after { content: " ★"; color: var(--warn); }
+  .tab-detach { opacity: .6; cursor: pointer; }
+  .tab-detach:hover { opacity: 1; }
   .field.locked { background: rgba(199, 146, 234, .08); }
   .field.locked label { color: var(--lock); }
   .field.override { box-shadow: inset 2px 0 0 var(--accent); }

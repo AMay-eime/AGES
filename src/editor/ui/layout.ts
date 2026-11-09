@@ -16,6 +16,8 @@ export interface Panel {
   render?(): void;
   /** 保存された配置にまだないとき、最初に置くエリア（既定: 下） */
   area?: AreaName;
+  /** 別のウインドウで開く（あれば、選んでいるタブに ↗ と、右クリックのメニューに出る） */
+  detach?(): void;
 }
 
 export interface LayoutData {
@@ -108,9 +110,9 @@ export class Layout {
         ondragstart: (e: DragEvent) => e.dataTransfer!.setData('text/ages-panel', id),
         oncontextmenu: (e: MouseEvent) => {
           e.preventDefault();
-          menu(e.clientX, e.clientY, AREAS.filter((a) => a !== name).map((a) => [`${AREA_LABEL[a]}へ移動`, () => this.move(id, a)]));
+          menu(e.clientX, e.clientY, [...AREAS.filter((a) => a !== name).map((a): [string, () => void] => [`${AREA_LABEL[a]}へ移動`, () => this.move(id, a)]), ...(p.detach ? [['別のウインドウで開く', () => p.detach!()] as [string, () => void]] : [])]);
         },
-      }, p.title);
+      }, p.title, p.detach && this.data.active[name] === id ? h('span', { class: 'tab-detach', title: '別のウインドウで開く', onclick: (e: MouseEvent) => { e.stopPropagation(); p.detach!(); } }, ' ↗') : null);
     }));
     tabs.addEventListener('dragover', (e) => { e.preventDefault(); tabs.classList.add('drop'); });
     tabs.addEventListener('dragleave', () => tabs.classList.remove('drop'));

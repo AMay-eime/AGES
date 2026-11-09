@@ -326,6 +326,11 @@ export function drawnField(app: App, o: { path: string; f: Field; value: unknown
       ext.set(o.path, o.sub, v, final, fd.x.api);
     },
     standard: () => { const st = o.standard(); st.style.flex = '1 1 auto'; return st; },
+    hide: () => {
+      // 置かれた後で、名前の行（インスペクタ・表の .field、入れ子の .nest-row）ごと隠す
+      const go = () => { const r = box.closest('.nest-row, .field') as HTMLElement | null; (r ?? box).style.display = 'none'; };
+      if (box.isConnected) go(); else queueMicrotask(go);
+    },
   };
   mountExt(box, fd.x.ext.id, () => fd.drawer.mount(box, view, fd.x.api), ext.cleanups);
   return box;

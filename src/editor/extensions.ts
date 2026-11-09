@@ -31,7 +31,10 @@ export function makeApi(app: App, win: string): EditorApi {
     get user() { return app.user; },
     get playing() { return !!app.play; },
     // 拡張ごとに1つずつ順に送る。関数を渡すと、前の変更が終わった後の最新の中身で ops を作る（続けてのクリックで古い値から作らない）
-    patch: (ops) => (queue = queue.then(() => app.patch(typeof ops === 'function' ? ops() : ops, win), () => app.patch(typeof ops === 'function' ? ops() : ops, win))),
+    patch: (ops) => {
+      const send = () => { const list = typeof ops === 'function' ? ops() : ops; return list.length ? app.patch(list, win) : Promise.resolve([] as Change[]); };
+      return (queue = queue.then(send, send));
+    },
     get(path: string) {
       const a = parseAddress(path);
       if (a.kind === 'table') {
