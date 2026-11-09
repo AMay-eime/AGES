@@ -139,6 +139,9 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
 - 拡張から変えられるのは、`edits` に書いた値と、見せている欄・部品の値だけ。🔒ロックされた値は拡張からは変えられない。ロックの操作を拡張に作らない（作っても、サーバーが受け付けない）
 - 値を変えるのは `api.patch`・`field.set`・`comp.set` だけ（エディタのサーバーを直接呼ばない）。読むのは `api.get`（派生は元と重ねた値）、知らせるのは `api.notify(文, 'warn')`、画像の切り方は `api.sheet(画像)`、選んでいる物は `api.selection`（すべては `api.selected`。`api.select(住所, true)` で足す）、1行を尋ねるのは `await api.ask(題, 既定)`
 - 表を読むのは `api.table(名前)`（省いた列は既定値で埋めた行。ctx.table と同じ）か `api.get('$表.行.列')`。再生を始めるのは `api.play({ scene, params })`（ステージを試すボタンなど。止めるのは `api.stop()`）
+- 再生中のゲームは `api.game`（world・ctx・frame。書いた値はその場で効くが保存しない。`ctx.emit` で出来事を送れる）、`api.pause()`・`api.step(n)`・`api.speed`。保存データは `api.save`（再生中はそのゲーム、止めていれば次の再生で読まれるもの）。部品・表の形は `api.schema('Health' | '$enemies')`
+- 窓は `api.modal(close => 中身)`。ほかの拡張のパネルを前に出して渡すのは `api.show(拡張のid, args)`（受け手は `api.on('show', fn)`）。アセット・プレハブをパネルに落とすときの型は `api.dragTypes`。パネルの中のキーは、本体のシーンの編集（Ctrl+A・Delete・矢印）に渡らない
+- ゲーム独自の検証（同じ位置に2つ・組になっていない など）は、パネルの中だけで調べずに `game/index.ts` の `checks: [defineCheck({ name, desc, run(view) })]` に書く（view は table・prefab・prefabs(タグ)・scene。ages check とエディタの ⚠ に出て AI にも届く。編集は止めない）
 - プレハブを小さな画面でくり返し動かすのは `api.stage(el, { spawn: [{ prefab }], seconds, speed, zoom, keys, onCycle })`（本体の「試し」の窓 `src/editor/builtin/tryout.ts` と同じ。値を変えると次の回から新しい値）
 - モジュールの一番外では `document` などのブラウザの物を使わない（地図を作るときに Node で読むため）
 - 作ったら `ages check` で、宣言の誤り（ない住所・ない型や部品・書き忘れ・登録し忘れ）を確かめる
