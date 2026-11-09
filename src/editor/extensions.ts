@@ -31,7 +31,10 @@ export function makeApi(app: App, win: string): EditorApi {
     get user() { return app.user; },
     get playing() { return !!app.play; },
     // 拡張ごとに1つずつ順に送る。関数を渡すと、前の変更が終わった後の最新の中身で ops を作る（続けてのクリックで古い値から作らない）
-    patch: (ops) => (queue = queue.then(() => app.patch(typeof ops === 'function' ? ops() : ops, win), () => app.patch(typeof ops === 'function' ? ops() : ops, win))),
+    patch: (ops) => {
+      const send = () => { const list = typeof ops === 'function' ? ops() : ops; return list.length ? app.patch(list, win) : Promise.resolve([] as Change[]); };
+      return (queue = queue.then(send, send));
+    },
     get(path: string) {
       const a = parseAddress(path);
       if (a.kind === 'table') {
@@ -78,7 +81,7 @@ export function makeApi(app: App, win: string): EditorApi {
     // 画面なしで動かす（舞台と同じ作り方。少しずつ回す）
     run: async (opts) => {
       const t = startTrial(app.registry, app.state.config, opts, { lang: app.previewLang || undefined });
-      return runTrial(t, { frames: opts.frames ?? 600, onFrame: opts.onFrame, until: opts.until, signal: opts.signal });
+      return runTrial(t, { frames: opts.frames ?? 600, onFrame: opts.onFrame, onEvent: opts.onEvent, until: opts.until, signal: opts.signal });
     },
     get game() { return app.play?.game ?? null; },
     pause: (paused) => {
@@ -97,7 +100,12 @@ export function makeApi(app: App, win: string): EditorApi {
     },
     schema: (name) => (name.startsWith('$') ? app.registry.tables.get(name.slice(1)) : app.registry.components.get(name)),
     modal: (build) => { modal(build); },
-    show: (extId, args) => { app.emit('showPanel', `win:${extId}`); app.emit(`show:${extId}`, args); },
+    show: (extId, args) => {
+      // 相手の拡張がいなければ知らせて false（読み込みに失敗した・登録し忘れ）
+      if (!app.extensions.some((x) => x.ext.id === extId)) { toast(`拡張 ${extId} がありません（ages.project.json の editorWindows を確かめる）`, 'bad'); return false; }
+      app.emit('showPanel', `win:${extId}`); app.emit(`show:${extId}`, args);
+      return true;
+    },
     dragTypes: { asset: ASSET_MIME, prefab: PREFAB_MIME },
     on: ((ev: string, fn: (d?: unknown) => void) => app.on(ev === 'show' ? `show:${win.replace(/^window:/, '')}` : ev, fn)) as EditorApi['on'],
     h: h as unknown as EditorApi['h'],

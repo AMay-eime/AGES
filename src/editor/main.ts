@@ -20,8 +20,27 @@ await app.refresh();
 // 別ウインドウで1つのパネルだけを開く（例: /?solo=matrix&path=main%23spawner.Spawner.formation）
 const params = new URLSearchParams(location.search);
 const solo = params.get('solo');
-if (solo === 'matrix' || solo === 'sprite' || solo === 'table') {
+if (solo === 'win') {
+  // 拡張のパネルだけを別ウインドウで（/?solo=win&id=<拡張の id>）
   document.body.classList.add('solo');
+  const id = params.get('id') ?? '';
+  const loaded = await loadExtensions();
+  const x = loaded.find((e) => e.ext.id === id && e.ext.panel);
+  const el = h('div', { class: 'panel active ext-panel', style: 'overflow:auto' });
+  document.getElementById('work')!.replaceChildren(el);
+  const title = x?.ext.panel?.title ?? x?.ext.title ?? id;
+  document.title = `${title} — AGES`;
+  const top = document.getElementById('top')!;
+  top.replaceChildren(h('span', { class: 'title' }, 'AGES', h('small', {}, title)));
+  if (!x) el.append(h('div', { class: 'pad', style: 'color:var(--bad)' }, `拡張 ${id} のパネルがありません`));
+  else {
+    try { x.ext.panel!.mount(el, x.api); } catch (e) { el.append(h('div', { class: 'pad', style: 'color:var(--bad)' }, `エラー: ${(e as Error).message}`)); }
+  }
+  new EventSource('/api/events').onmessage = (msg) => { if (JSON.parse(msg.data).type !== 'hello') app.refresh(); };
+} else if (solo === 'matrix' || solo === 'sprite' || solo === 'table') {
+  document.body.classList.add('solo');
+  // 表の行・欄の見せ方（拡張）も効くように、拡張を読む
+  if (solo === 'table') await loadExtensions();
   const m = solo === 'matrix' ? matrixPanel(app) : solo === 'sprite' ? spritePanel(app) : tablePanel(app);
   m.el.classList.add('panel', 'active');
   document.getElementById('work')!.replaceChildren(m.el);
@@ -204,15 +223,7 @@ window.addEventListener('keydown', (e) => {
 const panels = new Map<string, { el: HTMLElement; cleanup?: () => void }>();
 async function mountWindows(): Promise<void> {
   for (const w of panels.values()) { try { w.cleanup?.(); } catch (e) { console.error(e); } w.cleanup = undefined; }
-  const loaded: LoadedExtension[] = builtinExtensions(app);
-  for (const path of app.state.config?.editorWindows ?? []) {
-    try {
-      loaded.push(projectExtension(app, path, (await import(`/project@${app.state.version}/${path}`)).default));
-    } catch (e) {
-      toast(`拡張 ${path} を読み込めません: ${(e as Error).message}`, 'bad', 8000);
-    }
-  }
-  app.extensions = loaded;
+  const loaded = await loadExtensions();
   // パネル（Unity の EditorWindow）
   for (const x of loaded) {
     const p = x.ext.panel;
@@ -222,7 +233,8 @@ async function mountWindows(): Promise<void> {
     if (!slot) {
       slot = { el: h('div', { class: 'ext-panel' }) };
       panels.set(id, slot);
-      const panel: Panel = { id, title: p.title ?? x.ext.title ?? x.ext.id, el: slot.el, ...(p.area ? { area: p.area } : {}) };
+      const extId = x.ext.id;
+      const panel: Panel = { id, title: p.title ?? x.ext.title ?? x.ext.id, el: slot.el, ...(p.area ? { area: p.area } : {}), detach: () => window.open(`/?solo=win&id=${encodeURIComponent(extId)}`, `ages-win-${extId}`, 'width=1000,height=720') };
       layout.add(panel);
     }
     slot.el.replaceChildren();
@@ -264,4 +276,25 @@ await mountWindows();
 layout.build();
 renderTop();
 if (app.state.lockReport?.length) toast(app.state.lockReport.map((l) => '🔒 ' + l).join('\n'), 'lock', 8000);
+}
+
+
+/** 拡張を読む（本体の拡張と、プロジェクトの editorWindows）。見た目（css）も入れる */
+async function loadExtensions(): Promise<LoadedExtension[]> {
+  const loaded: LoadedExtension[] = builtinExtensions(app);
+  for (const path of app.state.config?.editorWindows ?? []) {
+    try {
+      loaded.push(projectExtension(app, path, (await import(`/project@${app.state.version}/${path}`)).default));
+    } catch (e) {
+      toast(`拡張 ${path} を読み込めません: ${(e as Error).message}`, 'bad', 8000);
+    }
+  }
+  for (const x of loaded) {
+    if (!x.ext.css) continue;
+    let st = document.querySelector(`style[data-ext="${x.ext.id}"]`);
+    if (!st) { st = h('style', { 'data-ext': x.ext.id }); document.head.append(st); }
+    st.textContent = x.ext.css;
+  }
+  app.extensions = loaded;
+  return loaded;
 }

@@ -97,7 +97,7 @@ export interface EditorApi {
   /** 窓を出す（build が中身を作る。close で閉じる） */
   modal(build: (close: () => void) => HTMLElement): void;
   /** 拡張のパネルを前に出し、args を渡す（受け手の拡張は api.on('show', fn) で受ける。拡張どうしの呼び出し。例 射撃パターンのパネルを、その名前で開く） */
-  show(extId: string, args?: unknown): void;
+  show(extId: string, args?: unknown): boolean;
   /** ドラッグで運ばれてくる物の dataTransfer の型（asset: アセットの場所・prefab: プレハブの名前）。パネルに落とせるようにするとき */
   readonly dragTypes: { asset: string; prefab: string };
   on(event: 'change' | 'select' | 'play' | 'frame', fn: () => void): () => void;
@@ -132,8 +132,10 @@ export interface RunSpec {
 export interface RunOptions extends RunSpec {
   /** 最大のフレーム数（既定 600。240秒は fps×240） */
   frames?: number;
-  /** フレームを進めるたびに（例 出した物の位置を記録する） */
-  onFrame?(game: Game): void;
+  /** フレームを進めるたびに（例 出した物の位置を記録する。ids は spawn で出した物の ID） */
+  onFrame?(game: Game, ids: string[]): void;
+  /** 出来事が出るたびに（中身の data も。例 stageElement の番号と時刻） */
+  onEvent?(ev: GameEvent): void;
   /** true を返したら止める */
   until?(game: Game): boolean;
   /** やめる（結果の stopped が aborted） */
@@ -164,6 +166,8 @@ export interface StageOptions extends RunSpec {
    * 自由な視点ではホイールで拡大・右ドラッグで移動。frame: プレイヤーに見える画面の枠を点線で（自由な視点なら既定 true）
    */
   view?: { free?: boolean; zoom?: number; x?: number; y?: number; frame?: boolean };
+  /** scene をカメラの視点で描くときの細かさ（設計の大きさに対する倍率。既定 1。重いシーンは 0.5 などにすると軽い） */
+  resolution?: number;
   /** 当たり判定（Collider）を重ねて描く（ゲームの画面の「当たり判定」と同じ描き方） */
   colliders?: boolean;
   /** 1回終わるごとに呼ぶ（その回の数） */
@@ -308,6 +312,8 @@ export interface FieldView {
   set(value: unknown, final?: boolean): void;
   /** 標準の入力欄を作る（中に並べて使うとき） */
   standard(): HTMLElement;
+  /** この欄を名前の行ごと隠す（ほかの値によって要らない欄。例 狙い方に合わない角度） */
+  hide(): void;
 }
 
 /** インスペクタ・表のエディタの欄の見せ方（Unity の PropertyDrawer） */
@@ -383,7 +389,9 @@ export interface EditorExtension {
    * '@[enemy]' はタグ enemy のプレハブすべて（作る・写す・名前・元・消すも。変える前と後の両方でタグを持つこと）、'@[enemy].Enemy.*' はその部品の値だけ
    */
   edits?: string[];
-  /** パネル（Unity の EditorWindow） */
+  /** 拡張の見た目（CSS の文字。エディタに1つの style として入る。クラスの名前は拡張の id から始めると、ほかとぶつからない） */
+  css?: string;
+  /** パネル（Unity の EditorWindow）。パネルの右上の ↗ で別のウインドウに開ける */
   panel?: {
     title?: string;
     /** 最初に置く場所（既定: 下） */

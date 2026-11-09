@@ -71,8 +71,9 @@ export function createStage(app: App, el: HTMLElement, init: StageOptions): Stag
         const dpr = globalThis.devicePixelRatio || 1;
         cw = Math.round(bw * dpr); ch = Math.round(bh * dpr); cssW = bw;
       } else {
-        // 設計の大きさで描いて、縮めて見せる（エディタのゲームの画面と同じ）
-        cw = d.width; ch = d.height; cssW = fitBox(d.width, d.height, bw, bh).w;
+        // 設計の大きさ（×resolution）で描いて、縮めて見せる（エディタのゲームの画面と同じ）
+        const r = Math.max(0.1, Math.min(1, o.resolution ?? 1));
+        cw = Math.round(d.width * r); ch = Math.round(d.height * r); cssW = fitBox(d.width, d.height, bw, bh).w;
       }
     }
     if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
