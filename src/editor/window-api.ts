@@ -37,6 +37,8 @@ export interface EditorApi {
   patch(ops: Op[] | (() => Op[])): Promise<Change[] | null>;
   /** アドレスの値を読む（例: main#spawner.Spawner.interval・$enemies.basic.hp）。省略されていれば既定値、派生のプレハブなら元から受け継いだ値 */
   get(path: string): unknown;
+  /** プレハブ（派生は元と重ねた形。受け継いだタグ・部品も入る）。tag を書くと、そのタグを持つものだけ（api.state.prefabs はファイルの中身のまま） */
+  prefabs(tag?: string): PrefabDoc[];
   /** 表を読む（省いた列は既定値で埋めた行。ゲームのコードの ctx.table と同じ。変えるのは patch の set・addRow など） */
   table(name: string): TableView;
   /** 選ぶ（例: main#player / @enemy をインスペクタで、$bullets.shot1 は表のエディタをその行で開く）。add なら今の選びに足す（シーンの物だけ）。null で選ぶのをやめる */

@@ -145,6 +145,7 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
 - 拡張の見た目は `defineExtension({ css: '…' })`（クラスの名前は拡張の id から始める。document.head に自分で style を足さない）。欄の見せ方から、その欄を名前の行ごと隠すのは `field.hide()`。パネルはタブの ↗ で別のウインドウに開ける（`/?solo=win&id=<拡張の id>`）
 - `api.run` の `onEvent(ev)` で出来事の中身（data）を読める（例 stageElement の番号と時刻）。`onFrame(game, ids)` の ids は spawn で出した物。重いシーンの舞台は `resolution: 0.5` で軽くなる。`api.show` は相手の拡張がいなければ false
 - パネルの中に標準の欄（数・選択・プレハブ・アセット・表の行・色・入れ子）を置くのは `api.input(型, 値, (値, final) => …)`。同じ欄を手で作らない
+- プレハブを派生も重ねた形で（受け継いだタグ込みで）読むのは `api.prefabs(タグ)`（`api.state.prefabs` はファイルの中身のまま）。`api.get('@x.部品')` は書いていないフィールドを既定値で埋めて返す
 - 表を読むのは `api.table(名前)`（省いた列は既定値で埋めた行。ctx.table と同じ）か `api.get('$表.行.列')`。再生を始めるのは `api.play({ scene, params })`（ステージを試すボタンなど。ゲームの画面を前に出す。止めるのは `api.stop()`。再生中のシーンの切り替えは `api.on('scene', ({ from, to }) => …)`）
 - 再生中のゲームは `api.game`（world・ctx・frame。書いた値はその場で効くが保存しない。`ctx.emit` で出来事を送れる）、`api.pause()`・`api.step(n)`・`api.speed`。保存データは `api.save`（再生中はそのゲーム、止めていれば次の再生で読まれるもの）。部品・表の形は `api.schema('Health' | '$enemies')`
 - 窓は `api.modal(close => 中身)`。ほかの拡張のパネルを前に出して渡すのは `api.show(拡張のid, args)`（受け手は `api.on('show', fn)`）。アセット・プレハブをパネルに落とすときの型は `api.dragTypes`。パネルの中のキーは、本体のシーンの編集（Ctrl+A・Delete・矢印）に渡らない
