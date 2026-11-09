@@ -9,14 +9,38 @@ import { overridesOf } from '../core/variant.ts';
 import type { WindowInfo } from './windows.ts';
 import type { LockMark, TouchMark } from './oplog.ts';
 
-export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, locks: Record<string, LockMark> = {}, code = new Map<string, string[]>(), windows: WindowInfo[] = [], gotos = new Map<string, string[]>()): string {
+/** 地図の大きさの上限（文字）。超えるプロジェクトでは、細かいところを省いた要約の地図にする（詳しくは ages schema・ages get で引く） */
+export const MAP_BUDGET = 12000;
+
+export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, locks: Record<string, LockMark> = {}, code = new Map<string, string[]>(), windows: WindowInfo[] = [], gotos = new Map<string, string[]>(), budget = MAP_BUDGET): string {
+  const full = buildMap(p, touched, locks, code, windows, gotos, false);
+  return full.length <= budget ? full : buildMap(p, touched, locks, code, windows, gotos, true);
+}
+
+/** 説明の最初の一文（要約の地図で。長い説明は ages schema で引く） */
+const firstSentence = (s: string | undefined, max = 40): string => {
+  if (!s) return '';
+  const cut = s.split('。')[0];
+  return cut.length > max ? cut.slice(0, max) + '…' : cut;
+};
+
+function buildMap(p: Project, touched: Record<string, TouchMark>, locks: Record<string, LockMark>, code: Map<string, string[]>, windows: WindowInfo[], gotos: Map<string, string[]>, compact: boolean): string {
   const c = p.config;
   const out: string[] = [];
   out.push(`# ${c.name}  fps${c.fps} seed${c.seed} view${c.view.width}x${c.view.height} start:${c.startScene} code:${c.game}`);
+  if (compact) out.push(`（大きなプロジェクトなので要約の地図。型・範囲・既定値・説明は ages schema <dir> 名前,名前、物・プレハブの中身は ages get <dir> 住所）`);
 
   // 毎回読む1枚なので、使っていないものの行は出さない（標準の部品・シェーダー・表の説明は ages schema で引く）
   const own = [...p.registry.components.values()].filter((def) => !p.registry.std.has(def.name));
-  if (own.length) {
+  if (own.length && compact) {
+    out.push('## components（名前 説明の初め | フィールドの名前 | 自動:実行中に変わる値）');
+    for (const def of own) {
+      const all = Object.entries(def.fields);
+      const auto = all.filter(([, f]) => isAutoField(f)).map(([k]) => k);
+      const fields = all.filter(([, f]) => !isAutoField(f)).map(([k]) => k).join(' ');
+      out.push(`${def.name} ${firstSentence(def.desc)} | ${fields || '（フィールドなし）'}${auto.length ? ` | 自動:${auto.join(',')}` : ''}`);
+    }
+  } else if (own.length) {
     out.push('## components（名前 説明 | フィールド:型 範囲=既定値 | 自動:実行中に変わる値）');
     for (const def of own) {
       // 実行中に変わる値（desc に「自動で変化」）は人もAIも書かないので、型と範囲を省いて名前だけ（ages schema で引ける）
@@ -65,7 +89,7 @@ export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, l
       continue;
     }
     const rw = [s.reads?.length ? `r:${s.reads.join(',')}` : '', s.writes?.length ? `w:${s.writes.join(',')}` : ''].filter(Boolean).join(' ');
-    out.push(`${i + 1} ${s.name} ${s.desc}${rw ? ' ' + rw : ''}${s.scenes ? ` シーン:${s.scenes.join(',')}だけ` : ''}`);
+    out.push(`${i + 1} ${s.name} ${compact ? firstSentence(s.desc, 30) : s.desc}${rw ? ' ' + rw : ''}${s.scenes ? ` シーン:${s.scenes.join(',')}だけ` : ''}`);
   }
 
   if (p.registry.tables.size) {
@@ -78,13 +102,27 @@ export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, l
       const lk = Object.keys(locks).filter((k) => k.startsWith(`$${def.name}.`)).length;
       const tc = Object.keys(touched).filter((k) => k.startsWith(`$${def.name}.`)).length;
       // 標準の表は列が決まっているので、説明と列を省く（ages schema <dir> $表 で引ける）
-      const head = std ? '（標準）' : `${def.desc ? ' ' + def.desc : ''} | ${Object.entries(def.columns).map(([k, f]) => `${k}:${brief(f)}`).join(' ')}`;
+      const head = std ? '（標準）' : compact
+        ? `${def.desc ? ' ' + firstSentence(def.desc) : ''} | ${Object.keys(def.columns).join(' ')}`
+        : `${def.desc ? ' ' + def.desc : ''} | ${Object.entries(def.columns).map(([k, f]) => `${k}:${brief(f)}`).join(' ')}`;
       out.push(`$${def.name} ${rows.length}行${head} | 行: ${ids.slice(0, 8).join(' ')}${ids.length > 8 ? ' …' : ''}${lk ? ` 🔒${lk}` : ''}${tc ? ` ★${tc}` : ''}`);
     }
   }
 
-  if (p.docs.prefabs.size) out.push(`## prefabs（@名前 で参照${[...p.docs.prefabs.values()].some((x) => x.base) ? '。← は派生の元、変: は元から変えた所' : ''}）`);
-  for (const raw of p.docs.prefabs.values()) {
+  if (p.docs.prefabs.size && compact) {
+    // 同じ部品の組ごとに、名前だけを並べる（説明・タグ・変えた所は ages get <dir> @名前）
+    out.push(`## prefabs（${p.docs.prefabs.size}個。同じ部品の組ごとに名前だけ。←は派生の元）`);
+    const groups = new Map<string, string[]>();
+    for (const raw of p.docs.prefabs.values()) {
+      const pf = p.registry.findPrefab(raw.name) ?? raw;
+      const key = Object.keys(pf.components).join(' ');
+      const name = `${pf.name}${raw.base ? '←' + raw.base : ''}${marks(touched, locks, `@${pf.name}`)}`;
+      groups.set(key, [...(groups.get(key) ?? []), name]);
+    }
+    for (const [key, names] of groups) out.push(`[${key || '部品なし'}] ${names.length}: ${names.join(' ')}`);
+  }
+  if (p.docs.prefabs.size && !compact) out.push(`## prefabs（@名前 で参照${[...p.docs.prefabs.values()].some((x) => x.base) ? '。← は派生の元、変: は元から変えた所' : ''}）`);
+  for (const raw of compact ? [] : p.docs.prefabs.values()) {
     const pf = p.registry.findPrefab(raw.name) ?? raw;
     const tags = pf.tags?.length ? ` tags:${pf.tags.join(',')}` : '';
     const own = raw.base ? overridesOf(p.docs.prefabs, raw.name) : [];
@@ -93,12 +131,20 @@ export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, l
   }
 
   out.push(`## scenes（シーン#ID "名前" [コンポーネント]）${gotos.size ? `\ngoto の行き先（コード）: ${[...gotos.keys()].join(' ')}` : ''}`);
+  // 要約の地図では、前のシーンと同じ物（同じ ID・同じ部品）を繰り返さない
+  const seen = new Map<string, string>();
   for (const s of p.docs.scenes.values()) {
-    out.push(`${s.name}（${s.entities.length}体）${s.name === c.startScene ? ' 開始' : ''}${s.desc ? ' ' + s.desc : ''}`);
+    out.push(`${s.name}（${s.entities.length}体）${s.name === c.startScene ? ' 開始' : ''}${s.desc ? ' ' + (compact ? firstSentence(s.desc) : s.desc) : ''}`);
+    const same = new Map<string, number>();
     for (const e of s.entities) {
       const tags = e.tags?.length ? ` tags:${e.tags.join(',')}` : '';
-      out.push(`  ${s.name}#${e.id} "${e.name}" [${Object.keys(e.components).join(' ')}]${tags}${marks(touched, locks, `${s.name}#${e.id}`)}`);
+      const mk = marks(touched, locks, `${s.name}#${e.id}`);
+      const sig = `${e.id}[${Object.keys(e.components).join(' ')}]${tags}`;
+      if (compact && !mk && seen.has(sig)) { const from = seen.get(sig)!; same.set(from, (same.get(from) ?? 0) + 1); continue; }
+      if (!seen.has(sig)) seen.set(sig, s.name);
+      out.push(compact ? `  #${e.id} [${Object.keys(e.components).join(' ')}]${tags}${mk}` : `  ${s.name}#${e.id} "${e.name}" [${Object.keys(e.components).join(' ')}]${tags}${mk}`);
     }
+    for (const [from, n] of same) out.push(`  ほか${n}体は ${from} と同じ`);
   }
 
   if (p.assets.length > ASSET_LIST_MAX) {
