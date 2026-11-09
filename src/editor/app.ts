@@ -273,6 +273,17 @@ export class App {
       this.sel = sel;
       this.extra = [];
     }
+    this.row = null;
+    this.emit('select');
+  }
+
+  /** 表のエディタで選んでいる行（拡張の api.selection に $表.行 で出る）。シーンの物・プレハブを選ぶと外れる */
+  row: { table: string; id: string } | null = null;
+
+  /** 表の行を選んだことにする（表のエディタから。インスペクタの選びはそのまま）。変わったら select を知らせる */
+  selectRow(table: string, id: string | null): void {
+    if ((this.row?.table ?? '') === (id ? table : '') && (this.row?.id ?? '') === (id ?? '')) return;
+    this.row = id ? { table, id } : null;
     this.emit('select');
   }
 
@@ -282,6 +293,7 @@ export class App {
     const all = [...new Set([...(add ? cur : []), ...ids])].filter((id) => this.state.scenes[this.scene]?.entities.some((e) => e.id === id));
     this.sel = all.length ? { kind: 'scene', scene: this.scene, id: all[0] } : null;
     this.extra = all.slice(1);
+    this.row = null;
     this.emit('select');
   }
 

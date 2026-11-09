@@ -111,6 +111,135 @@ test('拡張の右クリックのメニュー: 地図に項目の名前が出て
   assert.doesNotMatch(await cmdCheck(dir), /menu\.ext\.ts/);
 });
 
+// ---------- 表と欄（2026-11-09 段C）: 行の見せ方・$表.列・入れ子の中の見せ方・型の並び ----------
+
+/** 入れ子の列を持つ表 talks（複数行の文字・リストの中の構造体・どれか1つ・タグで絞るプレハブ）を足した見本 */
+async function withTalks(ext: Record<string, string> = {}): Promise<string> {
+  const dir = await fresh();
+  await writeFile(join(dir, 'game/tables.ts'), (await readFile(join(dir, 'game/tables.ts'), 'utf8')) + `
+export const talks = defineTable({
+  name: 'talks',
+  desc: '会話',
+  columns: {
+    text: { type: 'string', default: '', multiline: true },
+    lines: { type: 'list', of: { type: 'struct', fields: { face: { type: 'string', default: '' }, say: { type: 'string', default: '', multiline: true } } } },
+    act: { type: 'oneOf', variants: { wait: { fields: { frames: { type: 'int', default: 1 } } }, shoot: { fields: { pattern: { type: 'string', default: '' } } } } },
+    boss: { type: 'prefab', default: '', tags: ['boss'] },
+  },
+});
+`);
+  await writeFile(join(dir, 'data/talks.table.json'), JSON.stringify({ name: 'talks', rows: [{ id: 't1', text: 'a\nb', lines: [{ face: 'smile', say: 'hi' }], act: { kind: 'wait', frames: 3 } }] }, null, 2));
+  const cfg = join(dir, 'ages.project.json');
+  const c = JSON.parse(await readFile(cfg, 'utf8'));
+  for (const [name, src] of Object.entries(ext)) {
+    await writeFile(join(dir, `editor/${name}.ext.ts`), `import { defineExtension } from 'ages';\nexport default defineExtension(${src});\n`);
+    c.editorWindows.push(`editor/${name}.ext.ts`);
+  }
+  await writeFile(cfg, JSON.stringify(c, null, 2));
+  return dir;
+}
+
+test('欄の見せ方の match の決まり: $表.列・入れ子の中（[] と .名前）・住所の番号・その中なら変えてよい', async () => {
+  const { matchRank, fieldKey, matchField, matchWithin, splitMatch, subProblem } = await import('../src/core/drawers.ts');
+  assert.deepEqual(['color', 'Health.hp', '$talks.face', '@enemy.Health.hp', 'main#p.Health.hp'].map(matchRank), [1, 2, 2, 3, 3]);
+  assert.equal(fieldKey('@enemy.Enemy.shotPatterns[2].pattern'), 'Enemy.shotPatterns[].pattern');
+  assert.equal(fieldKey('$talks.t1.lines[0].face'), '$talks.lines[].face');
+  assert.equal(fieldKey('$talks.t1'), null);
+  const k = fieldKey('main#s.Spawner.kinds[1]');
+  assert.ok(matchField('Spawner.kinds[]', 'main#s.Spawner.kinds[1]', k, 'row'));
+  assert.ok(matchField('main#s.Spawner.kinds[]', 'main#s.Spawner.kinds[1]', k, 'row'));
+  assert.ok(matchField('main#s.Spawner.kinds[1]', 'main#s.Spawner.kinds[1]', k, 'row'));
+  assert.ok(matchField('row', 'main#s.Spawner.kinds[1]', k, 'row'));
+  assert.ok(!matchField('Spawner.kinds', 'main#s.Spawner.kinds[1]', k, 'row'), 'リストの欄の見せ方は、項目には当たらない（ちょうどその場所だけ）');
+  assert.ok(matchWithin('Spawner.kinds', 'main#s.Spawner.kinds[1]', []), 'リストを見せている拡張は、その中を変えてよい');
+  assert.ok(matchWithin('$talks.lines[]', '$talks.t1.lines[0].face', []));
+  assert.ok(!matchWithin('$talks.lines[].face', '$talks.t1.lines[0].say', []));
+  assert.ok(!matchWithin('$talks.lines', '$talks.t1.linesX', []), '名前の前だけ同じものは中ではない');
+  assert.ok(matchWithin('int', '$talks.t1.act.frames', ['oneOf', 'int']));
+  assert.deepEqual(splitMatch('@enemy.Enemy.shotPatterns[].pattern'), { head: '@enemy.Enemy.shotPatterns', sub: '[].pattern' });
+  assert.deepEqual(splitMatch('$talks.lines[].face'), { head: '$talks.lines', sub: '[].face' });
+  assert.deepEqual(splitMatch('Health.hp'), { head: 'Health.hp', sub: '' });
+  const lines = { type: 'list', of: { type: 'struct', fields: { face: { type: 'string', default: '' } } } } as const;
+  assert.equal(subProblem(lines, '[].face', 'x', false), null);
+  assert.match(subProblem(lines, '[].fase', 'x', false)!, /x\[\] に fase はありません。もしかして: face/);
+  assert.match(subProblem(lines, '[2].face', 'x', false)!, /番号は書かず \[\]/);
+  assert.equal(subProblem(lines, '[2].face', 'x', true), null, '住所の match なら番号も書ける');
+  assert.match(subProblem(lines, '.face', 'x', false)!, /構造体・どれか1つではありません/);
+});
+
+test('表の行・欄の見せ方: 地図に出て、見せている行の値・欄（入れ子の中・型も）だけを edits なしで変えられる。行を足す・消すのは edits で', async () => {
+  const dir = await withTalks({
+    'talk-rows': "{ id: 'talk-rows', desc: '会話の行を絵で', rows: [{ table: 'talks', hide: ['lines'], mount() {} }] }",
+    'faces': "{ id: 'faces', desc: '顔を絵から選ぶ', fields: [{ match: ['$talks.lines[].face', 'Spawner.kinds[]', '$enemies.hp'], mount() {} }] }",
+    'ints': "{ id: 'ints', desc: '整数をつまみで', fields: [{ match: 'int', mount() {} }] }",
+  });
+  const map = await cmdMap(dir);
+  assert.match(map, /^talk-rows 会話の行を絵で \| 行:\$talks \| editor\/talk-rows\.ext\.ts$/m);
+  assert.match(map, /^faces 顔を絵から選ぶ \| 欄:\$talks\.lines\[\]\.face,Spawner\.kinds\[\],\$enemies\.hp \| editor\/faces\.ext\.ts$/m);
+  assert.doesNotMatch(await cmdCheck(dir), /talk-rows|faces|ints/);
+  const p = await Project.load(dir);
+  const as = (id: string) => ({ who: 'yamamoto', kind: 'human' as const, win: `window:${id}` });
+  // 行の見せ方: その表の行の値（入れ子の中も）
+  await p.apply([{ op: 'set', path: '$talks.t1.text', value: 'x\ny' }, { op: 'set', path: '$talks.t1.lines[0].say', value: 'yo' }], as('talk-rows'));
+  await assert.rejects(p.apply([{ op: 'addRow', table: 'talks', row: { id: 't2' } }], as('talk-rows')), /宣言（edits）にない値を変えようとしています: \$talks\.t2/);
+  await assert.rejects(p.apply([{ op: 'removeRow', table: 'talks', id: 't1' }], as('talk-rows')), /宣言（edits）にない値/);
+  await assert.rejects(p.apply([{ op: 'set', path: '$enemies.basic.hp', value: 3 }], as('talk-rows')), /宣言（edits）にない値/);
+  // 欄の見せ方: $表.列・入れ子の中だけ
+  await p.apply([{ op: 'set', path: '$talks.t1.lines[0].face', value: 'cry' }, { op: 'set', path: 'main#spawner.Spawner.kinds[0]', value: 'basic' }, { op: 'set', path: '$enemies.basic.hp', value: 4 }], as('faces'));
+  await assert.rejects(p.apply([{ op: 'set', path: '$talks.t1.lines[0].say', value: 'no' }], as('faces')), /宣言（edits）にない値を変えようとしています: \$talks\.t1\.lines\[0\]\.say/);
+  await assert.rejects(p.apply([{ op: 'set', path: '$enemies.basic.speed', value: 2 }], as('faces')), /宣言（edits）にない値/);
+  await assert.rejects(p.apply([{ op: 'set', path: 'main#spawner.Spawner.interval', value: 30 }], as('faces')), /宣言（edits）にない値/);
+  // 型で選ぶ見せ方: 表の欄・どれか1つの中の整数にも
+  await p.apply([{ op: 'set', path: '$talks.t1.act.frames', value: 9 }, { op: 'set', path: '$enemies.basic.score', value: 7 }, { op: 'set', path: '@enemy.Health.hp', value: 2 }], as('ints'));
+  await assert.rejects(p.apply([{ op: 'set', path: '$talks.t1.text', value: 'z' }], as('ints')), /宣言（edits）にない値/);
+  const t = JSON.parse(await readFile(join(dir, 'data/talks.table.json'), 'utf8')).rows[0];
+  assert.deepEqual([t.text, t.lines[0], t.act.frames], ['x\ny', { face: 'cry', say: 'yo' }, 9]);
+  // 🔒 は変えられない（行の見せ方からも、欄の見せ方からも）
+  await p.lock(['$talks.t1.text', '$talks.t1.lines'], keeper);
+  await assert.rejects(p.apply([{ op: 'set', path: '$talks.t1.text', value: 'q' }], as('talk-rows')), /🔒 ロックされた値は、ウインドウ talk-rows からは変えられません/);
+  await assert.rejects(p.apply([{ op: 'set', path: '$talks.t1.lines[0].face', value: 'q' }], as('faces')), /🔒 ロックされた値は、ウインドウ faces からは変えられません/);
+});
+
+test('拡張の検証: rows の表・$表.列・入れ子の中の場所', async () => {
+  const dir = await withTalks({
+    bad: "{ id: 'bad', desc: 'x', rows: [{ table: 'talk', mount() {} }], fields: [{ match: ['$talks.lines[].fase', '$talks.lien', '$talk.text', '$talks', 'Spawner.kinds[2]', 'Spawner.interval[]', '$talks.act.kind', 'Spawner[].x'], mount() {} }] }",
+    good: "{ id: 'good', desc: 'x', fields: [{ match: ['$talks.act.pattern', 'main#spawner.Spawner.kinds[0]', 'main#spawner.Spawner.kinds[]', '$talks.lines[]'], mount() {} }] }",
+  });
+  const out = await cmdCheck(dir);
+  assert.match(out, /bad\.ext\.ts: rows の talk: 表 talk はありません。もしかして: talks/);
+  assert.match(out, /bad\.ext\.ts: fields の match \$talks\.lines\[\]\.fase: \$talks\.lines\[\] に fase はありません。もしかして: face/);
+  assert.match(out, /bad\.ext\.ts: fields の match \$talks\.lien: 表 talks に列 lien はありません。もしかして: lines/);
+  assert.match(out, /bad\.ext\.ts: fields の match \$talk\.text: 表 talk はありません。もしかして: talks/);
+  assert.match(out, /bad\.ext\.ts: fields の match \$talks: 列がありません/);
+  assert.match(out, /bad\.ext\.ts: fields の match Spawner\.kinds\[2\]: .*番号は書かず \[\]/);
+  assert.match(out, /bad\.ext\.ts: fields の match Spawner\.interval\[\]: Spawner\.interval はリストではありません/);
+  assert.match(out, /bad\.ext\.ts: fields の match \$talks\.act\.kind: .*kind は種類の選択/);
+  assert.match(out, /bad\.ext\.ts: fields の match Spawner\[\]\.x: 部品\.フィールド の形で書きます/);
+  assert.doesNotMatch(out, /good\.ext\.ts/);
+});
+
+test('schema: 複数行の文字・タグで絞るプレハブ（選べる一覧）・入れ子のリストの複製（index 付きの insert）', async () => {
+  const { typeOf, brief, checkAt } = await import('../src/core/schema.ts');
+  const { prefabChoices } = await import('../src/core/variant.ts');
+  const { applyNested, toOp } = await import('../src/editor/ui/inspector.ts');
+  assert.equal(typeOf({ type: 'prefab', default: '', tags: ['boss', 'stage'] }), 'prefab[boss,stage]');
+  assert.equal(brief({ type: 'prefab', default: 'enemy' }), 'prefab="enemy"', 'タグがなければ今までどおり');
+  assert.equal(checkAt('x', { type: 'string', default: '', multiline: true }, 'a\nb'), null);
+  assert.match(checkAt('x', { type: 'prefab', default: '', tags: ['boss'] }, 3)!, /プレハブ名/);
+  const prefabs = new Map([
+    ['a', { name: 'a', tags: ['boss'], components: {} }],
+    ['b', { name: 'b', components: {} }],
+    ['c', { name: 'c', base: 'a', components: {} }],
+    ['d', { name: 'd', tags: ['stage'], components: {} }],
+  ]);
+  assert.deepEqual(prefabChoices(prefabs, ['boss']), ['a', 'c'], '派生は元のタグを受け継ぐ');
+  assert.deepEqual(prefabChoices(prefabs, ['boss', 'stage']), ['a', 'c', 'd'], 'どれかのタグ');
+  assert.deepEqual(prefabChoices(prefabs), ['a', 'b', 'c', 'd']);
+  assert.deepEqual(toOp('$t.r.lines', { kind: 'insert', sub: [], value: { a: 1 }, index: 1 }), { op: 'insert', path: '$t.r.lines', value: { a: 1 }, index: 1 });
+  assert.deepEqual(applyNested([{ a: 0 }, { a: 2 }], { kind: 'insert', sub: [], value: { a: 1 }, index: 1 }), [{ a: 0 }, { a: 1 }, { a: 2 }]);
+  assert.deepEqual(applyNested({ l: [1] }, { kind: 'insert', sub: ['l'], value: 2 }), { l: [1, 2] }, 'index を省くと最後');
+});
+
 /** 拡張を1つ足して読み込む（edits と窓口はそのまま書く） */
 async function withExt(id: string, decl: string): Promise<{ dir: string; p: Project; actor: { who: string; kind: 'human'; win: string } }> {
   const dir = await fresh();
@@ -209,4 +338,27 @@ test('本体の拡張: 階層のプレハブの右クリック（写す・名前
   for (const m of ext.menus!) await m.run(['@enemy'], api);
   assert.deepEqual(sent, [{ op: 'addPrefab', name: 'enemy_copy2', copy: 'enemy' }, { op: 'renamePrefab', name: 'enemy', to: 'foe' }, { op: 'removePrefab', name: 'enemy' }]);
   assert.deepEqual(picked, ['@enemy_copy2', '@foe', null]);
+});
+
+test('行・欄の見せ方の許しと edits の @[タグ] は、同じ拡張で両方効く', async () => {
+  const dir = await withTalks({
+    both: "{ id: 'both', title: '両方', desc: 'ボスと会話', edits: ['@[boss]'], rows: [{ table: 'talks', mount() {} }], fields: [{ match: '$enemies.hp', mount() {} }], panel: { mount() {} } }",
+  });
+  const pf = join(dir, 'prefabs/enemy.prefab.json');
+  await writeFile(pf, JSON.stringify({ ...JSON.parse(await readFile(pf, 'utf8')), tags: ['boss'] }, null, 2));
+  assert.doesNotMatch(await cmdCheck(dir), /both\.ext\.ts/);
+  assert.match(await cmdMap(dir), /^both「両方」 ボスと会話 \| 変える: @\[boss\].* \| パネル 欄:\$enemies\.hp 行:\$talks \| editor\/both\.ext\.ts$/m);
+  const p = await Project.load(dir);
+  const actor = { who: 'yamamoto', kind: 'human' as const, win: 'window:both' };
+  // @[タグ] でプレハブを作る・値を変える、行の見せ方で行の値、欄の見せ方で表の列を、1つの変更でまとめて
+  await p.apply([
+    { op: 'addPrefab', name: 'boss2', copy: 'enemy' },
+    { op: 'set', path: '@enemy.Health.hp', value: 9 },
+    { op: 'set', path: '$talks.t1.text', value: 'boss!' },
+    { op: 'set', path: '$enemies.basic.hp', value: 5 },
+  ], actor);
+  assert.ok(p.docs.prefabs.has('boss2'));
+  await assert.rejects(p.apply([{ op: 'set', path: '@bullet.Velocity.vy', value: 1 }], actor), /宣言（edits）にない値を変えようとしています: @bullet\.Velocity\.vy/, 'タグのないプレハブは変えられない');
+  await assert.rejects(p.apply([{ op: 'removeRow', table: 'talks', id: 't1' }], actor), /宣言（edits）にない値/, '行の見せ方でも、行を消すのは edits で');
+  await assert.rejects(p.apply([{ op: 'set', path: '$enemies.basic.speed', value: 2 }], actor), /宣言（edits）にない値/);
 });

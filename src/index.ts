@@ -5,7 +5,7 @@ export { defineSystem, defineCheck, type SystemDef, type GameModule, type CheckD
 export { defineTable, type TableDef, type TableView, type Row, type RowOf } from './core/table.ts';
 export type { Ctx } from './core/game.ts';
 export type { Entity } from './core/world.ts';
-export { defineWindow, defineExtension, type EditorWindow, type EditorExtension, type EditorApi, type FieldDrawer, type FieldView, type ComponentDrawer, type ComponentView, type StageOptions, type StageSummary, type StageHandle, type MenuItem } from './editor/window-api.ts';
+export { defineWindow, defineExtension, type EditorWindow, type EditorExtension, type EditorApi, type FieldDrawer, type FieldView, type ComponentDrawer, type ComponentView, type RowDrawer, type RowView, type StageOptions, type StageSummary, type StageHandle, type MenuItem } from './editor/window-api.ts';
 export { Transform, Sprite, Animator, Shape, Text, Camera, Sound, AudioBus, Particles, Effect, PostEffect } from './std/components.ts';
 export { STD_SHADER_CODE, parseShader, type ShaderDef } from './core/shader.ts';
 export type { SoundApi, AudioCmd, BusDef } from './core/audio.ts';
