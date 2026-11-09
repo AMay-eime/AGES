@@ -53,6 +53,7 @@ export function makeApi(app: App, win: string): EditorApi {
     table: (name) => app.registry.tableView(name),
     simulate: (frames, keys, seed) => app.simulate(frames, keys, seed),
     sheet: (image: string) => app.registry.sheets.get(image),
+    assetUrl: (path) => app.assetUrl(path),
     notify: (text, kind = 'info') => { toast(text, kind === 'info' ? '' : kind, kind === 'bad' ? 8000 : 4000); },
     get selection() { const s = app.sel; return !s ? null : s.kind === 'prefab' ? `@${s.name}` : `${s.scene}#${s.id}`; },
     get selected() { const s = app.sel; return !s ? [] : s.kind === 'prefab' ? [`@${s.name}`] : app.selectedIds().map((id) => `${s.scene}#${id}`); },
