@@ -6,7 +6,7 @@ import type { World, Entity } from '../core/world.ts';
 import type { SheetDef } from '../core/sheet.ts';
 import { camerasOf, defaultCamera, worldToScreen, type CameraView } from '../core/camera.ts';
 import { layoutUI, type UiRect } from '../core/ui.ts';
-import { collectDrawables, cornersOf, lineCorners, pointInCorners, spriteGeometry, strokeBands, type Corners } from './geom.ts';
+import { collectDrawables, cornersOf, lineCorners, pointInCorners, spriteGeometry, strokeBands, tileSpans, type Corners } from './geom.ts';
 import { ParticleSim } from './particles.ts';
 import { STD_SHADERS, codeHash, wrapShader, type ShaderDef } from '../core/shader.ts';
 
@@ -432,6 +432,25 @@ export class Renderer {
       }
       return;
     }
+    const tile = s.tile as [number, number] | undefined;
+    if (tile && tile[0] > 0 && tile[1] > 0 && tex !== this.missing && w > 0 && h > 0) {
+      // 敷き詰める: 1枚の大きさ tile で size いっぱいに並べ、はみ出す所は絵を切る（帯のレーザー・流れる背景）。tileOffset で絵をずらす
+      const c = { x: t.x + (0.5 - ax) * w * (t.sx ?? 1), y: t.y + (0.5 - ay) * h * (t.sy ?? 1), rot: t.rot ?? 0, sx: t.sx ?? 1, sy: t.sy ?? 1 };
+      if (!this.place(e.id, this.part(c, w, h, 0, 0, 1, 1))) return;
+      const [tw, th] = tile, [ox, oy] = (s.tileOffset as [number, number] | undefined) ?? [0, 0];
+      const xs = tileSpans(w, tw, ox), ys = tileSpans(h, th, oy);
+      const mat = this.material(e, [u0, v0, u1, v1]);
+      const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
+      for (const [y0, y1, ty0, ty1] of ys) for (const [x0, x1, tx0, tx1] of xs) {
+        const q = this.place(e.id, this.part(c, w, h, x0, y0, x1, y1), false);
+        if (!q) continue;
+        let a0 = lerp(u0, u1, tx0), a1 = lerp(u0, u1, tx1), b0 = lerp(v0, v1, ty0), b1 = lerp(v0, v1, ty1);
+        if (s.flipX) { a0 = lerp(u0, u1, 1 - tx0); a1 = lerp(u0, u1, 1 - tx1); }
+        if (s.flipY) { b0 = lerp(v0, v1, 1 - ty0); b1 = lerp(v0, v1, 1 - ty1); }
+        this.quad(tex, s.blend ?? 'normal', q, a0, b0, a1, b1, color, s.alpha ?? 1, mat);
+      }
+      return;
+    }
     if (s.flipX) [u0, u1] = [u1, u0];
     if (s.flipY) [v0, v1] = [v1, v0];
     const q = this.place(e.id, cornersOf(t, w, h, ax, ay));
@@ -471,21 +490,22 @@ export class Renderer {
     const box = this.uiBox(e);
     const t = box ? box.t : (e.c.Transform as TransformLike);
     const color = this.stateColor(e, s.color), alpha = s.alpha ?? 1, mat = this.material(e);
+    const blend = s.blend ?? 'normal';
     if (s.kind === 'line') {
       const q = this.place(e.id, lineCorners(t, s.to ?? [0, 0], s.stroke || 1));
-      if (q) this.quad(this.white, 'normal', q, 0, 0, 1, 1, color, alpha, mat);
+      if (q) this.quad(this.white, blend, q, 0, 0, 1, 1, color, alpha, mat);
       return;
     }
     const w = box ? box.w : s.w, h = box ? box.h : s.h;
     const stroke = s.stroke ?? 0;
     const q = this.place(e.id, cornersOf(t, w, h, 0.5, 0.5));
     if (!q) return;
-    if (stroke <= 0) this.quad(s.kind === 'circle' ? this.circle : this.white, 'normal', q, 0, 0, 1, 1, color, alpha, mat);
-    else if (s.kind === 'circle') this.quad(this.ring(stroke / Math.max(1, Math.min(w, h) / 2)), 'normal', q, 0, 0, 1, 1, color, alpha, mat);
+    if (stroke <= 0) this.quad(s.kind === 'circle' ? this.circle : this.white, blend, q, 0, 0, 1, 1, color, alpha, mat);
+    else if (s.kind === 'circle') this.quad(this.ring(stroke / Math.max(1, Math.min(w, h) / 2)), blend, q, 0, 0, 1, 1, color, alpha, mat);
     else {
       for (const [x0, y0, x1, y1] of strokeBands(w, h, stroke)) {
         const b = this.place(e.id, this.part(t, w, h, x0, y0, x1, y1), false);
-        if (b) this.quad(this.white, 'normal', b, 0, 0, 1, 1, color, alpha, mat);
+        if (b) this.quad(this.white, blend, b, 0, 0, 1, 1, color, alpha, mat);
       }
     }
   }
@@ -810,7 +830,8 @@ export class Renderer {
     if (fam) return fam;
     fam = `ages-font-${this.fonts.size}`;
     this.fonts.set(path, fam);
-    const face = new FontFace(fam, `url(${this.opts.urlOf(path)})`);
+    // 名前に ' や空白があっても読めるように、場所を引用符で囲む
+    const face = new FontFace(fam, `url(${JSON.stringify(this.opts.urlOf(path))})`);
     face.load().then((f) => {
       document.fonts.add(f);
       for (const [k, t] of this.textCache) if (k.includes(fam!)) { this.gl.deleteTexture(t.tex); this.textCache.delete(k); }
