@@ -109,6 +109,12 @@ test('地図: 要約でも上限を超えるときは目次の地図。中身は
   assert.match(index, /^## prefabs \d+個（主な部品ごとの数）: .*Sound \d+/m);
   assert.match(index, /^## scenes: main\(\d+体・開始\)/m);
   assert.doesNotMatch(index, /hp:int|invincibleOnHit/, '目次にはフィールドを出さない');
+  // エディタ拡張は目次でも残すが、名前・説明の最初の一文・ファイルだけ（変える値・欄は節で引く）
+  const wins = [{ path: 'editor/hp-hearts.ext.ts', id: 'hp-hearts', desc: '体力を ♥ の数で見せる。−・＋ で1つずつ変える', fields: ['Health.hp'], edits: [] }];
+  const withExt = renderMap(p, {}, {}, new Map(), wins, new Map(), 100);
+  assert.match(withExt, /^## editor extensions 1個（/m);
+  assert.match(withExt, /^hp-hearts 体力を ♥ の数で見せる \| editor\/hp-hearts\.ext\.ts$/m);
+  assert.match(renderMapSection(p, 'extensions', { windows: wins }, 100), /^hp-hearts 体力を ♥ の数で見せる。−・＋ で1つずつ変える \| 変える: なし（見るだけ） \| 欄:Health\.hp \| editor\/hp-hearts\.ext\.ts$/m);
   // 節を1つ: 小さいプロジェクトなので詳しい形
   assert.match(renderMapSection(p, 'components'), /^Health 体力。0で倒れる \| hp:int/m);
   assert.match(renderMapSection(p, 'tables', {}, 100), /^\$enemies \d+行 .* \| /m, '大きいプロジェクトでは要約の形');

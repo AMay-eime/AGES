@@ -211,13 +211,17 @@ function sectionLines(p: Project, ins: Ins, mode: 'full' | 'compact'): Record<Ma
   return r;
 }
 
-/** エディタ拡張の行（目次の地図でも省かない。作る前に見るため） */
-function extensionLines(p: Project, windows: WindowInfo[]): string[] {
+/** エディタ拡張の行（目次の地図でも省かない。作る前に見るため）。目次の地図では名前・説明の最初の一文・ファイルだけ（変える値・欄は ages map <dir> extensions） */
+function extensionLines(p: Project, windows: WindowInfo[], short = false): string[] {
   const c = p.config;
   if (!c.editorWindows?.length) return [];
-  const out = ['## editor extensions（プロジェクト独自のエディタ拡張。作る前にここを見て、近いものがあれば直す。変える値は edits と、見せている欄・部品・行だけ）'];
-  for (const w of windows.length ? windows : c.editorWindows.map((path) => ({ path }) as WindowInfo)) {
+  const list = windows.length ? windows : c.editorWindows.map((path) => ({ path }) as WindowInfo);
+  const out = [short
+    ? `## editor extensions ${list.length}個（作る前にここを見て、近いものがあれば直す。変える値・欄は ages map <dir> extensions）`
+    : '## editor extensions（プロジェクト独自のエディタ拡張。作る前にここを見て、近いものがあれば直す。変える値は edits と、見せている欄・部品・行だけ）'];
+  for (const w of list) {
     if (w.error) { out.push(`${w.path} ⚠ ${w.error}`); continue; }
+    if (short) { out.push(`${w.id ?? '?'}${w.title ? `「${w.title}」` : ''}${w.desc ? ' ' + firstSentence(w.desc) : ''}${w.edits || !w.panel ? '' : ' ⚠ 宣言なし'} | ${w.path}`); continue; }
     const edits = w.edits ? (w.edits.length ? withTagCounts(compactPaths(w.edits), p) : 'なし（見るだけ）') : w.panel ? '⚠ 宣言なし' : '';
     const parts = [w.panel ? 'パネル' : '', w.fields?.length ? `欄:${w.fields.join(',')}` : '', w.components?.length ? `部品:${w.components.join(',')}` : '', w.rows?.length ? `行:${w.rows.map((t) => '$' + t).join(',')}` : '', w.menus?.length ? `メニュー:${w.menus.join(',')}` : ''].filter(Boolean).join(' ');
     out.push(`${w.id ?? '?'}${w.title ? `「${w.title}」` : ''}${w.desc ? ' ' + w.desc : ''}${edits ? ` | 変える: ${edits}` : ''}${parts && parts !== 'パネル' ? ` | ${parts}` : ''} | ${w.path}`);
@@ -294,7 +298,7 @@ function indexLines(p: Project, ins: Ins): Record<MapSection, string[]> {
     }
     r.assets.push(`## assets ${p.assets.length}個: 画像${n.image}（シート${n.sheet}） 音${n.sound}${n.font ? ` フォント${n.font}` : ''}（1つずつは ages assets <dir> [フォルダ]）`);
   }
-  r.extensions.push(...extensionLines(p, ins.windows));
+  r.extensions.push(...extensionLines(p, ins.windows, true));
   return r;
 }
 
