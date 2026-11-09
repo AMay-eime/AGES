@@ -36,7 +36,7 @@
 - `ages run <dir> --frames 1800 --keys "0-1800:@fire;0-300:@move_x=-1" --watch player.Health.hp --until gameOver`（keys の書き方は guide:input。出した物は `--watch @プレハブ名.部品.値`）
 - 確かめは、直ったと分かる最小の回数で（1か所の直しなら、同じ条件で直す前と後を1回ずつ比べ、最後に `--twice` を1回）
 - 変更後は `--twice` で再現性を確かめる。人の操作の再現は `--input recordings/<名前>.input.json`。プレハブだけを試すのは `--spawn 名前`（空のシーンの真ん中に出す。消えたら止まる）
-- 画面・画像・音を開かずに、要約の行（`sounds:` `hits:` `ui:` `particles:` `save:` など）と ⚠ で確かめる。画面の確認が要るときだけスクリーンショット（画像は高い）
+- 画面・画像・音を開かずに、要約の行（`sounds:` `hits:` `ui:` `particles:` `save:` など）と ⚠ で確かめる。見た目の確認が要るときだけ `--shot 600`（そのフレームの画面を PNG に。画像は高いので `--shot-scale 0.5`）
 
 ## ゲームコードの決まり（game/*.ts）
 

@@ -267,6 +267,15 @@ export class Renderer {
     this.gcText();
   }
 
+  /** 読み込み中の画像・フォントがすべて終わるまで待つ（決まったフレームの画面を撮る前に。読めなかったものも終わりとみなす） */
+  async settled(): Promise<void> {
+    for (let i = 0; i < 4; i++) {
+      const n = this.textures.size + this.fontLoads.length;
+      await Promise.all([...[...this.textures.values()].map((t) => t.loaded), ...this.fontLoads]);
+      if (this.textures.size + this.fontLoads.length === n) return;
+    }
+  }
+
   /** 画像を先に読み込む（シーンに入る前に。読み込み終わるか、読めなかったら終わる） */
   preload(paths: string[]): Promise<void> {
     return Promise.all(paths.map((p) => this.texture(p).loaded)).then(() => {});
@@ -825,6 +834,8 @@ export class Renderer {
   }
 
   private fonts = new Map<string, string>();
+  /** 読み込み中のフォント（settled で待つ） */
+  private fontLoads: Promise<void>[] = [];
   private fontFamily(path: string): string {
     let fam = this.fonts.get(path);
     if (fam) return fam;
@@ -832,10 +843,10 @@ export class Renderer {
     this.fonts.set(path, fam);
     // 名前に ' や空白があっても読めるように、場所を引用符で囲む
     const face = new FontFace(fam, `url(${JSON.stringify(this.opts.urlOf(path))})`);
-    face.load().then((f) => {
+    this.fontLoads.push(face.load().then((f) => {
       document.fonts.add(f);
       for (const [k, t] of this.textCache) if (k.includes(fam!)) { this.gl.deleteTexture(t.tex); this.textCache.delete(k); }
-    }).catch(() => console.warn(`フォントを読み込めません: ${path}`));
+    }).catch(() => console.warn(`フォントを読み込めません: ${path}`)));
     return fam;
   }
 

@@ -93,6 +93,7 @@ export function makeTools(defaultProject: string): Tool[] {
           saveOut: { type: 'string', description: '終わりの保存データを書き出す' },
           lang: { type: 'string', description: '言語' },
           params: { type: 'object', description: '始めのシーンの scene.params' },
+          shot: { type: 'string', description: 'その画面を撮る（例 "0,600"）' }, shotScale: { type: 'number' },
         },
       },
       run: (a, dir) => {
@@ -103,6 +104,8 @@ export function makeTools(defaultProject: string): Tool[] {
         if (a.save) f.save = String(a.save);
         if (a.saveOut) f['save-out'] = String(a.saveOut);
         if (a.params) f.params = JSON.stringify(a.params);
+        if (a.shot !== undefined) f.shot = String(a.shot);
+        if (a.shotScale !== undefined) f['shot-scale'] = String(a.shotScale);
         return cmdRun(dir, f);
       },
     },
