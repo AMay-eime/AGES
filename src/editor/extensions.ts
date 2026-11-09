@@ -81,7 +81,7 @@ export function makeApi(app: App, win: string): EditorApi {
     // 画面なしで動かす（舞台と同じ作り方。少しずつ回す）
     run: async (opts) => {
       const t = startTrial(app.registry, app.state.config, opts, { lang: app.previewLang || undefined });
-      return runTrial(t, { frames: opts.frames ?? 600, onFrame: opts.onFrame, until: opts.until, signal: opts.signal });
+      return runTrial(t, { frames: opts.frames ?? 600, onFrame: opts.onFrame, onEvent: opts.onEvent, until: opts.until, signal: opts.signal });
     },
     get game() { return app.play?.game ?? null; },
     pause: (paused) => {
@@ -100,7 +100,12 @@ export function makeApi(app: App, win: string): EditorApi {
     },
     schema: (name) => (name.startsWith('$') ? app.registry.tables.get(name.slice(1)) : app.registry.components.get(name)),
     modal: (build) => { modal(build); },
-    show: (extId, args) => { app.emit('showPanel', `win:${extId}`); app.emit(`show:${extId}`, args); },
+    show: (extId, args) => {
+      // 相手の拡張がいなければ知らせて false（読み込みに失敗した・登録し忘れ）
+      if (!app.extensions.some((x) => x.ext.id === extId)) { toast(`拡張 ${extId} がありません（ages.project.json の editorWindows を確かめる）`, 'bad'); return false; }
+      app.emit('showPanel', `win:${extId}`); app.emit(`show:${extId}`, args);
+      return true;
+    },
     dragTypes: { asset: ASSET_MIME, prefab: PREFAB_MIME },
     on: ((ev: string, fn: (d?: unknown) => void) => app.on(ev === 'show' ? `show:${win.replace(/^window:/, '')}` : ev, fn)) as EditorApi['on'],
     h: h as unknown as EditorApi['h'],

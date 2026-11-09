@@ -1,7 +1,7 @@
 // 試しの舞台（拡張の api.stage）と画面なしの実行（api.run）の中身。DOM を使わない（Node のテストでも同じに動く）。
 // ゲームの作り方は2つ: シーンを動かす（scene・params・values）か、空のシーンにプレハブを出す（spawn。ages run --spawn と同じ）。
 // 入力は ages run --keys と同じ書き方。日時は決まった日時（RUN_DATE）なので、同じ指定なら毎回同じ結果になる。
-import { Game, GameError } from './game.ts';
+import { Game, GameError, type GameEvent } from './game.ts';
 import type { Registry } from './registry.ts';
 import type { ProjectConfig, SceneDoc } from './docs.ts';
 import { MemoryStore, type SaveStore } from './save.ts';
@@ -113,6 +113,8 @@ export interface TrialResult {
   hash: string;
   /** 終わりのゲーム（world・ctx を読める） */
   game: Game;
+  /** spawn で出した物の ID */
+  ids: string[];
 }
 
 export interface TrialRunOptions {
@@ -120,8 +122,10 @@ export interface TrialRunOptions {
   frames: number;
   /** true を返したら止める（フレームを進めるたびに） */
   until?(game: Game): boolean;
-  /** フレームを進めるたびに */
-  onFrame?(game: Game): void;
+  /** フレームを進めるたびに（ids は spawn で出した物の ID） */
+  onFrame?(game: Game, ids: string[]): void;
+  /** 出来事が出るたびに（ctx.emit。中身の data も読める。フレームの途中で呼ぶ） */
+  onEvent?(ev: GameEvent): void;
   signal?: AbortSignal;
   /** 続けて回す時間(ms。既定 12)。過ぎたら一度ほかの仕事（画面の更新・入力）に譲る */
   slice?: number;
@@ -141,6 +145,7 @@ export function yieldTask(): Promise<void> {
 export async function runTrial(trial: Trial, opts: TrialRunOptions): Promise<TrialResult> {
   const game = trial.game;
   const slice = opts.slice ?? 12;
+  if (opts.onEvent) { const fn = opts.onEvent; game.listeners.push((ev) => fn(ev)); }
   const t0 = performance.now();
   let stopped: TrialResult['stopped'] | null = null;
   let error: string | undefined;
@@ -158,7 +163,7 @@ export async function runTrial(trial: Trial, opts: TrialRunOptions): Promise<Tri
         break;
       }
       try {
-        opts.onFrame?.(game);
+        opts.onFrame?.(game, trial.ids);
         if (trial.ids.length && trial.gone()) stopped = 'gone';
         else if (opts.until?.(game)) stopped = 'until';
       } catch (e) {
@@ -178,6 +183,7 @@ export async function runTrial(trial: Trial, opts: TrialRunOptions): Promise<Tri
     warnings: [...game.warnings],
     ...(error ? { error } : {}),
     hash: game.hash(),
+    ids: [...trial.ids],
     game,
   };
 }
