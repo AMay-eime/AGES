@@ -1,7 +1,7 @@
 // 出来事の受け取り（defineSystem の on）・日時（ctx.date）・ages run のシーンからのフレームの入力・図形の塗り＋枠と破線
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cp, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Registry, defineSystem } from '../src/core/registry.ts';
@@ -109,8 +109,12 @@ export const today = defineSystem({ name: 'today', desc: '日付', update: (c) =
   assert.match(plain, /date: 2026-01-01T12:00:00\+00:00 から/);
   assert.match(await cmdRun(dir, { frames: '2', date: '2026-12-25' }), /d12_25×1/);
   // 記録に入っている日時で再現する
+  await mkdir(join(dir, 'recordings'), { recursive: true });
   await writeFile(join(dir, 'recordings/d.input.json'), JSON.stringify({ seed: 1, scene: 'main', frames: 2, date: '2026-07-07T10:00:00+09:00', events: [] }));
   assert.match(await cmdRun(dir, { frames: '2', input: 'recordings/d.input.json' }), /d7_7×1/);
+  // 記録のシーンと params から始める（エディタの再生の設定で渡したもの）
+  await writeFile(join(dir, 'recordings/r.input.json'), JSON.stringify({ seed: 1, scene: 'result', params: { score: 7 }, frames: 5, events: [] }));
+  assert.match(await cmdRun(dir, { frames: '5', input: 'recordings/r.input.json', watch: 'score.Text.text' }), /^run result .*\n[\s\S]*SCORE 7\b/);
 
   // シーンに入るたびに、入ってから数える: main では撃ちながら動き、result では 40 フレーム目に fire（もう一度 main へ）
   const moves = '0-150:@move_x=-1;150-450:@move_x=1;450-750:@move_x=-1;750-1050:@move_x=1;1050-1350:@move_x=-1';

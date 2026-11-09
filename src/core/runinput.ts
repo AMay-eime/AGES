@@ -3,6 +3,24 @@
 import { InputPlayback, keysToEvents, type ActionDef, type FrameInput, type InputEvent } from './input.ts';
 import type { Game } from './game.ts';
 import { layoutUI } from './ui.ts';
+import { parseLiteral } from './patch.ts';
+
+/** 始めのシーンに渡す params を読む: stage=s1,level=2 か JSON。値は ages set と同じ読み方（数・真偽・文字） */
+export function parseParams(text: string, label = '--params'): Record<string, unknown> {
+  const t = text.trim();
+  if (t.startsWith('{')) {
+    const v = JSON.parse(t);
+    if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error(`${label} は {"名前":値} か 名前=値,名前=値 で書いてください`);
+    return v as Record<string, unknown>;
+  }
+  const out: Record<string, unknown> = {};
+  for (const part of t.split(',').map((x) => x.trim()).filter(Boolean)) {
+    const i = part.indexOf('=');
+    if (i <= 0) throw new Error(`${label} の ${part} が読めません（名前=値,名前=値 か JSON）`);
+    out[part.slice(0, i).trim()] = parseLiteral(part.slice(i + 1).trim());
+  }
+  return out;
+}
 
 /** シーンに入るたびに押す入力（title+30-32:@ui_confirm。フレームはそのシーンに入ってから数える） */
 export interface SceneKey {

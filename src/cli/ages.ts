@@ -24,7 +24,8 @@ import { autoRects, carryClips, gridRects, nameFrames, type Pixels, type Rect } 
 import { decodePng } from '../project/png.ts';
 import { shaderReport } from '../project/shader-status.ts';
 import { layoutUI } from '../core/ui.ts';
-import { RunInput, parseRunKeys, type RunKeys } from '../core/runinput.ts';
+import { RunInput, parseParams, parseRunKeys, type RunKeys } from '../core/runinput.ts';
+export { parseParams } from '../core/runinput.ts';
 import { RUN_DATE, formatDate, parseDate } from '../core/clock.ts';
 import { captureShots } from './shot.ts';
 import { MemoryStore } from '../core/save.ts';
@@ -443,9 +444,10 @@ function readWatch(game: Game, addr: string): unknown {
 export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
   const p = await Project.load(dir);
   const frames = Number(f.frames ?? 600);
-  const scene = typeof f.scene === 'string' ? f.scene : p.config.startScene;
+  let scene = typeof f.scene === 'string' ? f.scene : p.config.startScene;
   const seed = f.seed !== undefined ? Number(f.seed) : p.config.seed;
   let keys: RunKeys = { events: [], clicks: [], scene: [] };
+  let recParams: Record<string, unknown> | undefined;
   // 始めるときの保存データ（--save のファイル、なければ記録に入っているもの、なければ空）
   let initialSave: Record<string, unknown> = {};
   // 日時（--date、なければ記録に入っているもの、なければ決まった日時）
@@ -455,6 +457,9 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
     keys.events = rec.events;
     if (rec.save && typeof rec.save === 'object') initialSave = rec.save;
     if (typeof rec.date === 'string') date = parseDate(rec.date);
+    // 記録したシーン・params から始める（--scene・--params を書けばそちら）
+    if (typeof f.scene !== 'string' && typeof rec.scene === 'string' && p.docs.scenes.has(rec.scene)) scene = rec.scene;
+    if (typeof f.params !== 'string' && rec.params && typeof rec.params === 'object') recParams = rec.params;
   }
   if (typeof f.save === 'string') initialSave = await readSaveFile(p.dir, f.save);
   if (typeof f.date === 'string') date = parseDate(f.date);
@@ -467,7 +472,7 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
   const every = f.every !== undefined ? Number(f.every) : 0;
   const until = typeof f.until === 'string' ? f.until : '';
   // --params: 始めのシーンに渡すもの（ctx.scene.params）。stage=s1,level=2 か JSON
-  const params = typeof f.params === 'string' ? parseParams(f.params) : undefined;
+  const params = typeof f.params === 'string' ? parseParams(f.params) : recParams;
   // --shot: そのフレームの画面を撮る（headless の Chrome。.ages/shots に PNG）
   const shotFrames = typeof f.shot === 'string' ? f.shot.split(',').map((x) => x.trim()).filter(Boolean).map((x) => {
     const n = Number(x);
@@ -762,22 +767,6 @@ async function main(argv: string[]): Promise<void> {
 }
 
 /** --params の書き方: a=1,b=名前 か {"a":1} */
-export function parseParams(text: string): Record<string, unknown> {
-  const t = text.trim();
-  if (t.startsWith('{')) {
-    const v = JSON.parse(t);
-    if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('--params は {"名前":値} か 名前=値,名前=値 で書いてください');
-    return v as Record<string, unknown>;
-  }
-  const out: Record<string, unknown> = {};
-  for (const part of t.split(',').map((x) => x.trim()).filter(Boolean)) {
-    const i = part.indexOf('=');
-    if (i <= 0) throw new Error(`--params の ${part} が読めません（名前=値,名前=値 か JSON）`);
-    out[part.slice(0, i).trim()] = parseLiteral(part.slice(i + 1).trim());
-  }
-  return out;
-}
-
 function need(v: string | undefined, what: string): string {
   if (!v) throw new Error(`${what} が必要です`);
   return v;
