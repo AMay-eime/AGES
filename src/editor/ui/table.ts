@@ -155,7 +155,7 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
     const allPaths = Object.keys(d.columns).map((k) => addr(r.id, k));
     const allLocked = allPaths.every((p) => locks[p]);
     const values = { ...Object.fromEntries(Object.entries(d.columns).map(([k, f]) => [k, defaultOf(f)])), ...r } as Record<string, unknown>;
-    // 行の見せ方（拡張）: 欄の上に中身を足す。hide の列は出さない
+    // 行の見せ方（拡張）: 欄の上に中身を足す。hide の列は下の「ほかの欄」に畳む（その行だけ違う値にしたいときに開ける）
     const rds = rowDrawersFor(app, name);
     const hidden = new Set(rds.flatMap(({ drawer }) => (drawer.hide === 'all' ? Object.keys(d.columns) : drawer.hide ?? [])));
     const sections = rds.map(({ drawer, x }) => {
@@ -172,7 +172,7 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
       return box;
     });
     const rowRef = { table: name, id: r.id, values };
-    const fields = Object.entries(d.columns).filter(([k]) => !hidden.has(k)).map(([k, f]) => {
+    const fieldOf = ([k, f]: [string, Field]) => {
       const path = addr(r.id, k);
       const v = k in r ? r[k] : defaultOf(f);
       const lock = locks[path];
@@ -189,7 +189,15 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
       return h('div', { class: `field ${wide ? 'wide' : ''} ${k in r ? '' : 'default'} ${touched ? 'touched' : ''} ${lock ? 'locked' : ''}` },
         h('label', { title: `${k}: ${typeOf(f)}${f.desc ? '\n' + f.desc : ''}${touched ? `\n★ ${touched.who} が ${time(touched.t)} に調整` : ''}` }, k), w,
         h('button', { class: `icon lockbtn ${lock ? 'on' : ''}`, title: lock ? `🔒 ロック中（${lock.who}）。クリックでロックマネージャーを開く（外す・値を変える）` : 'ロックする（外すのはロックマネージャーで）', onclick: () => (lock ? app.openLocks(path) : app.lock([path], 'table')) }, lock ? '🔒' : '🔓'));
-    });
+    };
+    const cols = Object.entries(d.columns) as [string, Field][];
+    const fields: HTMLElement[] = cols.filter(([k]) => !hidden.has(k)).map(fieldOf);
+    const folded = cols.filter(([k]) => hidden.has(k));
+    if (folded.length) {
+      const box = h('details', { class: 'pad hidden-cols' }, h('summary', { class: 'muted', title: '行の見せ方（拡張）が代わりに見せている列。この行だけ違う値にするときに開く' }, `ほかの欄（${folded.map(([k]) => k).join('・')}）`));
+      box.addEventListener('toggle', () => { if ((box as HTMLDetailsElement).open && !box.querySelector('.field')) box.append(...folded.map(fieldOf)); });
+      fields.push(box);
+    }
     clear(side,
       h('div', { class: 'pad', style: 'border-bottom:1px solid var(--line)' },
         h('div', { style: 'font-weight:600' }, `$${name}.${r.id}`),

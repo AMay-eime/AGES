@@ -502,7 +502,14 @@ export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, 
       const cur = String(value ?? '');
       const options = [...(f.default === '' ? [''] : []), ...ids];
       if (!options.includes(cur)) options.push(cur);
-      const sel = h('select', { title: `表 ${f.table} の行` }, options.map((o) => h('option', { value: o, selected: o === cur }, o === '' ? '（なし）' : ids.includes(o) ? o : `${o}（表にありません）`))) as HTMLSelectElement;
+      // 行の名前の横に、その行の最初の文字の列（言葉の表なら既定の言語）を少し出す
+      const textCol = Object.entries(app.registry.tables.get(f.table)?.columns ?? {}).find(([, cf]) => cf.type === 'string')?.[0];
+      const rowsById = new Map((app.registry.tableData.get(f.table)?.rows ?? []).map((r) => [r.id, r]));
+      const label = (o: string) => {
+        const t = textCol ? String(rowsById.get(o)?.[textCol] ?? '').replace(/\s+/g, ' ').trim() : '';
+        return t ? `${o} — ${t.length > 24 ? t.slice(0, 24) + '…' : t}` : o;
+      };
+      const sel = h('select', { title: `表 ${f.table} の行` }, options.map((o) => h('option', { value: o, selected: o === cur }, o === '' ? '（なし）' : ids.includes(o) ? label(o) : `${o}（表にありません）`))) as HTMLSelectElement;
       sel.addEventListener('change', () => commit(sel.value, true));
       wrap.append(sel, h('button', { class: 'icon row-open', title: `表 ${f.table} を開く`, onclick: () => app.emit('openTable', { name: f.table, row: sel.value }) }, '▦'));
       return { el: wrap, set: (v) => { sel.value = String(v); } };
@@ -672,6 +679,7 @@ export function applyNested(top: unknown, op: NestedOp): unknown {
 
 /** 開いているリスト（描き直しても閉じないよう覚えておく） */
 const opened = new Set<string>();
+const closed = new Set<string>();
 
 /** 表のセルなどに出す短い要約 */
 export const valueSummary = (f: Field, v: unknown): string => {
@@ -708,8 +716,9 @@ export function nestedWidget(app: App, f: Field, value: unknown, path: string, s
 
   if (f.type === 'list') {
     const list = Array.isArray(value) ? value : [];
-    const open = opened.has(key) || list.length <= 3;
-    const toggle = h('button', { class: 'icon', title: open ? '閉じる' : '開く', onclick: () => { if (opened.has(key)) opened.delete(key); else opened.add(key); app.emit('nestToggle'); } }, open ? '▾' : '▸');
+    // 短いリストは開いて始める（長いものは ▸ で開く。開いた・閉じたはエディタを開いている間おぼえる）
+    const open = closed.has(key) ? false : opened.has(key) || list.length <= 8;
+    const toggle = h('button', { class: 'icon', title: open ? '閉じる' : '開く', onclick: () => { if (open) { opened.delete(key); closed.add(key); } else { closed.delete(key); opened.add(key); } app.emit('nestToggle'); } }, open ? '▾' : '▸');
     const add = h('button', { class: 'icon', title: `最後に足す（${typeOf(f.of)}）`, disabled: f.max !== undefined && list.length >= f.max, onclick: () => emit({ kind: 'insert', sub, value: defaultOf(f.of) }) }, '＋');
     const full = f.max !== undefined && list.length >= f.max;
     const items = open ? list.map((v, i) => row(`[${i}]`, `${key}[${i}]`, leaf(f.of, v, [...sub, i], false, list),
@@ -724,12 +733,19 @@ export function nestedWidget(app: App, f: Field, value: unknown, path: string, s
     const obj = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
     return h('div', { class: 'nest' }, Object.entries(f.fields).map(([k, sf]) => row(k, `${k}: ${typeOf(sf)}${sf.desc ? '\n' + sf.desc : ''}`, leaf(sf, k in obj ? obj[k] : defaultOf(sf), [...sub, k], !(k in obj), obj))));
   }
-  // どれか1つ: 種類を選ぶと、その種類の既定値に入れ替わる
+  // どれか1つ: 種類を選ぶと、その種類の既定値に入れ替わる（同じ名前・同じ型の欄は今の値を引き継ぐ）
   const o = f as OneOfField;
   const obj = (value && typeof value === 'object' ? value : defaultOf(o)) as Record<string, unknown>;
   const kind = String(obj.kind ?? Object.keys(o.variants)[0]);
   const pick = h('select', {}, Object.entries(o.variants).map(([k, v]) => h('option', { value: k, selected: k === kind, title: v.desc ?? '' }, k))) as HTMLSelectElement;
-  pick.addEventListener('change', () => emit({ kind: 'set', sub, value: variantDefault(pick.value, o.variants[pick.value].fields) }));
+  pick.addEventListener('change', () => {
+    const next = variantDefault(pick.value, o.variants[pick.value].fields) as Record<string, unknown>;
+    const before = o.variants[kind]?.fields ?? {};
+    for (const [k, sf] of Object.entries(o.variants[pick.value].fields)) {
+      if (k in obj && before[k] && typeOf(before[k]) === typeOf(sf)) next[k] = structuredClone(obj[k]);
+    }
+    emit({ kind: 'set', sub, value: next });
+  });
   const fields = o.variants[kind]?.fields ?? {};
   return h('div', { class: 'nest' }, row('kind', o.variants[kind]?.desc ?? '種類', pick),
     Object.entries(fields).map(([k, sf]) => row(k, `${k}: ${typeOf(sf)}${sf.desc ? '\n' + sf.desc : ''}`, leaf(sf, k in obj ? obj[k] : defaultOf(sf), [...sub, k], !(k in obj), obj))));
