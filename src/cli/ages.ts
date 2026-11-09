@@ -24,6 +24,8 @@ import { autoRects, carryClips, gridRects, nameFrames, type Pixels, type Rect } 
 import { decodePng } from '../project/png.ts';
 import { shaderReport } from '../project/shader-status.ts';
 import { layoutUI } from '../core/ui.ts';
+import { frameInput } from '../core/runinput.ts';
+import { captureShots } from './shot.ts';
 import { MemoryStore } from '../core/save.ts';
 import { languagesOf } from '../core/i18n.ts';
 import { parseSpawns, spawnTryout, tryoutGone, tryoutScene } from '../core/tryout.ts';
@@ -44,6 +46,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
                [--input recordings/x.input.json] [--watch player.Health.hp,@enemy.Health.hp,...（@プレハブ名 はいる最初の1つ）] [--every 60] [--until gameOver | scene:result | click:ボタンのID] [--twice] [--dump]
                [--save saves/x.save.json]（この保存データから始める。省くと空） [--save-out saves/y.save.json]（終わりの保存データを書き出す） [--lang en]（言語）
                [--params stage=s1,level=2]（始めのシーンに渡す ctx.scene.params。JSON でもよい）
+               [--shot 0,600 [--shot-scale 0.5] [--shot-dir 場所]]（そのフレームの画面を PNG で撮る。既定 .ages/shots。要 Chrome）
   log    <dir> [--all] [--peek]      前回からの編集の要約（--peek は既読にしない）
   undo   <dir> [--tx id] [--force]   自分（AI）の直前の編集を元に戻す（その後で変えられた所があれば止まる）。redo <dir> でやり直す
   check  <dir>                       全データの検証とロックの検査
@@ -469,6 +472,13 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
   const until = typeof f.until === 'string' ? f.until : '';
   // --params: 始めのシーンに渡すもの（ctx.scene.params）。stage=s1,level=2 か JSON
   const params = typeof f.params === 'string' ? parseParams(f.params) : undefined;
+  // --shot: そのフレームの画面を撮る（headless の Chrome。.ages/shots に PNG）
+  const shotFrames = typeof f.shot === 'string' ? f.shot.split(',').map((x) => x.trim()).filter(Boolean).map((x) => {
+    const n = Number(x);
+    if (!Number.isInteger(n) || n < 0) throw new Error(`--shot の ${x} はフレームの番号ではありません（例 --shot 0,600,1200）`);
+    return n;
+  }) : [];
+  const shotHashes = new Map<number, string>();
 
   // --spawn: 選んだプレハブだけを空のシーンの真ん中に出して試す（出した物がすべて消えたら止まる）
   const spawns = typeof f.spawn === 'string' ? parseSpawns(f.spawn) : [];
@@ -480,6 +490,7 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
     const play = new InputPlayback(events);
     const lines: string[] = [];
     const first = watch.map((w) => readWatch(game, w));
+    if (shotFrames.includes(0) && !shotHashes.has(0)) shotHashes.set(0, game.hash());
     let stopped = '';
     if (until.startsWith('scene:')) game.sceneListeners.push((_from, to) => { if (to === until.slice(6) && !stopped) stopped = `${until} @f${game.frame}`; });
     else if (until.startsWith('click:')) game.listeners.push((ev) => { if (ev.name === 'ui.click' && (ev.data as { id?: string })?.id === until.slice(6) && !stopped) stopped = `${until} @f${ev.frame}`; });
@@ -487,19 +498,10 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
     const t0 = performance.now();
     try {
       for (let i = 0; i < frames && !stopped; i++) {
-        const inp = play.at(game.frame);
-        const target = clicks.get(game.frame) ?? clicks.get(game.frame - 1);
-        if (target) {
-          const r = layoutUI(game.world, p.config.view.width, p.config.view.height).get(target);
-          if (!r) {
-            if (clicks.get(game.frame)) lines.push(`⚠ f${game.frame} click=${target}: UI の付いた物 ${target} がありません${suggest(target, [...game.world.entities.values()].filter((e) => e.c.UI).map((e) => e.id))}`);
-          } else {
-            inp.pointer = { x: r.x + r.w / 2, y: r.y + r.h / 2 };
-            if (clicks.get(game.frame) === target) inp.buttons = [...inp.buttons, 'Mouse0'];
-            else inp.buttons = [...inp.buttons].filter((b) => b !== 'Mouse0');
-          }
-        }
+        const { input: inp, warning } = frameInput(game, play, clicks, p.config.view.width, p.config.view.height);
+        if (warning) lines.push(`⚠ f${game.frame} click=${warning}: UI の付いた物 ${warning} がありません${suggest(warning, [...game.world.entities.values()].filter((e) => e.c.UI).map((e) => e.id))}`);
         game.step(inp);
+        if (shotFrames.includes(game.frame) && !shotHashes.has(game.frame)) shotHashes.set(game.frame, game.hash());
         if (spawned.length && !stopped && tryoutGone(game, spawned)) stopped = `出した物がすべて消えた @f${game.frame}`;
         if (every && game.frame % every === 0) {
           lines.push(`f${game.frame} ` + watch.map((w) => `${w.split('.').pop()}=${fmt(readWatch(game, w))}`).join(' '));
@@ -544,7 +546,36 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
     await mkdir(dirname(to), { recursive: true });
     await writeFile(to, JSON.stringify(g.save.all(), null, 2) + '\n');
   }
+  if (shotFrames.length) out.push(...(await shots(p, f, shotFrames, shotHashes, { scene, seed, events, clicks, params, save: initialSave, spawns })));
   return withLockReport(p, out.join('\n'));
+}
+
+/** --shot: ages run と同じ入力で、そのフレームの画面を撮って .ages/shots（--shot-dir）に PNG で置く */
+async function shots(p: Project, f: Args['flags'], frames: number[], hashes: Map<number, string>, o: { scene: string; seed: number; events: InputEvent[]; clicks: Map<number, string>; params?: Record<string, unknown>; save: Record<string, unknown>; spawns: import('../core/tryout.ts').TryoutSpawn[] }): Promise<string[]> {
+  const scale = f['shot-scale'] !== undefined ? Number(f['shot-scale']) : 1;
+  if (!(scale > 0 && scale <= 2)) throw new Error('--shot-scale は 0 より大きく 2 以下（例 0.5 で半分の大きさ。画像のトークンも減る）');
+  const reach = frames.filter((n) => n === 0 || hashes.has(n));
+  const out: string[] = [];
+  for (const n of frames.filter((x) => !reach.includes(x))) out.push(`⚠ shot f${n}: そのフレームまで進んでいません（--frames を増やすか、--until で止まる前のフレームに）`);
+  if (!reach.length) return out;
+  try {
+    const r = await captureShots(p.dir, { scene: o.scene, seed: o.seed, frames: reach, events: o.events, clicks: [...o.clicks], params: o.params, save: o.save, lang: typeof f.lang === 'string' ? f.lang : undefined, spawns: o.spawns, scale });
+    const dir = resolve(p.dir, typeof f['shot-dir'] === 'string' ? f['shot-dir'] : '.ages/shots');
+    await mkdir(dir, { recursive: true });
+    const name = o.spawns.length ? 'tryout' : o.scene;
+    const { width, height } = p.config.view;
+    for (const s of r.shots) {
+      const file = join(dir, `${name}-f${s.frame}.png`);
+      await writeFile(file, Buffer.from(s.png, 'base64'));
+      const same = hashes.get(s.frame) === s.hash;
+      const rel = relative(p.dir, file).split(sep).join('/');
+      out.push(`shot f${s.frame}: ${rel.startsWith('..') ? file : rel} ${Math.round(width * scale)}x${Math.round(height * scale)}${same ? '' : ` ⚠ 画面のページの状態が ages run と違います（hash ${hashes.get(s.frame)} と ${s.hash}）`}`);
+    }
+    if (r.error) out.push(`⚠ 画面のページでエラー（f${r.frame}）: ${r.error}`);
+  } catch (e) {
+    out.push(`⚠ 画面を撮れませんでした: ${(e as Error).message}`);
+  }
+  return out;
 }
 
 /** 保存データのファイル（キー → 値の JSON）を読む */

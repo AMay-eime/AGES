@@ -3,6 +3,15 @@
 AGESで何を、なぜ決めたか。新しい決定は上に追加する（日付・決定・理由）。
 覆すときは消さずに「→ YYYY-MM-DD に変更」と追記する。
 
+## 2026-11-09 決まったフレームの画面を撮る（ages run --shot）
+
+- 開発者の決定（「決まったフレームでスクリーンショットを撮れないのは、AIが使用するエディタという面では機能不足」）。題材の移植で、見た目を確かめる AI が Playwright でエディタを開いて撮る回り道をしていた
+- **`ages run` に `--shot 0,600`（と `--shot-scale`・`--shot-dir`）。** 同じ入力（--keys・--input・click=・--params・--save・--spawn）で同じフレームまで進めた画面を PNG にする（既定 .ages/shots。Git で共有しない）。撮ったページの状態の hash を ages run と比べ、違えば ⚠
+- **依存ゼロのまま**: 手元の Chrome（Chromium・Edge でもよい。AGES_CHROME で場所を指定できる。Playwright が入れたものも探す）を headless で起こし、DevTools の決まり（CDP）を Node の WebSocket で直接話す。ページはエディタのサーバーの /shot.html（editor/shot.ts）。Chrome がなければ撮れないことを知らせる
+- **描画はいつもソフトウェア（SwiftShader）。** GPU の違いで画が変わらないように。画像・フォントの読み込みを待ってから撮る（Renderer.settled）
+- 入力の組み立て（click= のボタンの位置）は core/runinput.ts にまとめ、ages run と撮るページで同じものを使う
+- MCP の ages_run に shot・shotScale。画像は高いので、要るときだけ（AGENTS.md）
+
 ## 2026-11-09 ages run --params（始めのシーンに params を渡す）
 
 - 移植版を「戦闘のシーン1つ＋ステージはデータ」に直すと、どのステージで遊ぶかは前のシーン（ステージ選択）が goto の params で渡す。そのシーンから確かめるには、ages run から params を渡せる必要がある
