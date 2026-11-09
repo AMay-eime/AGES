@@ -207,13 +207,51 @@ export class App {
     this.emit('settings');
   }
 
-  select(sel: Selection): void {
+  /** 格子への吸着の目の大きさ（0 なら吸着しない。ゲームの画面が決める） */
+  snap: () => number = () => 0;
+
+  /** 一緒に選んでいる物（同じシーンの ID。sel が手前の1つで、インスペクタに出るのはそれ） */
+  extra: string[] = [];
+
+  /**
+   * 選ぶ。add なら今の選びに足す（もう選んでいる物なら外す）。足した物が手前（インスペクタに出る物）になる
+   */
+  select(sel: Selection, opts: { add?: boolean } = {}): void {
     if (sel?.kind === 'scene' && sel.scene !== this.scene) {
       this.scene = sel.scene;
       this.rebuildPreview();
+      opts = {};
     }
-    this.sel = sel;
+    const cur = this.sel?.kind === 'scene' ? this.sel : null;
+    if (opts.add && sel?.kind === 'scene' && cur && cur.scene === sel.scene) {
+      const all = [cur.id, ...this.extra];
+      if (all.includes(sel.id)) {
+        const rest = all.filter((x) => x !== sel.id);
+        this.sel = rest.length ? { kind: 'scene', scene: sel.scene, id: rest[0] } : null;
+        this.extra = rest.slice(1);
+      } else {
+        this.sel = sel;
+        this.extra = all;
+      }
+    } else {
+      this.sel = sel;
+      this.extra = [];
+    }
     this.emit('select');
+  }
+
+  /** まとめて選ぶ（最初の物が手前） */
+  selectMany(ids: string[], add = false): void {
+    const cur = this.sel?.kind === 'scene' && this.sel.scene === this.scene ? [this.sel.id, ...this.extra] : [];
+    const all = [...new Set([...(add ? cur : []), ...ids])].filter((id) => this.state.scenes[this.scene]?.entities.some((e) => e.id === id));
+    this.sel = all.length ? { kind: 'scene', scene: this.scene, id: all[0] } : null;
+    this.extra = all.slice(1);
+    this.emit('select');
+  }
+
+  /** 選んでいるシーンの物の ID（手前の物が最初） */
+  selectedIds(): string[] {
+    return this.sel?.kind === 'scene' ? [this.sel.id, ...this.extra] : [];
   }
 
   /** アセットを読み込むURL（ファイルが変われば変わる） */

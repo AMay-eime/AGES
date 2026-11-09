@@ -4,6 +4,7 @@ import { h, clear, modal, toast, time, menu } from './dom.ts';
 import type { Layout, Panel } from './layout.ts';
 import { importFiles } from './assets.ts';
 import { kindOf } from '../../core/assets.ts';
+import { menuItemsFor } from '../extensions.ts';
 
 // ---------- 階層 ----------
 export function hierarchyPanel(app: App): Panel {
@@ -63,8 +64,16 @@ export function hierarchyPanel(app: App): Panel {
         (scene?.entities ?? []).map((e) => {
           const n = lockCount(`${app.scene}#${e.id}`);
           return h('div', {
-            class: `item ${sel?.kind === 'scene' && sel.id === e.id ? 'sel' : ''}`,
-            onclick: () => app.select({ kind: 'scene', scene: app.scene, id: e.id }),
+            class: `item ${sel?.kind === 'scene' && sel.id === e.id ? 'sel' : app.extra.includes(e.id) ? 'sel2' : ''}`,
+            title: 'Shift・Ctrl+クリックで足す・外す。右クリックで複製・削除・プレハブにする',
+            onclick: (ev: MouseEvent) => app.select({ kind: 'scene', scene: app.scene, id: e.id }, { add: ev.shiftKey || ev.ctrlKey || ev.metaKey }),
+            oncontextmenu: (ev: MouseEvent) => {
+              ev.preventDefault();
+              if (app.play) return;
+              if (!app.selectedIds().includes(e.id)) app.select({ kind: 'scene', scene: app.scene, id: e.id });
+              const items = menuItemsFor(app, 'entity', app.selectedIds().map((id) => `${app.scene}#${id}`));
+              if (items.length) menu(ev.clientX, ev.clientY, items);
+            },
           }, e.name, h('span', { class: 'muted' }, e.id), n ? h('span', { style: 'color:var(--lock)', title: `ロック ${n}件` }, '🔒' + n) : null);
         }),
         h('div', { class: 'folder' }, `プレハブ（${Object.keys(s.prefabs).length}）`),

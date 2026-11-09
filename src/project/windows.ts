@@ -18,6 +18,8 @@ export interface WindowInfo {
   fields?: string[];
   /** インスペクタの部品の見せ方の部品 */
   components?: string[];
+  /** 右クリックのメニューの項目の名前 */
+  menus?: string[];
   /** 読み込めなかった理由 */
   error?: string;
 }
@@ -45,6 +47,7 @@ export async function loadWindows(dir: string, paths: string[]): Promise<WindowI
         path, id: w.id, title: w.title ?? w.panel?.title, desc: w.desc, edits: Array.isArray(w.edits) ? w.edits.map(String) : undefined, panel,
         ...(Array.isArray(w.fields) ? { fields: w.fields.flatMap((d: { match?: unknown }) => [d?.match ?? []].flat().map(String)) } : {}),
         ...(Array.isArray(w.components) ? { components: w.components.map((d: { component?: unknown }) => String(d?.component)) } : {}),
+        ...(Array.isArray(w.menus) ? { menus: w.menus.map((d: { label?: unknown }) => String(d?.label)) } : {}),
       });
     } catch (e) {
       out.push({ path, error: `読み込めません（モジュールの一番外で document などのブラウザの物を使わない）: ${(e as Error).message.split('\n')[0]}` });
@@ -80,7 +83,7 @@ export function checkWindows(list: WindowInfo[], exists: (address: string) => st
     if (!w.id || !/^[A-Za-z0-9_-]+$/.test(w.id)) errs.push(`${w.path}: id には英数字・_・- だけを使います（受け取った値: ${JSON.stringify(w.id)}）`);
     else if (ids.has(w.id)) errs.push(`${w.path}: id ${w.id} は ${ids.get(w.id)} と同じです`);
     else ids.set(w.id, w.path);
-    if (!w.panel && !w.fields?.length && !w.components?.length) errs.push(`${w.path}: 窓口がありません（panel・fields・components のどれか）`);
+    if (!w.panel && !w.fields?.length && !w.components?.length && !w.menus?.length) errs.push(`${w.path}: 窓口がありません（panel・fields・components・menus のどれか）`);
     if (w.panel && !w.title) errs.push(`${w.path}: title がありません（パネルのタブの名前）`);
     if (!w.desc) errs.push(`${w.path}: desc（何のための拡張か、1行）がありません。地図に出ます`);
     if (w.panel && !w.edits) errs.push(`${w.path}: edits（パネルが変える値の住所）がありません。地図に出て、それ以外は変えられなくなります（何も変えないなら edits: []）`);

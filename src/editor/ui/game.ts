@@ -6,7 +6,10 @@
 import type { App } from '../app.ts';
 import { Renderer } from '../../render/webgl.ts';
 import { camerasOf, fitView, screenToWorld, visibleCorners, worldToScreen, FIT_MODES, type CameraView, type FitMode } from '../../core/camera.ts';
-import { h, modal, toast } from './dom.ts';
+import { h, menu, modal, toast } from './dom.ts';
+import { menuItemsFor } from '../extensions.ts';
+import { movable } from '../edit-ops.ts';
+import type { Op } from '../../core/patch.ts';
 import type { Panel } from './layout.ts';
 import { ASSET_MIME } from './assets.ts';
 import { baseOf, extOf, kindOf } from '../../core/assets.ts';
@@ -35,6 +38,14 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
   let showHits = localStorage.getItem('ages.showHits') === '1';
   const hitsBox = h('label', { class: 'row muted', style: 'gap:4px;white-space:nowrap', title: '当たり判定（Collider）の形を重ねて見せる。グループごとに色が変わる' },
     h('input', { type: 'checkbox', checked: showHits, onchange: (e: Event) => { showHits = (e.target as HTMLInputElement).checked; localStorage.setItem('ages.showHits', showHits ? '1' : '0'); } }), '当たり判定');
+  // 格子への吸着（ドラッグ・矢印で動かすとき、位置を格子の目にそろえる。手元の設定）
+  let snap = localStorage.getItem('ages.snap') === '1';
+  let gridSize = Number(localStorage.getItem('ages.gridSize') ?? 16) || 16;
+  const gridInput = h('input', { type: 'number', min: '1', max: '512', step: '1', value: String(gridSize), style: 'width:48px', title: '格子の目の大きさ(px)',
+    onchange: (e: Event) => { gridSize = Math.max(1, Number((e.target as HTMLInputElement).value) || 16); localStorage.setItem('ages.gridSize', String(gridSize)); } });
+  const snapBox = h('label', { class: 'row muted', style: 'gap:4px;white-space:nowrap', title: 'ドラッグ・矢印キーで動かすとき、位置を格子の目にそろえる（格子も見える）' },
+    h('input', { type: 'checkbox', checked: snap, onchange: (e: Event) => { snap = (e.target as HTMLInputElement).checked; localStorage.setItem('ages.snap', snap ? '1' : '0'); app.emit('snap'); } }), '格子', gridInput);
+  app.snap = () => (snap ? gridSize : 0);
   const saveBtn = h('button', { class: 'icon', title: '保存データ（このブラウザに残る。消す・saves/ に書き出す・saves/ から戻す）', onclick: () => saveDialog(app) }, '💾');
   // 言語（2つ以上あるとき）: 止めている画面と再生の言語を選ぶ
   const langSel = h('select', { title: '見る言語（表 $text の列。「設定のまま」なら保存の設定か既定の言語）' }) as HTMLSelectElement;
@@ -47,7 +58,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
   langSel.addEventListener('change', () => { app.previewLang = langSel.value; });
   app.on('change', fillLang);
   fillLang();
-  const bar = h('div', { class: 'game-hud' }, hud, resetBtn, viewSel, screenSel, fitSel, hitsBox, langSel, saveBtn);
+  const bar = h('div', { class: 'game-hud' }, hud, resetBtn, viewSel, screenSel, fitSel, hitsBox, snapBox, langSel, saveBtn);
   const wrap = h('div', { class: 'game-wrap' }, screen);
   // 状態の表示はゲーム画面の外（上の帯）に出す。画面の左上はゲームの HUD が来やすいので重ねない
   const el = h('div', {}, bar, wrap);
@@ -240,81 +251,140 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
   });
 
   // ---------- マウス ----------
+  // 左クリックで選ぶ（Shift・Ctrl で足す・外す）。何もない所からドラッグすると四角で囲んで選ぶ。選んだ物をドラッグするとまとめて動く（格子があれば目にそろえる）。
+  // 右クリックで、拡張のメニュー（複製・削除・プレハブにする など）
   let last: { x: number; y: number; ids: string[]; i: number } | null = null;
-  let drag: { id: string; cam: CameraView; dx: number; dy: number; moved: boolean; ui?: { x: number; y: number; wx: number; wy: number } } | null = null;
-  let pan: { x: number; y: number; cx: number; cy: number } | null = null;
-  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  type Moving = { id: string; what: 'UI' | 'Transform'; x: number; y: number };
+  let drag: { lead: Moving; cam: CameraView; wx: number; wy: number; all: Moving[]; moved: boolean } | null = null;
+  let band: { x0: number; y0: number; x1: number; y1: number; add: boolean } | null = null;
+  let pan: { x: number; y: number; cx: number; cy: number; moved: boolean; e: MouseEvent } | null = null;
+  const sceneDoc = () => app.state.scenes[app.scene];
+  const moving = (id: string): Moving | null => {
+    const e = app.preview?.world.get(id);
+    const doc = sceneDoc()?.entities.find((x) => x.id === id);
+    const what = doc ? movable(sceneDoc()!, doc) : null;
+    if (!e || !what || !e.c[what]) return null;
+    return { id, what, x: Number(e.c[what].x ?? 0), y: Number(e.c[what].y ?? 0) };
+  };
+  /** 画面の点にある物（手前から） */
+  const pickAt = (p: { x: number; y: number }) => {
+    const ms = markers().filter((m) => Math.abs(m.x - p.x) <= MARK && Math.abs(m.y - p.y) <= MARK);
+    return { ms, ids: [...ms.map((m) => m.id), ...renderer!.pickAll(p.x, p.y)] };
+  };
+  const openMenu = (e: MouseEvent, p: { x: number; y: number }) => {
+    if (app.play && !app.play.paused) return;
+    const { ids } = pickAt(p);
+    if (ids.length && !app.selectedIds().includes(ids[0])) app.select({ kind: 'scene', scene: app.scene, id: ids[0] });
+    const targets = app.selectedIds().map((id) => `${app.scene}#${id}`);
+    if (!targets.length) return;
+    const items = menuItemsFor(app, 'entity', targets);
+    if (items.length) menu(e.clientX, e.clientY, items);
+  };
+  canvas.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    // 自由な視点で右ドラッグして動かしたときは出さない
+    if (pan) return;
+    if (renderer && !gameHasMouse()) openMenu(e, toCanvas(e));
+  });
   canvas.addEventListener('mousedown', (e) => {
     const w = app.world;
     if (!w || !renderer || gameHasMouse()) return;
     const p = toCanvas(e);
-    // 自由な視点では、右・中ボタンのドラッグで動かす
-    if (viewMode === 'free' && (e.button === 1 || e.button === 2)) { e.preventDefault(); pan = { x: p.x, y: p.y, cx: free.x, cy: free.y }; return; }
+    // 自由な視点では、右・中ボタンのドラッグで動かす（右は動かさなければメニュー）
+    if (viewMode === 'free' && (e.button === 1 || e.button === 2)) { e.preventDefault(); pan = { x: p.x, y: p.y, cx: free.x, cy: free.y, moved: false, e }; return; }
     if (e.button !== 0) return;
-    const ms = markers().filter((m) => Math.abs(m.x - p.x) <= MARK && Math.abs(m.y - p.y) <= MARK);
-    const ids = [...ms.map((m) => m.id), ...renderer.pickAll(p.x, p.y)];
-    if (!ids.length) { last = null; return app.select(null); }
+    const add = e.shiftKey || e.ctrlKey || e.metaKey;
+    const { ms, ids } = pickAt(p);
+    if (!ids.length) {
+      last = null;
+      // 何もない所: 四角で囲んで選ぶ（動かさなければ、選ぶのをやめる）
+      if (!app.play) band = { x0: p.x, y0: p.y, x1: p.x, y1: p.y, add };
+      else if (!add) app.select(null);
+      return;
+    }
     // 同じ場所をもう一度クリックしたら、ひとつ奥のものへ
     let i = 0;
-    if (last && Math.hypot(last.x - p.x, last.y - p.y) < 4 && last.ids.join() === ids.join()) i = (last.i + 1) % ids.length;
+    if (!add && last && Math.hypot(last.x - p.x, last.y - p.y) < 4 && last.ids.join() === ids.join()) i = (last.i + 1) % ids.length;
     last = { x: p.x, y: p.y, ids, i };
     const hit = w.get(ids[i])!;
-    app.select({ kind: 'scene', scene: app.scene, id: hit.id });
+    // 選んでいる物の上を押したら、選び方はそのまま（まとめて動かすため）
+    const already = app.selectedIds().includes(hit.id);
+    if (add) app.select({ kind: 'scene', scene: app.scene, id: hit.id }, { add: true });
+    else if (!already || app.selectedIds().length === 1) app.select({ kind: 'scene', scene: app.scene, id: hit.id });
+    else if (app.sel?.kind === 'scene' && app.sel.id !== hit.id) app.selectMany([hit.id, ...app.selectedIds().filter((x) => x !== hit.id)]);
     hint = ids.length > 1 ? `重なり ${i + 1}/${ids.length}（同じ場所をもう一度クリックで奥へ）` : '';
-    if (!app.play && (hit.c.Transform || hit.c.UI)) {
-      // 選んだものを映しているカメラで、画面の動きをワールドの動きにする
-      const camIndex = ms.find((m) => m.id === hit.id)?.cam ?? [...renderer.shapes].reverse().find((s) => s.id === hit.id && s.cam !== undefined)?.cam ?? 0;
-      const cam = renderer.cams[camIndex];
-      const [wx, wy] = screenToWorld(cam, p.x, p.y);
-      // UI の物は UI.x・y（合わせる所からのずれ）を動かす。Layout で並べている子は動かさない
-      const parent = hit.c.UI?.parent ? w.get(hit.c.UI.parent) : undefined;
-      if (hit.c.UI && !parent?.c.Layout) drag = { id: hit.id, cam, dx: 0, dy: 0, moved: false, ui: { x: hit.c.UI.x ?? 0, y: hit.c.UI.y ?? 0, wx, wy } };
-      else if (!hit.c.UI && hit.c.Transform) drag = { id: hit.id, cam, dx: hit.c.Transform.x - wx, dy: hit.c.Transform.y - wy, moved: false };
-    }
+    if (app.play || !app.selectedIds().includes(hit.id)) return;
+    const lead = moving(hit.id);
+    if (!lead) return;
+    // 選んだものを映しているカメラで、画面の動きをワールドの動きにする
+    const camIndex = ms.find((m) => m.id === hit.id)?.cam ?? [...renderer.shapes].reverse().find((s) => s.id === hit.id && s.cam !== undefined)?.cam ?? 0;
+    const cam = renderer.cams[camIndex];
+    const [wx, wy] = screenToWorld(cam, p.x, p.y);
+    const all = app.selectedIds().map(moving).filter((m): m is Moving => !!m);
+    drag = { lead, cam, wx, wy, all, moved: false };
   });
   window.addEventListener('mousemove', (e) => {
     if (pan) {
       const p = toCanvas(e);
+      if (Math.hypot(p.x - pan.x, p.y - pan.y) > 3) pan.moved = true;
       const r = (free.rot * Math.PI) / 180;
       const dx = (p.x - pan.x) / free.zoom, dy = (p.y - pan.y) / free.zoom;
       free = { ...free, x: pan.cx - (dx * Math.cos(r) - dy * Math.sin(r)), y: pan.cy - (dx * Math.sin(r) + dy * Math.cos(r)) };
       return;
     }
+    if (band) { const p = toCanvas(e); band.x1 = p.x; band.y1 = p.y; return; }
     if (!drag || !app.preview) return;
     const p = toCanvas(e);
     const [wx, wy] = screenToWorld(drag.cam, p.x, p.y);
-    if (drag.ui) {
-      const u = app.preview.world.get(drag.id)?.c.UI;
-      if (!u) return;
-      const nx = Math.round(drag.ui.x + wx - drag.ui.wx), ny = Math.round(drag.ui.y + wy - drag.ui.wy);
-      if (!drag.moved && Math.hypot(nx - drag.ui.x, ny - drag.ui.y) < 2) return;
-      u.x = nx;
-      u.y = ny;
-      drag.moved = true;
-      return;
+    // 先頭の物の行き先（格子があれば目にそろえる）。ほかの物は同じだけ動かす
+    const g = app.snap();
+    let nx = drag.lead.x + wx - drag.wx, ny = drag.lead.y + wy - drag.wy;
+    nx = g ? Math.round(nx / g) * g : Math.round(nx);
+    ny = g ? Math.round(ny / g) * g : Math.round(ny);
+    if (!drag.moved && Math.hypot(wx - drag.wx, wy - drag.wy) < 2) return; // クリックしただけでは動かさない
+    const dx = nx - drag.lead.x, dy = ny - drag.lead.y;
+    for (const m of drag.all) {
+      const c = app.preview.world.get(m.id)?.c[m.what];
+      if (c) { c.x = m.x + dx; c.y = m.y + dy; }
     }
-    const t = app.preview.world.get(drag.id)?.c.Transform;
-    if (!t) return;
-    const nx = Math.round(wx + drag.dx), ny = Math.round(wy + drag.dy);
-    if (!drag.moved && Math.hypot(nx - t.x, ny - t.y) < 2) return; // クリックしただけでは動かさない
-    t.x = nx;
-    t.y = ny;
     drag.moved = true;
   });
-  window.addEventListener('mouseup', () => {
-    pan = null;
+  window.addEventListener('mouseup', (e) => {
+    if (pan) {
+      const pn = pan;
+      pan = null;
+      // 右ボタンを動かさずに離したら、メニュー
+      if (!pn.moved && pn.e.button === 2 && renderer) openMenu(e, { x: pn.x, y: pn.y });
+      return;
+    }
+    if (band) {
+      const b = band;
+      band = null;
+      const x0 = Math.min(b.x0, b.x1), x1 = Math.max(b.x0, b.x1), y0 = Math.min(b.y0, b.y1), y1 = Math.max(b.y0, b.y1);
+      if (x1 - x0 < 3 && y1 - y0 < 3) { if (!b.add) app.select(null); return; }
+      const inside = (x: number, y: number) => x >= x0 && x <= x1 && y >= y0 && y <= y1;
+      const ids = new Set<string>();
+      for (const s of renderer?.shapes ?? []) {
+        const xs = [s.corners[0], s.corners[2], s.corners[4], s.corners[6]], ys = [s.corners[1], s.corners[3], s.corners[5], s.corners[7]];
+        // 四角が形の外枠と重なれば選ぶ
+        if (Math.max(...xs) >= x0 && Math.min(...xs) <= x1 && Math.max(...ys) >= y0 && Math.min(...ys) <= y1) ids.add(s.id);
+      }
+      for (const m of markers()) if (inside(m.x, m.y)) ids.add(m.id);
+      app.selectMany([...ids], b.add);
+      hint = ids.size ? `${ids.size}体を選びました（ドラッグでまとめて動かす・右クリックで複製や削除）` : '';
+      return;
+    }
     const d = drag;
     drag = null;
     if (!d?.moved || !app.preview) return;
-    if (d.ui) {
-      const u = app.preview.world.get(d.id)!.c.UI;
-      const base = `${app.scene}#${d.id}.UI`;
-      app.patch([{ op: 'set', path: `${base}.x`, value: u.x }, { op: 'set', path: `${base}.y`, value: u.y }], 'game');
-      return;
+    const ops: Op[] = [];
+    for (const m of d.all) {
+      const c = app.preview.world.get(m.id)?.c[m.what];
+      if (!c) continue;
+      const base = `${app.scene}#${m.id}.${m.what}`;
+      ops.push({ op: 'set', path: `${base}.x`, value: c.x }, { op: 'set', path: `${base}.y`, value: c.y });
     }
-    const t = app.preview.world.get(d.id)!.c.Transform;
-    const base = `${app.scene}#${d.id}.Transform`;
-    app.patch([{ op: 'set', path: `${base}.x`, value: t.x }, { op: 'set', path: `${base}.y`, value: t.y }], 'game');
+    if (ops.length) app.patch(ops, 'game');
   });
   canvas.addEventListener('wheel', (e) => {
     if (viewMode !== 'free') return;
@@ -373,6 +443,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
   const drawOverlay = (w: NonNullable<App['world']>) => {
     og.clearRect(0, 0, overlay.width, overlay.height);
     const sel = app.sel?.kind === 'scene' ? app.sel.id : null;
+    if (!app.play) drawGrid();
     if (viewMode === 'free') {
       // プレイヤーに見える範囲（カメラごと）を枠で出す
       const d = design();
@@ -394,9 +465,51 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
       og.moveTo(m.x, m.y - MARK); og.lineTo(m.x + MARK, m.y); og.lineTo(m.x, m.y + MARK); og.lineTo(m.x - MARK, m.y); og.closePath();
       og.stroke();
     }
+    if (band) {
+      og.strokeStyle = 'rgba(79,163,255,0.9)';
+      og.fillStyle = 'rgba(79,163,255,0.12)';
+      og.fillRect(Math.min(band.x0, band.x1), Math.min(band.y0, band.y1), Math.abs(band.x1 - band.x0), Math.abs(band.y1 - band.y0));
+      og.strokeRect(Math.min(band.x0, band.x1), Math.min(band.y0, band.y1), Math.abs(band.x1 - band.x0), Math.abs(band.y1 - band.y0));
+    }
     if (!sel || !renderer) return;
-    og.strokeStyle = '#ffb02e';
-    for (const s of renderer.shapes) if (s.id === sel) poly(s.corners, [5, 3]);
+    // 選んでいる物の枠（手前の物は濃く、一緒に選んでいる物は薄く）
+    const extra = new Set(app.extra);
+    for (const s of renderer.shapes) {
+      if (s.id === sel) { og.strokeStyle = '#ffb02e'; poly(s.corners, [5, 3]); }
+      else if (extra.has(s.id)) { og.strokeStyle = 'rgba(255,176,46,0.55)'; poly(s.corners, [3, 3]); }
+    }
+    og.lineWidth = 1.5;
+    for (const m of markers()) {
+      if (!extra.has(m.id)) continue;
+      og.strokeStyle = 'rgba(255,176,46,0.7)';
+      og.beginPath();
+      og.moveTo(m.x, m.y - MARK); og.lineTo(m.x + MARK, m.y); og.lineTo(m.x, m.y + MARK); og.lineTo(m.x - MARK, m.y); og.closePath();
+      og.stroke();
+    }
+  };
+  /** 格子の線（ワールドの座標で gridSize ごと。細かすぎるときは間引く） */
+  const drawGrid = () => {
+    if (!snap || !renderer) return;
+    const cams = viewMode === 'free' ? [free] : renderer.cams.filter((c) => c !== renderer!.uiView);
+    og.lineWidth = 1;
+    for (const cam of cams) {
+      const q = visibleCorners(cam);
+      const xs = [q[0], q[2], q[4], q[6]], ys = [q[1], q[3], q[5], q[7]];
+      let g = gridSize;
+      while (g * cam.zoom < 6) g *= 2;
+      const x0 = Math.floor(Math.min(...xs) / g) * g, x1 = Math.max(...xs), y0 = Math.floor(Math.min(...ys) / g) * g, y1 = Math.max(...ys);
+      if ((x1 - x0) / g > 400 || (y1 - y0) / g > 400) continue;
+      og.save();
+      og.beginPath();
+      og.rect(cam.vx, cam.vy, cam.vw, cam.vh);
+      og.clip();
+      og.strokeStyle = 'rgba(255,255,255,0.08)';
+      og.beginPath();
+      for (let x = x0; x <= x1; x += g) { const a = worldToScreen(cam, x, Math.min(...ys)), b = worldToScreen(cam, x, y1); og.moveTo(a[0], a[1]); og.lineTo(b[0], b[1]); }
+      for (let y = y0; y <= y1; y += g) { const a = worldToScreen(cam, Math.min(...xs), y), b = worldToScreen(cam, x1, y); og.moveTo(a[0], a[1]); og.lineTo(b[0], b[1]); }
+      og.stroke();
+      og.restore();
+    }
   };
 
   // ---------- ループ ----------

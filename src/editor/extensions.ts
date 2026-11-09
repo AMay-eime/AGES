@@ -5,7 +5,7 @@ import { asExtension, matchField, matchRank, type ComponentDrawer, type EditorAp
 import type { Op } from '../core/patch.ts';
 import { parseAddress } from '../core/docs.ts';
 import { resolvePrefab } from '../core/variant.ts';
-import { h, toast } from './ui/dom.ts';
+import { h, modal, toast } from './ui/dom.ts';
 import { BUILTIN_EXTENSIONS } from './builtin/index.ts';
 import { createStage } from './stage.ts';
 
@@ -35,14 +35,17 @@ export function makeApi(app: App, win: string): EditorApi {
       if (!a.field) return comp ?? holder;
       return comp && a.field in comp ? comp[a.field] : app.registry.components.get(a.component!)?.fields[a.field]?.default;
     },
-    select(address: string) {
+    select(address: string | null, add = false) {
+      if (address === null) return app.select(null);
       const a = parseAddress(address);
-      app.select(a.kind === 'prefab' ? { kind: 'prefab', name: a.doc } : { kind: 'scene', scene: a.doc, id: a.entity! });
+      app.select(a.kind === 'prefab' ? { kind: 'prefab', name: a.doc } : { kind: 'scene', scene: a.doc, id: a.entity! }, { add });
     },
     simulate: (frames, keys, seed) => app.simulate(frames, keys, seed),
     sheet: (image: string) => app.registry.sheets.get(image),
     notify: (text, kind = 'info') => { toast(text, kind === 'info' ? '' : kind, kind === 'bad' ? 8000 : 4000); },
     get selection() { const s = app.sel; return !s ? null : s.kind === 'prefab' ? `@${s.name}` : `${s.scene}#${s.id}`; },
+    get selected() { const s = app.sel; return !s ? [] : s.kind === 'prefab' ? [`@${s.name}`] : app.selectedIds().map((id) => `${s.scene}#${id}`); },
+    ask: (title, value = '') => askText(title, value),
     stage: (el, opts) => createStage(app, el, opts),
     on: ((ev: string, fn: (d?: unknown) => void) => app.on(ev, fn)) as EditorApi['on'],
     h: h as unknown as EditorApi['h'],
@@ -78,4 +81,32 @@ export function fieldDrawerFor(app: App, path: string, component: string, field:
 /** この部品に使う見せ方（本体の拡張から順に、すべて） */
 export function componentDrawersFor(app: App, component: string): { drawer: ComponentDrawer; x: LoadedExtension }[] {
   return app.extensions.flatMap((x) => (x.ext.components ?? []).filter((d) => d.component === component).map((drawer) => ({ drawer, x })));
+}
+
+/** 右クリックのメニューの項目（拡張の menus から。when で絞る） */
+export function menuItemsFor(app: App, where: 'entity', targets: string[]): [string, () => void][] {
+  const out: [string, () => void][] = [];
+  for (const x of app.extensions) {
+    for (const m of x.ext.menus ?? []) {
+      if (m.where !== where) continue;
+      try { if (m.when && !m.when(targets, x.api)) continue; } catch { continue; }
+      out.push([m.label, () => { Promise.resolve(m.run(targets, x.api)).catch((e) => toast(`${x.ext.id}: ${(e as Error).message}`, 'bad', 8000)); }]);
+    }
+  }
+  return out;
+}
+
+/** 1行の文字を尋ねる小さな窓 */
+export function askText(title: string, value = ''): Promise<string | null> {
+  return new Promise((done) => {
+    let answered = false;
+    modal((close) => {
+      const input = h('input', { type: 'text', value, style: 'flex:1' }) as HTMLInputElement;
+      const finish = (v: string | null) => { if (answered) return; answered = true; close(); done(v); };
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') finish(input.value.trim()); if (e.key === 'Escape') finish(null); });
+      setTimeout(() => { input.focus(); input.select(); }, 0);
+      return h('div', {}, h('h3', {}, title), h('div', { class: 'row' }, input),
+        h('div', { class: 'row', style: 'justify-content:flex-end;gap:6px;margin-top:12px' }, h('button', { onclick: () => finish(null) }, 'やめる'), h('button', { class: 'primary', onclick: () => finish(input.value.trim()) }, 'OK')));
+    });
+  });
 }

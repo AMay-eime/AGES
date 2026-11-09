@@ -110,9 +110,10 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
   - `panel: { title, area?, mount(el, api) }` 調整用の画面（例 `examples/shooter/editor/wave-tuner.window.ts`。パネルだけなら `defineWindow` でもよい）
   - `fields: [{ match, mount(el, field, api) }]` インスペクタの欄の見せ方。match は 型（`'color'`）・部品.フィールド（`'Health.hp'`）・住所（`'main#player.Health.hp'`）。`field.value` を見せ、`field.set(値)` で変える。`field.standard()` で標準の欄も並べられる（例 `examples/shooter/editor/hp-hearts.ext.ts`）
   - `components: [{ component, hide?, mount(el, comp, api) }]` 部品の欄の上に中身を足す。`hide: 'all'` か名前の並びで標準の欄を隠す。`comp.set(フィールド, 値)`（例 AGES 本体の `src/editor/builtin/ui-dock.ts`）
+  - `menus: [{ label, where: 'entity', when?(targets, api), run(targets, api) }]` シーンの物の右クリックのメニュー。targets は選んでいる物の住所（例 AGES 本体の `src/editor/builtin/entity-menu.ts`）
 - `desc`（何のためか、1行）を必ず書く。パネルがあるなら `title` と `edits`（パネルが変える値の住所。`main#spawner.Spawner.*` のようにまとめても書ける）も。地図にはこの宣言が1行で出る
 - 拡張から変えられるのは、`edits` に書いた値と、見せている欄・部品の値だけ。🔒ロックされた値は拡張からは変えられない。ロックの操作を拡張に作らない（作っても、サーバーが受け付けない）
-- 値を変えるのは `api.patch`・`field.set`・`comp.set` だけ（エディタのサーバーを直接呼ばない）。読むのは `api.get`（派生は元と重ねた値）、知らせるのは `api.notify(文, 'warn')`、画像の切り方は `api.sheet(画像)`、選んでいる物は `api.selection`
+- 値を変えるのは `api.patch`・`field.set`・`comp.set` だけ（エディタのサーバーを直接呼ばない）。読むのは `api.get`（派生は元と重ねた値）、知らせるのは `api.notify(文, 'warn')`、画像の切り方は `api.sheet(画像)`、選んでいる物は `api.selection`（すべては `api.selected`。`api.select(住所, true)` で足す）、1行を尋ねるのは `await api.ask(題, 既定)`
 - プレハブを小さな画面でくり返し動かすのは `api.stage(el, { spawn: [{ prefab }], seconds, speed, zoom, keys, onCycle })`（本体の「試し」の窓 `src/editor/builtin/tryout.ts` と同じ。値を変えると次の回から新しい値）
 - モジュールの一番外では `document` などのブラウザの物を使わない（地図を作るときに Node で読むため）
 - 作ったら `ages check` で、宣言の誤り（ない住所・ない型や部品・書き忘れ・登録し忘れ）を確かめる

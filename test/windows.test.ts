@@ -99,3 +99,14 @@ test('拡張の検証: 窓口がない・ない型・ない部品とフィール
   assert.match(out, /empty\.ext\.ts: 窓口がありません/);
   assert.doesNotMatch(out, /empty\.ext\.ts: (title|edits)/);
 });
+
+test('拡張の右クリックのメニュー: 地図に項目の名前が出て、窓口として数える', async () => {
+  const dir = await fresh();
+  await writeFile(join(dir, 'editor/menu.ext.ts'), "import { defineExtension } from 'ages';\nexport default defineExtension({ id: 'line-up', desc: '選んだ物を横に並べる', edits: [], menus: [{ label: '横に並べる', where: 'entity', run() {} }] });\n");
+  const cfg = join(dir, 'ages.project.json');
+  const c = JSON.parse(await readFile(cfg, 'utf8'));
+  c.editorWindows.push('editor/menu.ext.ts');
+  await writeFile(cfg, JSON.stringify(c, null, 2));
+  assert.match(await cmdMap(dir), /^line-up 選んだ物を横に並べる \| 変える: なし（見るだけ） \| メニュー:横に並べる \| editor\/menu\.ext\.ts$/m);
+  assert.doesNotMatch(await cmdCheck(dir), /menu\.ext\.ts/);
+});
