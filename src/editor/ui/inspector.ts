@@ -75,7 +75,8 @@ export function inspectorPanel(app: App): Panel {
           h('input', { type: 'checkbox', checked: !app.showLocked, onchange: (e: Event) => setHide((e.target as HTMLInputElement).checked) }), `🔒を隠す${lockedHere ? `（${lockedHere}）` : ''}`)),
       h('div', { class: 'muted', style: 'margin-top:4px;font:var(--mono)' }, base, holder.tags?.length ? `  tags:${holder.tags.join(',')}` : '',
         playing ? '  ▶ 実行中（変更は停止時に保存するか選べます）' : ''),
-      sel.kind === 'prefab' && !playing ? prefabBar(app, sel.name, raw!) : null);
+      sel.kind === 'prefab' && !playing ? prefabBar(app, sel.name, raw!) : null,
+      app.extra.length ? h('div', { class: 'muted', style: 'margin-top:4px' }, `ほか ${app.extra.length}体も選んでいます（${app.extra.slice(0, 4).join(', ')}${app.extra.length > 4 ? ' …' : ''}）。ここで変えるのはこの物だけ。動かす・複製・削除はまとめて`) : null);
 
     let hiddenCount = 0;
     const comps = Object.entries(holder.components).map(([cname, values]) => {

@@ -10,6 +10,7 @@ import { spritePanel } from './ui/sprite.ts';
 import { tablePanel } from './ui/table.ts';
 import { assetsPanel } from './ui/assets.ts';
 import { builtinExtensions, projectExtension, type LoadedExtension } from './extensions.ts';
+import { duplicateOps, nudgeOps, removeOps } from './edit-ops.ts';
 
 const app = new App();
 (window as unknown as { ages: App }).ages = app; // デバッグ・AIのブラウザ操作用
@@ -128,6 +129,31 @@ window.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   if (k === 'z' && !e.shiftKey) { e.preventDefault(); app.undo(); }
   else if ((k === 'z' && e.shiftKey) || k === 'y') { e.preventDefault(); app.undo(true); }
+});
+// シーンの編集: 複製（Ctrl+D）・削除（Delete）・すべて選ぶ（Ctrl+A）・選ぶのをやめる（Esc）・矢印で1px（Shift で格子の目か 10px）ずらす
+window.addEventListener('keydown', (e) => {
+  if (typing(e) || (e.target as HTMLElement)?.isContentEditable || app.play || document.querySelector('.modal-bg')) return;
+  const scene = app.state.scenes[app.scene];
+  const ids = app.selectedIds();
+  const mod = e.ctrlKey || e.metaKey;
+  const k = e.key.toLowerCase();
+  if (mod && k === 'a' && scene) { e.preventDefault(); app.selectMany(scene.entities.map((x) => x.id)); return; }
+  if (e.key === 'Escape' && app.sel) { app.select(null); return; }
+  if (!scene || !ids.length) return;
+  if (mod && k === 'd') {
+    e.preventDefault();
+    const r = duplicateOps(scene, ids);
+    void app.patch(r.ops, 'hierarchy').then((ok) => { if (ok) app.selectMany(r.ids); });
+  } else if ((e.key === 'Delete' || e.key === 'Backspace') && !mod) {
+    e.preventDefault();
+    if (confirm(ids.length > 1 ? `${ids.length}体を削除しますか？（${ids.join(', ')}）` : `${app.scene}#${ids[0]} を削除しますか？`)) void app.patch(removeOps(app.scene, ids), 'hierarchy').then((ok) => { if (ok) app.select(null); });
+  } else if (e.key.startsWith('Arrow') && !mod) {
+    e.preventDefault();
+    const step = e.shiftKey ? app.snap() || 10 : 1;
+    const [dx, dy] = e.key === 'ArrowLeft' ? [-step, 0] : e.key === 'ArrowRight' ? [step, 0] : e.key === 'ArrowUp' ? [0, -step] : [0, step];
+    const ops = nudgeOps(scene, ids, dx, dy);
+    if (ops.length) void app.patch(ops, 'game');
+  }
 });
 
 // ---------- エディタ拡張（本体の拡張と、プロジェクトの editor/*.window.ts・*.ext.ts） ----------

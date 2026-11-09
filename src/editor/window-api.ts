@@ -24,16 +24,20 @@ export interface EditorApi {
   patch(ops: Op[]): Promise<Change[] | null>;
   /** アドレスの値を読む（例: main#spawner.Spawner.interval）。省略されていれば既定値、派生のプレハブなら元から受け継いだ値 */
   get(path: string): unknown;
-  /** インスペクタで選ぶ（例: main#player / @enemy） */
-  select(address: string): void;
+  /** インスペクタで選ぶ（例: main#player / @enemy）。add なら今の選びに足す（シーンの物だけ）。null で選ぶのをやめる */
+  select(address: string | null, add?: boolean): void;
   /** 画面なしで試し実行する。keys は ages run --keys と同じ書き方（"0-600:@fire;100-200:ArrowLeft"） */
   simulate(frames: number, keys?: string, seed?: number): { counts: Record<string, number>; frame: number; ms: number };
   /** 画像の切り方（コマ・動き）。切っていなければ undefined */
   sheet(image: string): SheetDef | undefined;
   /** 通知（画面の右下に少しのあいだ出る）。kind: info（既定）・warn・bad */
   notify(text: string, kind?: 'info' | 'warn' | 'bad'): void;
-  /** いま選んでいる物の住所（main#player・@enemy）。選んでいなければ null */
+  /** いま選んでいる物の住所（main#player・@enemy）。選んでいなければ null。いくつも選んでいるときは、インスペクタに出ている物 */
   readonly selection: string | null;
+  /** いま選んでいる物すべての住所（手前の物が最初） */
+  readonly selected: string[];
+  /** 1行の文字を尋ねる（やめたら null） */
+  ask(title: string, value?: string): Promise<string | null>;
   /**
    * 試しの舞台: el に小さな画面を作り、空のシーンにプレハブを出して、くり返し動かす（エディタの「試し」の窓もこれで作っている）。
    * ゲームと同じ決まりで動く（scenes で絞ったシステムは動かない）。値を変えると、次の回から新しい値で動く。音は鳴らさず、数だけを onCycle で返す
@@ -170,6 +174,18 @@ export interface EditorExtension {
   fields?: FieldDrawer[];
   /** インスペクタの部品の見せ方 */
   components?: ComponentDrawer[];
+  /** 右クリックのメニューの項目 */
+  menus?: MenuItem[];
+}
+
+/** 右クリックのメニューの項目 */
+export interface MenuItem {
+  label: string;
+  /** どこの右クリックに出すか。'entity': シーンの物（階層・ゲームの画面） */
+  where: 'entity';
+  /** 出すかどうか（targets は選んでいる物の住所） */
+  when?(targets: string[], api: EditorApi): boolean;
+  run(targets: string[], api: EditorApi): void | Promise<void>;
 }
 
 /** パネルだけの拡張の、短い書き方（これまでの書き方） */
