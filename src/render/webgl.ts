@@ -6,7 +6,7 @@ import type { World, Entity } from '../core/world.ts';
 import type { SheetDef } from '../core/sheet.ts';
 import { camerasOf, defaultCamera, worldToScreen, type CameraView } from '../core/camera.ts';
 import { layoutUI, type UiRect } from '../core/ui.ts';
-import { collectDrawables, cornersOf, pointInCorners, spriteGeometry, type Corners } from './geom.ts';
+import { collectDrawables, cornersOf, lineCorners, pointInCorners, spriteGeometry, strokeBands, type Corners } from './geom.ts';
 import { ParticleSim } from './particles.ts';
 import { STD_SHADERS, codeHash, wrapShader, type ShaderDef } from '../core/shader.ts';
 
@@ -105,6 +105,8 @@ export class Renderer {
   cams: CameraView[] = [];
   private cam!: CameraView;
   private camIndex = 0;
+  /** UI を描いている間（切り抜きの後に、切り取りを外して戻す） */
+  private uiPass = false;
   private prog: WebGLProgram;
   private vbo: WebGLBuffer;
   private verts = new Float32Array(MAX_QUADS * 4 * FLOATS);
@@ -132,7 +134,9 @@ export class Renderer {
   private white: Tex;
   private circle: Tex;
   private missing: Tex;
-  private textCache = new Map<string, Tex & { used: number }>();
+  private textCache = new Map<string, Tex & { used: number; pad: number }>();
+  /** 円の枠（太さの割合ごと） */
+  private rings = new Map<number, Tex>();
   private frameNo = 0;
   private colors = new Map<string, [number, number, number]>();
   private measure: CanvasRenderingContext2D;
@@ -212,6 +216,7 @@ export class Renderer {
     const ui = all.filter((d) => d.e.c.UI);
     const world2 = ui.length ? all.filter((d) => !d.e.c.UI) : all;
     gl.enable(gl.SCISSOR_TEST);
+    this.uiPass = false;
     this.cams.forEach((cam, i) => {
       this.cam = cam;
       this.camIndex = i;
@@ -245,8 +250,10 @@ export class Renderer {
       this.cam = view;
       this.camIndex = this.cams.indexOf(view);
       if (this.camIndex < 0) { this.cams.push(view); this.camIndex = this.cams.length - 1; }
+      this.uiPass = true;
       for (const d of ui) if (this.uiRects.get(d.e.id)?.visible) this.drawOne(d.kind, d.e);
       this.flush();
+      this.uiPass = false;
     }
     if (passes.size) {
       const last = passes.get(-1);
@@ -295,11 +302,41 @@ export class Renderer {
   // ---------- 描くもの ----------
 
   private drawOne(kind: string, e: Entity): void {
+    const clip = e.c.Clip;
+    const clipped = !!clip && clip.enabled !== false;
+    if (clipped && !this.pushClip(clip.min ?? [0, 0], clip.max ?? [0, 0])) return;
     if (kind === 'sprite') this.sprite(e);
     else if (kind === 'shape') this.shape(e);
     else if (kind === 'particles') this.drawParticles(e);
     else if (kind === 'gauge') this.gauge(e);
     else this.text(e);
+    if (clipped) this.popClip();
+  }
+
+  /** 切り抜き: この四角（ワールドの座標。UI なら画面の座標）の中だけに描く。何も見えないなら false */
+  private pushClip(min: [number, number], max: [number, number]): boolean {
+    const c = this.cam;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [wx, wy] of [[min[0], min[1]], [max[0], min[1]], [max[0], max[1]], [min[0], max[1]]]) {
+      const [sx, sy] = worldToScreen(c, wx, wy);
+      x0 = Math.min(x0, sx); y0 = Math.min(y0, sy); x1 = Math.max(x1, sx); y1 = Math.max(y1, sy);
+    }
+    // カメラの範囲と重なる所だけ
+    x0 = Math.max(x0, c.vx); y0 = Math.max(y0, c.vy); x1 = Math.min(x1, c.vx + c.vw); y1 = Math.min(y1, c.vy + c.vh);
+    if (x1 <= x0 || y1 <= y0) return false;
+    this.flush();
+    const gl = this.gl;
+    gl.enable(gl.SCISSOR_TEST);
+    gl.scissor(Math.floor(x0), Math.floor(this.resH - y1), Math.ceil(x1 - x0), Math.ceil(y1 - y0));
+    return true;
+  }
+
+  /** 切り抜きを外す（カメラの範囲の切り取りに戻す。UI なら切り取らない） */
+  private popClip(): void {
+    this.flush();
+    const gl = this.gl, c = this.cam;
+    if (this.uiPass) gl.disable(gl.SCISSOR_TEST);
+    else gl.scissor(Math.floor(c.vx), Math.floor(this.resH - c.vy - c.vh), Math.ceil(c.vw), Math.ceil(c.vh));
   }
 
   /** UI の物は、その四角（中心・大きさ）で描く。Transform があれば回転・倍率だけ使う */
@@ -432,30 +469,74 @@ export class Renderer {
   private shape(e: Entity): void {
     const s = e.c.Shape;
     const box = this.uiBox(e);
-    const q = this.place(e.id, box ? cornersOf(box.t, box.w, box.h, 0.5, 0.5) : cornersOf(e.c.Transform as TransformLike, s.w, s.h, 0.5, 0.5));
-    if (q) this.quad(s.kind === 'circle' ? this.circle : this.white, 'normal', q, 0, 0, 1, 1, this.stateColor(e, s.color), s.alpha ?? 1, this.material(e));
+    const t = box ? box.t : (e.c.Transform as TransformLike);
+    const color = this.stateColor(e, s.color), alpha = s.alpha ?? 1, mat = this.material(e);
+    if (s.kind === 'line') {
+      const q = this.place(e.id, lineCorners(t, s.to ?? [0, 0], s.stroke || 1));
+      if (q) this.quad(this.white, 'normal', q, 0, 0, 1, 1, color, alpha, mat);
+      return;
+    }
+    const w = box ? box.w : s.w, h = box ? box.h : s.h;
+    const stroke = s.stroke ?? 0;
+    const q = this.place(e.id, cornersOf(t, w, h, 0.5, 0.5));
+    if (!q) return;
+    if (stroke <= 0) this.quad(s.kind === 'circle' ? this.circle : this.white, 'normal', q, 0, 0, 1, 1, color, alpha, mat);
+    else if (s.kind === 'circle') this.quad(this.ring(stroke / Math.max(1, Math.min(w, h) / 2)), 'normal', q, 0, 0, 1, 1, color, alpha, mat);
+    else {
+      for (const [x0, y0, x1, y1] of strokeBands(w, h, stroke)) {
+        const b = this.place(e.id, this.part(t, w, h, x0, y0, x1, y1), false);
+        if (b) this.quad(this.white, 'normal', b, 0, 0, 1, 1, color, alpha, mat);
+      }
+    }
+  }
+
+  /** 円の枠の絵（太さは半径に対する割合。1/64 刻みで作り置く） */
+  private ring(ratio: number): Tex {
+    const k = Math.max(1, Math.min(64, Math.round(ratio * 64)));
+    let tex = this.rings.get(k);
+    if (!tex) {
+      const R = 128, lw = (k / 64) * R;
+      tex = this.fromCanvas(this.makeCanvas(R * 2, R * 2, (g) => {
+        g.strokeStyle = '#fff';
+        g.lineWidth = lw;
+        g.beginPath();
+        g.arc(R, R, Math.max(0.5, R - lw / 2 - 1), 0, Math.PI * 2);
+        g.stroke();
+      }), 'linear');
+      this.rings.set(k, tex);
+    }
+    return tex;
   }
 
   private text(e: Entity): void {
     const tx = e.c.Text;
     let t = e.c.Transform as TransformLike;
     if (!tx.text) return;
-    const font = `${Math.round(tx.size)}px ${tx.font ? this.fontFamily(tx.font) : 'system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif'}`;
+    const font = `${tx.bold ? 'bold ' : ''}${Math.round(tx.size)}px ${tx.font ? this.fontFamily(tx.font) : 'system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif'}`;
     const wrap = tx.wrap > 0 ? tx.wrap : 0, lhk = tx.lineHeight || 1.25;
-    const key = `${font}|${wrap}|${lhk}|${tx.text}`;
+    // 縁取りは絵の中に色ごと描く（縁と文字の色が違うので、描くときに色をかけない）
+    const ol = tx.outline > 0 ? tx.outline : 0;
+    const key = `${font}|${wrap}|${lhk}|${ol ? `${ol}|${tx.outlineColor}|${tx.color}` : ''}|${tx.text}`;
     let tex = this.textCache.get(key);
     if (!tex) {
       this.measure.font = font;
       const lines = String(tx.text).split('\n').flatMap((l) => (wrap ? this.wrapLine(l, wrap) : [l]));
       const w = Math.max(1, Math.ceil(Math.max(...lines.map((l) => this.measure.measureText(l).width))) + 4);
       const lh = Math.ceil(tx.size * lhk);
-      const c = this.makeCanvas(w, lh * lines.length, (g) => {
+      const pad = Math.ceil(ol);
+      const c = this.makeCanvas(w + pad * 2, lh * lines.length + pad * 2, (g) => {
         g.font = font;
-        g.fillStyle = '#fff';
         g.textBaseline = 'middle';
-        lines.forEach((l, i) => g.fillText(l, 2, lh * (i + 0.5)));
+        if (ol) {
+          g.lineJoin = 'round';
+          g.lineWidth = ol * 2;
+          g.strokeStyle = tx.outlineColor || '#000000';
+          lines.forEach((l, i) => g.strokeText(l, 2 + pad, pad + lh * (i + 0.5)));
+        }
+        g.fillStyle = ol ? tx.color || '#ffffff' : '#fff';
+        lines.forEach((l, i) => g.fillText(l, 2 + pad, pad + lh * (i + 0.5)));
       });
-      tex = { ...this.fromCanvas(c, 'linear'), used: 0 };
+      tex = { ...this.fromCanvas(c, 'linear'), used: 0, pad };
       this.textCache.set(key, tex);
     }
     tex.used = this.frameNo;
@@ -463,8 +544,10 @@ export class Renderer {
     // UI の物は、四角の中で揃える（縦は真ん中）
     const box = this.uiBox(e);
     if (box) t = { ...box.t, x: box.t.x + (ax - 0.5) * box.w * (box.t.sx ?? 1) };
-    const q = this.place(e.id, cornersOf(t, tex.w, tex.h, ax, 0.5));
-    if (q) this.quad(tex, 'normal', q, 0, 0, 1, 1, this.stateColor(e, tx.color), 1, this.material(e));
+    // 縁取りの余白を除いた文字の四角で揃える
+    const ix = (tex.pad + ax * (tex.w - tex.pad * 2)) / tex.w;
+    const q = this.place(e.id, cornersOf(t, tex.w, tex.h, ix, 0.5));
+    if (q) this.quad(tex, 'normal', q, 0, 0, 1, 1, this.stateColor(e, ol ? '#ffffff' : tx.color), 1, this.material(e));
   }
 
   /** 1行を幅で折り返す（英語は単語の切れ目で、日本語は文字ごとに） */

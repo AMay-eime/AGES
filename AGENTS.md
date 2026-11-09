@@ -47,7 +47,7 @@
 
 - 表（武器・敵など同じ形の行）: `defineTable`・`ages table`・CSV → `table`
 - プレハブ・派生（元を受け継いで一部だけ変える）: patch の addPrefab（base）・revert → `prefab`
-- 画像・コマ・動き: Sprite・Animator・`ages sheet` / `ages slice`。画像を開かない → `sprite`
+- 画像・図形（線・枠）・コマ・動き・切り抜き: Sprite・Shape・Animator・Clip・`ages sheet` / `ages slice`。画像を開かない → `sprite`
 - カメラ・画面の大きさ: Camera・`ctx.shake`・`view.fit` → `camera`
 - 音: Sound のプレハブと `ctx.sound.play`・AudioBus → `sound`
 - 入力・キーコンフィグ: 表 `$actions` と `ctx.input.isDown('fire')`。キーの名前をコードに書かない → `input`

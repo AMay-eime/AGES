@@ -41,6 +41,23 @@ export function cornersOf(t: { x: number; y: number; rot?: number; sx?: number; 
   return [...p(l, tp), ...p(r, tp), ...p(r, b), ...p(l, b)] as Corners;
 }
 
+/** 線（物の位置から to まで、太さ width）の4つの角。to には回転・倍率がかかる */
+export function lineCorners(t: { x: number; y: number; rot?: number; sx?: number; sy?: number }, to: [number, number], width: number): Corners {
+  const rad = ((t.rot ?? 0) * Math.PI) / 180, c = Math.cos(rad), s = Math.sin(rad);
+  const lx = to[0] * (t.sx ?? 1), ly = to[1] * (t.sy ?? 1);
+  const ex = t.x + lx * c - ly * s, ey = t.y + lx * s + ly * c;
+  const dx = ex - t.x, dy = ey - t.y, len = Math.hypot(dx, dy) || 1;
+  const hw = Math.max(width, 1) / 2, nx = (-dy / len) * hw, ny = (dx / len) * hw;
+  return [t.x + nx, t.y + ny, ex + nx, ey + ny, ex - nx, ey - ny, t.x - nx, t.y - ny];
+}
+
+/** 四角の枠（太さ stroke）を、四角の中の4つの帯（0〜1 の範囲 [x0,y0,x1,y1]）にする。太すぎるときは塗りつぶしと同じ1枚 */
+export function strokeBands(w: number, h: number, stroke: number): [number, number, number, number][] {
+  if (stroke * 2 >= Math.min(w, h)) return [[0, 0, 1, 1]];
+  const fx = stroke / w, fy = stroke / h;
+  return [[0, 0, 1, fy], [0, 1 - fy, 1, 1], [0, fy, fx, 1 - fy], [1 - fx, fy, 1, 1 - fy]];
+}
+
 /** 点が4つの角の中にあるか（回転していても正しく判定する） */
 export function pointInCorners(px: number, py: number, q: Corners): boolean {
   let sign = 0;

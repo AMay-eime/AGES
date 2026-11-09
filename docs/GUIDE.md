@@ -21,13 +21,15 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
 - 数値だけが違う行がたくさん並ぶなら、派生より表（table）が向く
 - プレハブだけを試すのは `ages run <dir> --spawn enemy_fast`（空のシーンの真ん中に出し、消えたら止まる。`explosion@40,0` で真ん中からずらす。音のプレハブは1回鳴らす）。人はエディタの「試し」の窓で同じものを見る
 
-## sprite: 画像・コマ・動き
-部品: Sprite Animator
+## sprite: 画像・図形・コマ・動き・切り抜き
+部品: Sprite Animator Shape Clip
 - 画像はプロジェクト内のパスで指定する（`Sprite.image: "assets/x.png"`）。コマは `Sprite.frame`（番号か名前）、動きは `Animator.clip`（標準のシステム std.animator が進める）
 - 切り方は `ages sheet <dir> <画像>` で見る。画像を開いて確かめない（何コマあるかは地図にも出る）
 - 切るのは `ages slice <dir> <画像> --grid 32x32 | --count 4x6 | --auto`（`--dry` で保存せずに確かめる。前と同じ場所のコマは名前を引き継ぐ）
 - 1コマ・1動きの変更は patch の `setFrame` / `setClip`（例 `{"op":"setFrame","image":"assets/x.png","frame":"x_3","name":"hero_idle","pivot":[0.5,1]}`）。`.sheet.json` を直接書き換えない
 - コマを指定するときは名前を使う（切り直してもずれない）。切り方の🔒・★はシーンの値と同じ扱い
+- 図形は Shape。四角・円は `stroke` を1以上にすると枠だけ（リング・ゲージの枠）。線は `kind: "line"` で、物の位置から `to`（ずれ。回転がかかる）まで、太さは `stroke`。レーザー・予告線は線の物を1つ置き、`to` か `Transform.rot` を変える（細い四角を計算しない）
+- 決めた四角の中だけに描くのは Clip（`min`・`max`。背景の切り替えの境目・巻物の一覧）。画面を分けて別のものを映すなら Camera の viewPos・viewSize（guide:camera）
 
 ## camera: カメラと画面の大きさ
 部品: Camera
@@ -93,6 +95,7 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
 - 画面に出す言葉は、コードに直接書かず表 `$text` の行にする（`ctx.t('名前', { 値 })`。決まった言葉なら Text.key に行の名前）
 - 言語を足すのは `ages.project.json` の languages（最初が既定）。切り替えは `ctx.setLang('en')`
 - 未訳は `ages table <dir> text --empty en` で探して表に入れ、`ages run --lang en` で確かめる
+- 背景の上で読ませる文字（HUD・ダメージの数字）は `Text.outline`（縁取りの太さ）と `outlineColor`、`bold`。シェーダーの std:outline より軽い
 
 ## save: 保存
 - `ctx.save.get/set`（最高得点・進み具合）。物ごとまとめて残すなら `saveWorld(key, { tags: ['save'] })` / `loadWorld(key)`（型が変わっても戻せる）
