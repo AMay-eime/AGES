@@ -146,8 +146,14 @@ export function createStage(app: App, el: HTMLElement, init: StageOptions): Stag
     requestAnimationFrame(loop);
     const dt = Math.min(0.25, (now - last) / 1000);
     last = now;
-    // 外された（拡張を読み直した）ら片付ける。見えていない（タブの裏）間は進めない
-    if (!canvas.isConnected) { if (++detached > 120) handle.destroy(); return; }
+    // 外されている間（タブを離れた・作り直した）は止める。2秒たったら描く側（WebGL）だけ返し、また付いたら作り直して続ける。
+    // 10分たっても付かなければ片付ける（拡張が destroy を忘れても残らないように）
+    if (!canvas.isConnected) {
+      detached++;
+      if (detached === 120 && renderer) { (renderer.gl.getExtension('WEBGL_lose_context') as { loseContext(): void } | null)?.loseContext(); renderer = null; }
+      if (detached > 36000) handle.destroy();
+      return;
+    }
     detached = 0;
     if (!canvas.offsetParent || !app.state?.config) return;
     layout();

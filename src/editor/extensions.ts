@@ -3,8 +3,8 @@
 import type { App } from './app.ts';
 import { asExtension, fieldKey, matchField, matchRank, type ComponentDrawer, type EditorApi, type EditorExtension, type EditorWindow, type FieldDrawer, type RowDrawer } from './window-api.ts';
 import type { Change, Op } from '../core/patch.ts';
-import { defaultOf, type Field } from '../core/schema.ts';
-import { parseAddress } from '../core/docs.ts';
+import { defaultOf, defaultsOf, type Field } from '../core/schema.ts';
+import { parseAddress, type PrefabDoc } from '../core/docs.ts';
 import { resolvePrefab } from '../core/variant.ts';
 import { h, modal, toast } from './ui/dom.ts';
 import { BUILTIN_EXTENSIONS } from './builtin/index.ts';
@@ -50,7 +50,8 @@ export function makeApi(app: App, win: string): EditorApi {
         try { holder = resolvePrefab(new Map(Object.entries(app.state.prefabs)), a.doc); } catch { holder = undefined; }
       } else holder = app.sceneView(a.doc)?.entities.find((e) => e.id === a.entity);
       const comp = a.component ? holder?.components[a.component] : undefined;
-      if (!a.field) return a.component ? comp : holder;
+      // 部品まるごとは、書いていないフィールドを既定値で埋めて返す
+      if (!a.field) return a.component ? (comp ? { ...defaultsOf(app.registry.components.get(a.component)!), ...structuredClone(comp) } : undefined) : holder;
       const def = app.registry.components.get(a.component!)?.fields[a.field];
       const top = comp && a.field in comp ? comp[a.field] : def ? defaultOf(def) : undefined;
       return nestedValue(top, def, a.sub ?? []);
@@ -69,6 +70,13 @@ export function makeApi(app: App, win: string): EditorApi {
     },
     stop: () => app.stopPlay(),
     table: (name) => app.registry.tableView(name),
+    prefabs: (tag) => {
+      // 派生は元と重ねた形（受け継いだタグ・部品も）。元が見つからない派生はそのまま
+      const map = new Map(Object.entries(app.state.prefabs));
+      const out: PrefabDoc[] = [];
+      for (const name of map.keys()) { let p: PrefabDoc; try { p = resolvePrefab(map, name); } catch { p = map.get(name)!; } if (!tag || (p.tags ?? []).includes(tag)) out.push(p); }
+      return out;
+    },
     simulate: (frames, keys, seed) => app.simulate(frames, keys, seed),
     sheet: (image: string) => app.registry.sheets.get(image),
     assetUrl: (path) => app.assetUrl(path),
