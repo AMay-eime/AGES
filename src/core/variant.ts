@@ -93,3 +93,14 @@ export function instanceOverrides(prefabs: Map<string, PrefabDoc>, e: EntityData
   if (e.tags) out.push('tags');
   return out;
 }
+
+/** プレハブの欄で選べるプレハブの名前（tags を書いた欄は、そのタグのどれかを持つものだけ。派生は元から受け継いだタグで見る） */
+export function prefabChoices(prefabs: Map<string, PrefabDoc>, tags?: string[]): string[] {
+  const names = [...prefabs.keys()];
+  if (!tags?.length) return names;
+  return names.filter((n) => {
+    let t: string[] | undefined;
+    try { t = resolvePrefab(prefabs, n).tags; } catch { t = prefabs.get(n)?.tags; }
+    return !!t?.some((x) => tags.includes(x));
+  });
+}
