@@ -11,6 +11,7 @@ import { camerasOf, screenToWorld } from './camera.ts';
 import { checkEase, targetValue, tweenAt, type TweenOptions, type TweenState, type TweenValue } from './tween.ts';
 import type { ParticleApi, ParticleCmd } from './particles.ts';
 import { UiState } from './ui.ts';
+import { HitState, contains, inGroup, overlap, rayHit, shapeOf, type HitShape } from './collide.ts';
 
 export interface Ctx {
   world: World;
@@ -56,6 +57,25 @@ export interface Ctx {
   particles: ParticleApi;
   /** UI（画面に固定する物）の操作 */
   ui: UiApi;
+  /** 当たり判定（Collider の重なり・範囲の検索）。group はグループの名前か、その並び（省くと全部） */
+  hit: HitApi;
+}
+
+export interface HitApi {
+  /** 今（呼んだ時点の位置で）重なっている相手。ワールドに入った順 */
+  overlaps(id: string, group?: string | string[]): string[];
+  /** 重なり始めた相手（Collider.with に書いたグループだけ。前のフレームの終わりの位置で。消えた物は除く） */
+  entered(id: string, group?: string | string[]): string[];
+  /** 2つが重なっているか */
+  test(a: string, b: string): boolean;
+  /** その点を含む物 */
+  point(x: number, y: number, group?: string | string[]): string[];
+  /** 円（中心と半径）に重なる物 */
+  circle(x: number, y: number, r: number, group?: string | string[]): string[];
+  /** 矩形（中心と幅・高さ）に重なる物 */
+  rect(x: number, y: number, w: number, h: number, group?: string | string[]): string[];
+  /** 線分で最初に当たる物（見通し・レーザーなど） */
+  ray(x0: number, y0: number, x1: number, y1: number, group?: string | string[]): { id: string; x: number; y: number; dist: number } | null;
 }
 
 export interface UiApi {
@@ -170,6 +190,8 @@ export class Game {
   particleCounts = new Map<string, number>();
   /** UI の操作（フォーカス・押している物）。フレームで数える */
   readonly ui = new UiState();
+  /** 当たり判定（重なり始めの記録） */
+  readonly hits = new HitState();
   /** 押されたボタン（ID → 回数。ages run の要約用） */
   uiCounts = new Map<string, number>();
   /** 実行中に見つかった問題（同じものは1回だけ。ages run の要約に載る） */
@@ -249,6 +271,7 @@ export class Game {
         return c ? screenToWorld(c, p.x, p.y) : null;
       },
       scene: this.makeSceneApi(),
+      hit: this.makeHitApi(),
       ui: {
         clicked: (id) => this.ui.clicked.has(id),
         changed: (id) => this.ui.changed.has(id),
@@ -267,6 +290,72 @@ export class Game {
         this.recent.unshift(ev);
         if (this.recent.length > 200) this.recent.pop();
         for (const l of this.listeners) l(ev);
+      },
+    };
+  }
+
+  private makeHitApi(): HitApi {
+    const known = () => {
+      const g = new Set(this.hits.groups);
+      const add = (c?: Record<string, unknown>) => { if (c?.group) g.add(String(c.group)); };
+      for (const p of this.registry.prefabs.values()) add(p.components.Collider);
+      for (const s of this.registry.scenes.values()) for (const e of s.entities) add(e.components.Collider);
+      for (const e of this.world.entities.values()) add(e.c.Collider);
+      return g;
+    };
+    const checkGroup = (where: string, group?: string | string[]) => {
+      if (group === undefined) return;
+      const names = known();
+      for (const n of Array.isArray(group) ? group : [group]) {
+        if (!names.has(n)) this.warnings.add(`ctx.hit.${where}: グループ "${n}" の Collider がありません${suggest(n, [...names])}（ある名前: ${[...names].join(', ') || 'なし'}）`);
+      }
+    };
+    const find = (where: string, s: HitShape | null, group: string | string[] | undefined, skip?: string) => {
+      checkGroup(where, group);
+      if (!s) return [];
+      const out: string[] = [];
+      for (const e of this.world.entities.values()) {
+        if (e.id === skip || !this.world.isAlive(e.id) || !inGroup(e, group)) continue;
+        const o = shapeOf(e);
+        if (o && overlap(s, o)) out.push(e.id);
+      }
+      return out;
+    };
+    const shapeById = (where: string, id: string) => {
+      const e = this.world.get(id);
+      if (!e) throw new Error(`ctx.hit.${where}: 物 ${id} はありません${suggest(id, [...this.world.entities.keys()].filter((k) => !k.includes('~')))}`);
+      if (!e.c.Collider) throw new Error(`ctx.hit.${where}: ${id} に Collider が付いていません（当たり判定の形を付けてください）`);
+      return shapeOf(e);
+    };
+    return {
+      overlaps: (id, group) => find('overlaps', shapeById('overlaps', id), group, id),
+      entered: (id, group) => {
+        checkGroup('entered', group);
+        return (this.hits.entered.get(id) ?? []).filter((o) => { const e = this.world.get(o); return e && this.world.isAlive(o) && inGroup(e, group); });
+      },
+      test: (a, b) => {
+        const sa = shapeById('test', a), sb = shapeById('test', b);
+        return !!sa && !!sb && this.world.isAlive(a) && this.world.isAlive(b) && overlap(sa, sb);
+      },
+      point: (x, y, group) => {
+        checkGroup('point', group);
+        return [...this.world.entities.values()].filter((e) => this.world.isAlive(e.id) && inGroup(e, group)).filter((e) => { const s = shapeOf(e); return s && contains(s, x, y); }).map((e) => e.id);
+      },
+      circle: (x, y, r, group) => find('circle', { kind: 'circle', x, y, r, box: { x0: x - r, y0: y - r, x1: x + r, y1: y + r } }, group),
+      rect: (x, y, w, h, group) => find('rect', { kind: 'rect', x, y, hw: w / 2, hh: h / 2, cos: 1, sin: 0, box: { x0: x - w / 2, y0: y - h / 2, x1: x + w / 2, y1: y + h / 2 } }, group),
+      ray: (x0, y0, x1, y1, group) => {
+        checkGroup('ray', group);
+        let best: { id: string; t: number } | null = null;
+        for (const e of this.world.entities.values()) {
+          if (!this.world.isAlive(e.id) || !inGroup(e, group)) continue;
+          const s = shapeOf(e);
+          const t = s ? rayHit(s, x0, y0, x1, y1) : null;
+          if (t !== null && (!best || t < best.t)) best = { id: e.id, t };
+        }
+        if (!best) return null;
+        const len = Math.hypot(x1 - x0, y1 - y0);
+        const r6 = (v: number) => Math.round(v * 1e6) / 1e6;
+        return { id: best.id, x: r6(x0 + (x1 - x0) * best.t), y: r6(y0 + (y1 - y0) * best.t), dist: r6(len * best.t) };
       },
     };
   }
@@ -478,6 +567,8 @@ export class Game {
       try { s.update(this.ctx); } catch (err) { throw new GameError(s.name, this.frame, err); }
     }
     this.stepTweens();
+    // 当たり判定: このフレームの終わりの位置で、重なり始めを求める（このフレームに消した物も数える。次のフレームで ctx.hit.entered に出る）
+    this.hits.update(this.world);
     this.world.flush();
     this.frame++;
     this.sceneFrame++;
@@ -490,7 +581,7 @@ export class Game {
 
   /** 状態のハッシュ（同じ結果になったかの比較用） */
   hash(): string {
-    const text = JSON.stringify([this.frame, this.rng.state, [...this.world.entities.values()].map((e) => [e.id, e.c]), this.sceneLog.length > 1 ? [this.sceneName, this.sceneFrame] : 0, this.tweens.length ? this.tweens : 0, this.ui.rects.size ? this.ui.snapshot() : 0]);
+    const text = JSON.stringify([this.frame, this.rng.state, [...this.world.entities.values()].map((e) => [e.id, e.c]), this.sceneLog.length > 1 ? [this.sceneName, this.sceneFrame] : 0, this.tweens.length ? this.tweens : 0, this.ui.rects.size ? this.ui.snapshot() : 0, this.hits.snapshot().length ? this.hits.snapshot() : 0]);
     let h = 0x811c9dc5;
     for (let i = 0; i < text.length; i++) {
       h ^= text.charCodeAt(i);
@@ -500,6 +591,6 @@ export class Game {
   }
 
   snapshot() {
-    return { frame: this.frame, rng: this.rng.state, world: this.world.snapshot(), counts: Object.fromEntries(this.counts), scene: { name: this.sceneName, frame: this.sceneFrame, params: this.sceneParams }, tweens: structuredClone(this.tweens), ui: this.ui.snapshot() };
+    return { frame: this.frame, rng: this.rng.state, world: this.world.snapshot(), counts: Object.fromEntries(this.counts), scene: { name: this.sceneName, frame: this.sceneFrame, params: this.sceneParams }, tweens: structuredClone(this.tweens), ui: this.ui.snapshot(), hits: this.hits.snapshot() };
   }
 }

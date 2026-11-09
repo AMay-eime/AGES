@@ -11,6 +11,7 @@ import type { Panel } from './layout.ts';
 import { ASSET_MIME } from './assets.ts';
 import { baseOf, extOf, kindOf } from '../../core/assets.ts';
 import type { ParticleCmd } from '../../core/particles.ts';
+import { shapeOf } from '../../core/collide.ts';
 
 const SCREENS: [string, number | null][] = [['パネルに合わせる', null], ['16:9', 16 / 9], ['4:3', 4 / 3], ['1:1', 1], ['9:16（スマホ縦）', 9 / 16], ['9:19.5（細長いスマホ縦）', 9 / 19.5], ['19.5:9（細長いスマホ横）', 19.5 / 9]];
 const FIT_LABEL: Record<FitMode, string> = { contain: '全体を入れる', cover: 'はみ出しを切る', stretch: '伸ばす', expand: '広い分だけ周りも見せる', pixel: '整数倍だけ' };
@@ -30,7 +31,11 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     SCREENS.map(([l], i) => h('option', { value: String(i) }, `画面: ${l}`))) as HTMLSelectElement;
   const fitSel = h('select', { title: '画面の大きさへの合わせ方。ここでの変更は試しに見るだけ（決めるのは ages.project.json の view.fit）', onchange: (e: Event) => { const v = (e.target as HTMLSelectElement).value; fitOverride = v ? (v as FitMode) : null; layoutScreen(); } }) as HTMLSelectElement;
   const resetBtn = h('button', { title: '自由な視点を、ゲームの画面全体が見える位置に戻す', onclick: () => { resetFree(); }, style: 'display:none' }, '全体');
-  const bar = h('div', { class: 'game-hud' }, hud, resetBtn, viewSel, screenSel, fitSel);
+  // 当たり判定（Collider）の形を重ねて見せる（手元の設定）
+  let showHits = localStorage.getItem('ages.showHits') === '1';
+  const hitsBox = h('label', { class: 'row muted', style: 'gap:4px;white-space:nowrap', title: '当たり判定（Collider）の形を重ねて見せる。グループごとに色が変わる' },
+    h('input', { type: 'checkbox', checked: showHits, onchange: (e: Event) => { showHits = (e.target as HTMLInputElement).checked; localStorage.setItem('ages.showHits', showHits ? '1' : '0'); } }), '当たり判定');
+  const bar = h('div', { class: 'game-hud' }, hud, resetBtn, viewSel, screenSel, fitSel, hitsBox);
   const wrap = h('div', { class: 'game-wrap' }, screen);
   // 状態の表示はゲーム画面の外（上の帯）に出す。画面の左上はゲームの HUD が来やすいので重ねない
   const el = h('div', {}, bar, wrap);
@@ -323,6 +328,36 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     og.stroke();
     og.setLineDash([]);
   };
+  /** 当たり判定の形（グループごとの色。カメラの範囲の中だけ） */
+  const hitColor = (g: string) => { let n = 0; for (const ch of g) n = (n * 31 + ch.charCodeAt(0)) >>> 0; return `hsla(${n % 360}, 90%, 62%, 0.9)`; };
+  const drawHits = (w: NonNullable<App['world']>) => {
+    if (!renderer) return;
+    og.lineWidth = 1;
+    for (const cam of renderer.cams) {
+      if (cam === renderer.uiView) continue;
+      og.save();
+      og.beginPath();
+      og.rect(cam.vx, cam.vy, cam.vw, cam.vh);
+      og.clip();
+      for (const e of w.entities.values()) {
+        if (e.c.UI || (e.c.Sprite?.layer ?? 0) < cam.layerMin || (e.c.Sprite?.layer ?? 0) > cam.layerMax) continue;
+        const sh = shapeOf(e);
+        if (!sh) continue;
+        og.strokeStyle = hitColor(String(e.c.Collider.group ?? ''));
+        if (sh.kind === 'circle') {
+          const [x, y] = worldToScreen(cam, sh.x, sh.y);
+          const [x2, y2] = worldToScreen(cam, sh.x + sh.r, sh.y);
+          og.beginPath();
+          og.arc(x, y, Math.hypot(x2 - x, y2 - y), 0, Math.PI * 2);
+          og.stroke();
+        } else {
+          const pts = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => worldToScreen(cam, sh.x + a * sh.hw * sh.cos - b * sh.hh * sh.sin, sh.y + a * sh.hw * sh.sin + b * sh.hh * sh.cos));
+          poly(pts.flat());
+        }
+      }
+      og.restore();
+    }
+  };
   const drawOverlay = (w: NonNullable<App['world']>) => {
     og.clearRect(0, 0, overlay.width, overlay.height);
     const sel = app.sel?.kind === 'scene' ? app.sel.id : null;
@@ -339,6 +374,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
         og.fillText(c.id ? `カメラ ${c.id}` : 'カメラ（既定: 画面全体）', q[0] + 4, q[1] + 13);
       }
     }
+    if (showHits) drawHits(w);
     og.lineWidth = 1.5;
     for (const m of markers()) {
       og.strokeStyle = m.id === sel ? '#ffb02e' : w.get(m.id)?.c.Camera ? 'rgba(126,231,135,0.9)' : 'rgba(255,255,255,0.55)';

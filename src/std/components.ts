@@ -140,6 +140,21 @@ export const Gauge = defineComponent({
   },
 });
 
+export const Collider = defineComponent({
+  name: 'Collider',
+  desc: '当たり判定の形（標準）。円か矩形で、Transform の位置・回転・倍率がかかる。重なりは ctx.hit で調べる（押し返しはしない）',
+  fields: {
+    shape: { type: 'enum', options: ['rect', 'circle'], default: 'rect', desc: '形' },
+    w: { type: 'number', default: 16, min: 0, max: 4096, desc: '矩形の幅(px。倍率がかかる前)' },
+    h: { type: 'number', default: 16, min: 0, max: 4096, desc: '矩形の高さ(px)' },
+    r: { type: 'number', default: 8, min: 0, max: 4096, desc: '円の半径(px)' },
+    offset: { type: 'vec2', default: [0, 0], desc: '中心のずれ [x, y](px。回転・倍率がかかる)' },
+    group: { type: 'string', default: '', desc: 'グループの名前（例 player enemy bullet）。相手を絞るのに使う' },
+    with: { type: 'list', of: { type: 'string', default: '' }, default: [], desc: 'このグループと重なり始めたら記録する（ctx.hit.entered。ages run の hits: に数が出る）' },
+    enabled: { type: 'bool', default: true, desc: '判定するか' },
+  },
+});
+
 export const Camera = defineComponent({
   name: 'Camera',
   desc: 'カメラ（標準）。見る位置と回転は Transform。1つも置かなければ、画面全体をそのまま映す',
@@ -254,4 +269,4 @@ export const PostEffect = defineComponent({
   },
 });
 
-export const STD_COMPONENTS = [Transform, Sprite, Animator, Shape, Text, Camera, Sound, AudioBus, Particles, Effect, PostEffect, UI, Layout, Button, Gauge];
+export const STD_COMPONENTS = [Transform, Sprite, Animator, Shape, Text, Camera, Sound, AudioBus, Particles, Effect, PostEffect, UI, Layout, Button, Gauge, Collider];
