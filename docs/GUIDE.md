@@ -142,6 +142,8 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
 - 再生中のゲームは `api.game`（world・ctx・frame。書いた値はその場で効くが保存しない。`ctx.emit` で出来事を送れる）、`api.pause()`・`api.step(n)`・`api.speed`。保存データは `api.save`（再生中はそのゲーム、止めていれば次の再生で読まれるもの）。部品・表の形は `api.schema('Health' | '$enemies')`
 - 窓は `api.modal(close => 中身)`。ほかの拡張のパネルを前に出して渡すのは `api.show(拡張のid, args)`（受け手は `api.on('show', fn)`）。アセット・プレハブをパネルに落とすときの型は `api.dragTypes`。パネルの中のキーは、本体のシーンの編集（Ctrl+A・Delete・矢印）に渡らない
 - ゲーム独自の検証（同じ位置に2つ・組になっていない など）は、パネルの中だけで調べずに `game/index.ts` の `checks: [defineCheck({ name, desc, run(view) })]` に書く（view は table・prefab・prefabs(タグ)・scene。ages check とエディタの ⚠ に出て AI にも届く。編集は止めない）
-- プレハブを小さな画面でくり返し動かすのは `api.stage(el, { spawn: [{ prefab }], seconds, speed, zoom, keys, onCycle })`（本体の「試し」の窓 `src/editor/builtin/tryout.ts` と同じ。値を変えると次の回から新しい値）
+- 小さな画面でくり返し動かすのは試しの舞台 `api.stage(el, opts)`。プレハブだけなら `{ spawn: [{ prefab }], seconds, zoom, keys, onCycle }`（本体の「試し」の窓 `src/editor/builtin/tryout.ts`）、シーンなら `{ scene, params, values: { 物のID: { 部品: { フィールド: 値 } } }, seconds, loop: false }`（values は保存しない上書き）。値が変わったときは `onChange: 'restart'`（既定）・`'keepTime'`（作り直して同じ時刻へ）・`'none'`。見え方は `view: { free: true, zoom: 0.7 }`（画面の外も見せ、画面の枠を点線で。ホイール・右ドラッグ）と `colliders: true`
+  - 返す舞台で、時間は `playing`・`step(n)`・`await seek(秒)`・`frame`・`time`・`onFrame(fn)`、中は `game`（world・ctx）・`send(出来事, data)`（on が受ける）。描き込みは `draw((g, view) => g.circle/rect/line/polyline/text(ワールドの px…, { color, fill, width, dash, alpha, px }))`、取っ手は `onPointer(ev => …)`（ev.x・ev.y はワールド。down で true を返すとその押しを使う）と `toWorld`・`toScreen`
+- 画面なしで動かして中を読むのは `await api.run({ scene, params, values か spawn, frames, keys, onFrame(game), until(game), signal })`。少しずつ回すので画面は固まらない。結果は frames・stopped・events・warnings・error・game で、ages run と同じ結果（速さも同じくらい。240秒×120fps で数秒〜十秒）
 - モジュールの一番外では `document` などのブラウザの物を使わない（地図を作るときに Node で読むため）
 - 作ったら `ages check` で、宣言の誤り（ない住所・ない型や部品・書き忘れ・登録し忘れ）を確かめる

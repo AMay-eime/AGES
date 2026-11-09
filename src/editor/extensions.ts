@@ -10,6 +10,7 @@ import { BUILTIN_EXTENSIONS } from './builtin/index.ts';
 import { createStage } from './stage.ts';
 import { SaveData } from '../core/save.ts';
 import { ASSET_MIME, PREFAB_MIME } from './ui/assets.ts';
+import { runTrial, startTrial } from '../core/trial.ts';
 
 export interface LoadedExtension {
   ext: EditorExtension;
@@ -61,6 +62,11 @@ export function makeApi(app: App, win: string): EditorApi {
     get selected() { const s = app.sel; return !s ? [] : s.kind === 'prefab' ? [`@${s.name}`] : app.selectedIds().map((id) => `${s.scene}#${id}`); },
     ask: (title, value = '') => askText(title, value),
     stage: (el, opts) => createStage(app, el, opts),
+    // 画面なしで動かす（舞台と同じ作り方。少しずつ回す）
+    run: async (opts) => {
+      const t = startTrial(app.registry, app.state.config, opts, { lang: app.previewLang || undefined });
+      return runTrial(t, { frames: opts.frames ?? 600, onFrame: opts.onFrame, until: opts.until, signal: opts.signal });
+    },
     get game() { return app.play?.game ?? null; },
     pause: (paused) => {
       if (!app.play) return;

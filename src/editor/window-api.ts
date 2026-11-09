@@ -7,6 +7,7 @@ import type { PrefabDoc, ProjectConfig, SceneDoc } from '../core/docs.ts';
 import type { Game, GameEvent } from '../core/game.ts';
 import type { ComponentDef } from '../core/schema.ts';
 import type { TableDef } from '../core/table.ts';
+import type { TrialResult } from '../core/trial.ts';
 import type { Field } from '../core/schema.ts';
 import type { SheetDef } from '../core/sheet.ts';
 import type { TableDoc, TableView } from '../core/table.ts';
@@ -59,10 +60,15 @@ export interface EditorApi {
   /** 1行の文字を尋ねる（やめたら null） */
   ask(title: string, value?: string): Promise<string | null>;
   /**
-   * 試しの舞台: el に小さな画面を作り、空のシーンにプレハブを出して、くり返し動かす（エディタの「試し」の窓もこれで作っている）。
-   * ゲームと同じ決まりで動く（scenes で絞ったシステムは動かない）。値を変えると、次の回から新しい値で動く。音は鳴らさず、数だけを onCycle で返す
+   * 試しの舞台: el に小さな画面を作り、シーン（scene）か、空のシーンに出したプレハブ（spawn）を、くり返し動かす（エディタの「試し」の窓もこれで作っている）。
+   * ゲームと同じ決まりで動く。音は鳴らさず、数だけを onCycle で返す。時間の操作・描き込み・取っ手は返す StageHandle で
    */
   stage(el: HTMLElement, opts: StageOptions): StageHandle;
+  /**
+   * 画面なしで動かして中を読む（少しずつ回すので画面は固まらない）。指定の誤り（ないシーン・物）は失敗、ゲームのコードのエラーは結果の error。
+   * 例 const r = await api.run({ scene: 'battle', params: { stage: 's1' }, frames: 28800, onFrame: (g) => …, until: (g) => … })
+   */
+  run(opts: RunOptions): Promise<RunResult>;
   // ---- 再生中のゲーム・保存データ・形・窓（デバッグの道具など） ----
   /**
    * 再生中のゲーム（止めていれば null）。world・ctx・frame・sceneName を読める。ctx.emit で出来事を送れる（on が受ける）。
@@ -93,22 +99,62 @@ export interface EditorApi {
   h: (tag: string, attrs?: Record<string, unknown>, ...children: unknown[]) => HTMLElement;
 }
 
-export interface StageOptions {
-  /** 出すプレハブ。x・y は画面（設計の大きさ）の真ん中からのずれ(px)、values は出すときに変える値 */
-  spawn: { prefab: string; x?: number; y?: number; values?: Record<string, Record<string, unknown>> }[];
-  /** 1回の長さ（秒。既定 3）。出した物がすべて消えたら、その時点で次の回へ */
+// ---------- 試しの舞台（api.stage）と画面なしの実行（api.run） ----------
+
+/** 何を動かすか（舞台と api.run で同じ）。日時は省くと決まった日時なので、同じ指定なら毎回同じ結果 */
+export interface RunSpec {
+  /** 動かすシーン（例 'battle'）。書いたら spawn は省ける */
+  scene?: string;
+  /** 始めのシーンに渡す ctx.scene.params（例 { stage: 'stage_0001' }） */
+  params?: Record<string, unknown>;
+  /** シーンの物の値の上書き（保存しない）: { 物のID: { 部品: { フィールド: 値 } } }。例 { battle: { Battle: { difficulty: 3 } } }。シーンに入り直すと元の値 */
+  values?: Record<string, Record<string, Record<string, unknown>>>;
+  /** 出すプレハブ。x・y は画面（設計の大きさ）の真ん中からのずれ(px)、values は出すときに変える値。scene がなければ空のシーンに出す */
+  spawn?: { prefab: string; x?: number; y?: number; values?: Record<string, Record<string, unknown>> }[];
+  /** ctx.date の始め（'2026-12-25T09:00'。省くと ages run と同じ決まった日時） */
+  date?: string;
+  seed?: number;
+  /** 入力（ages run --keys と同じ書き方。例 "0-60:@fire"・"battle+30:click=start"） */
+  keys?: string;
+}
+
+export interface RunOptions extends RunSpec {
+  /** 最大のフレーム数（既定 600。240秒は fps×240） */
+  frames?: number;
+  /** フレームを進めるたびに（例 出した物の位置を記録する） */
+  onFrame?(game: Game): void;
+  /** true を返したら止める */
+  until?(game: Game): boolean;
+  /** やめる（結果の stopped が aborted） */
+  signal?: AbortSignal;
+}
+
+/** api.run の結果。stopped: frames（数だけ回した）・until・gone（spawn で出した物がすべて消えた）・aborted・error */
+export type RunResult = TrialResult;
+
+export interface StageOptions extends RunSpec {
+  /** 1回の長さ（秒。既定 spawn だけなら 3、scene なら切らない）。spawn で出した物がすべて消えたら、その時点で回の終わり */
   seconds?: number;
+  /** 回が終わったら最初からくり返す（既定 true）。false なら終わりで止まる（playing が false に） */
+  loop?: boolean;
+  /** プロジェクトの値が変わったとき（set で動かし方を変えたときも）: restart 最初から（既定）・keepTime 作り直して同じフレームまで進める・none 作り直さない */
+  onChange?: 'restart' | 'keepTime' | 'none';
   /** 速さ（既定 1） */
   speed?: number;
-  /** 拡大（既定 2） */
+  /** 拡大（scene がないときの試しのカメラ。既定 2） */
   zoom?: number;
-  /** カメラで最初に出した物を追いかける（既定 false） */
+  /** 試しのカメラで最初に出した物を追いかける（既定 false） */
   follow?: boolean;
-  /** 入力（ages run --keys と同じ書き方。例 "0-60:@fire"） */
-  keys?: string;
-  /** 画面の大きさ(px。既定 240x150) */
+  /** 画面の大きさ(px)。既定 spawn だけなら 240x150。scene・自由な視点では幅 320・高さは設計の縦横比で、設計の画面（view）を縮めて入れる */
   width?: number;
   height?: number;
+  /**
+   * 見え方。free: カメラに合わせず、設計の画面全体が入る大きさを 1 として zoom 倍（0.7 なら画面の外も見える。x・y は真ん中のワールドの座標）。
+   * 自由な視点ではホイールで拡大・右ドラッグで移動。frame: プレイヤーに見える画面の枠を点線で（自由な視点なら既定 true）
+   */
+  view?: { free?: boolean; zoom?: number; x?: number; y?: number; frame?: boolean };
+  /** 当たり判定（Collider）を重ねて描く（ゲームの画面の「当たり判定」と同じ描き方） */
+  colliders?: boolean;
   /** 1回終わるごとに呼ぶ（その回の数） */
   onCycle?(summary: StageSummary): void;
 }
@@ -127,12 +173,99 @@ export interface StageSummary {
 }
 
 export interface StageHandle {
-  /** 設定を変える（次の回から） */
+  /** 設定を変える。動かし方（scene・params・values・spawn・keys など）が変わったら onChange に従って作り直す */
   set(opts: Partial<StageOptions>): void;
   /** すぐ最初から */
   restart(): void;
   /** 止めて片付ける */
   destroy(): void;
+  /** 動いているか。false で一時停止、true で続き（回の終わりで止まっていたら最初から） */
+  playing: boolean;
+  /** 一時停止して frames（既定 1）だけ進める（多いときは seek） */
+  step(frames?: number): void;
+  /** その秒のフレームへ（前なら作り直して進める）。少しずつ回すので画面は固まらない。着いたら解決（次の seek・restart でも解決） */
+  seek(seconds: number): Promise<void>;
+  /** 今のフレーム・秒（作れていなければ 0） */
+  readonly frame: number;
+  readonly time: number;
+  /** 動いているゲーム（作れなかったら null）。world・ctx・frame を読める。作り直すと別の物になる */
+  readonly game: Game | null;
+  /** 出来事を送る（ctx.emit と同じ。defineSystem の on が受ける）。作り直すと消える */
+  send(event: string, data?: unknown): void;
+  /** フレームを進めるたびに（シークの早送りでも）。外す関数を返す */
+  onFrame(fn: (game: Game) => void): () => void;
+  /** 描くたびに、ワールドの座標(px)で描き込む（舞台のカメラ・縮小に合う）。外す関数を返す */
+  draw(fn: (g: StageDraw, view: StageView) => void): () => void;
+  /** 舞台の上のマウス。down で true を返すと、その押しを使った（自由な視点の移動をしない）。外す関数を返す */
+  onPointer(fn: (ev: StagePointer) => boolean | void): () => void;
+  /** 画面の点（clientX・clientY）→ ワールドの座標。舞台がまだ描けていなければ null */
+  toWorld(clientX: number, clientY: number): [number, number] | null;
+  /** ワールドの座標 → 画面の点（clientX・clientY） */
+  toScreen(x: number, y: number): [number, number] | null;
+}
+
+/** 描き込みの見た目。大きさ・太さは画面の px（px: true なら円の r・四角の w・h も） */
+export interface DrawStyle {
+  /** 線の色（既定 白。'none' で線なし）。#rrggbbaa も使える */
+  color?: string;
+  /** 塗りの色（既定 塗らない。文字では使わない） */
+  fill?: string;
+  /** 線の太さ（画面の px。既定 1.5） */
+  width?: number;
+  /** 透け具合（0〜1。既定 1） */
+  alpha?: number;
+  /** 破線（画面の px。例 [6, 4]） */
+  dash?: number[];
+  /** 円の r・四角の w・h を画面の px で数える（拡大しても同じ大きさ。取っ手の○・□に） */
+  px?: boolean;
+  /** 四角の x・y を真ん中として数える */
+  center?: boolean;
+  /** 線を閉じる（polyline） */
+  closed?: boolean;
+  /** 文字の大きさ（画面の px。既定 11）と揃え（既定 left。縦は真ん中） */
+  size?: number;
+  align?: 'left' | 'center' | 'right';
+}
+
+/** 舞台への描き込み（座標はワールドの px） */
+export interface StageDraw {
+  circle(x: number, y: number, r: number, style?: DrawStyle): void;
+  rect(x: number, y: number, w: number, h: number, style?: DrawStyle): void;
+  line(x1: number, y1: number, x2: number, y2: number, style?: DrawStyle): void;
+  /** points は [x0, y0, x1, y1, …] */
+  polyline(points: number[], style?: DrawStyle): void;
+  text(x: number, y: number, text: string, style?: DrawStyle): void;
+}
+
+/** 描き込むときの様子 */
+export interface StageView {
+  readonly game: Game;
+  readonly frame: number;
+  readonly time: number;
+  /** ワールドの 1px が画面の何 px か（取っ手の当たりの大きさを、ワールドに直すときに） */
+  readonly scale: number;
+  /** 見えているワールドの範囲 */
+  readonly visible: { x: number; y: number; w: number; h: number };
+  /** プレイヤーに見える画面の枠（ワールドの4つの角 [x0,y0,…,x3,y3]。カメラごと。spawn だけなら設計の画面） */
+  readonly screens: number[][];
+}
+
+/** 舞台の上のマウス */
+export interface StagePointer {
+  type: 'down' | 'move' | 'up' | 'leave';
+  /** ワールドの座標 */
+  x: number;
+  y: number;
+  /** 0 左・1 中・2 右 */
+  button: number;
+  /** 押しているボタン（1 左・2 右・4 中の和） */
+  buttons: number;
+  shift: boolean;
+  /** Ctrl（Mac は ⌘ も） */
+  ctrl: boolean;
+  alt: boolean;
+  /** 元の出来事（カーソルを変えるなら native.target の style.cursor） */
+  native: PointerEvent;
 }
 
 /** インスペクタの1つの欄（拡張が見せ方を差し替えるときに渡る） */

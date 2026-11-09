@@ -1,9 +1,10 @@
 // エディタの中心。状態の読み込み、サーバーとのやりとり、再生（プレイモード）を受け持つ。
 import { Registry, type GameModule } from '../core/registry.ts';
 import { Game, busesOf } from '../core/game.ts';
-import { InputRecorder, InputPlayback, actionsFromRows, keysToEvents, type InputEvent } from '../core/input.ts';
-import { RUN_DATE, formatDate, parseDate, realDate } from '../core/clock.ts';
+import { InputRecorder, type InputEvent } from '../core/input.ts';
+import { formatDate, parseDate, realDate } from '../core/clock.ts';
 import { parseParams } from '../core/runinput.ts';
+import { startTrial } from '../core/trial.ts';
 import { Devices } from '../input/devices.ts';
 import type { PrefabDoc, ProjectConfig, SceneDoc } from '../core/docs.ts';
 import type { Op, Change } from '../core/patch.ts';
@@ -513,10 +514,10 @@ export class App {
 
   /** 画面なしでの試し実行（カスタムウインドウ用）。keys は ages run --keys と同じ書き方（"0-600:@fire;100-200:ArrowLeft"） */
   simulate(frames: number, keys = '', seed?: number): { counts: Record<string, number>; frame: number; ms: number } {
-    const game = new Game(this.registry, this.state.config, this.state.scenes[this.scene], seed ?? this.state.config.seed, { date: parseDate(RUN_DATE) });
-    const play = new InputPlayback(keysToEvents(keys, actionsFromRows(this.registry.tableView('actions').rows)));
+    // 中身は api.run・試しの舞台と同じ（core/trial.ts）。こちらは今のシーンを、続けて回す
+    const t = startTrial(this.registry, this.state.config, { scene: this.scene, keys, seed });
     const t0 = performance.now();
-    for (let i = 0; i < frames; i++) game.step(play.at(game.frame));
-    return { counts: Object.fromEntries(game.counts), frame: game.frame, ms: performance.now() - t0 };
+    for (let i = 0; i < frames; i++) t.step();
+    return { counts: Object.fromEntries(t.game.counts), frame: t.game.frame, ms: performance.now() - t0 };
   }
 }
