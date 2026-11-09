@@ -5,7 +5,7 @@
 import { createInterface } from 'node:readline';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { cmdAssets, cmdUndo, cmdCheck, cmdGet, cmdInit, cmdLog, cmdMap, cmdPatch, cmdRun, cmdSchema, cmdSheet, cmdSlice, cmdTable } from '../cli/ages.ts';
+import { cmdAssets, cmdUndo, cmdCheck, cmdUi, cmdGet, cmdInit, cmdLog, cmdMap, cmdPatch, cmdRun, cmdSchema, cmdSheet, cmdSlice, cmdTable } from '../cli/ages.ts';
 import { parseLiteral, splitCell, type Op } from '../core/patch.ts';
 
 process.removeAllListeners('warning');
@@ -78,7 +78,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'ages_patch',
-    description: '複数の操作をまとめて行う（すべて成功するか、何も変えないか）。op: set{path,value} / setCells{path,cells:[[行,列,値]]} / addEntity{scene,entity:{id,name?,tags?,components?}} / removeEntity{scene,id} / addComponent{target,component,values?} / removeComponent{target,component} / rename{target,name} / insert{path,value?,index?}（リストに足す） / removeItem{path:"…[2]"} / moveItem{path:"…[2]",to} / addRow{table,row:{id,...},index?} / removeRow{table,id} / moveRow{table,id,to} / renameRow{table,id,to}（参照も直る） / setFrame{image,frame(番号か名前),name?,rect?:[x,y,w,h],pivot?:[x,y]|null,remove?}（ない名前に rect で追加。名前を変えると参照も直る） / setClip{image,clip,frames?,fps?,loop?,remove?} / setSheet{image,sheet|null} / moveAsset{from,to}（ファイルかフォルダの場所を変える。使っている値も直る） / removeAsset{path}（使っていないものだけ） / addScene{name,copy?,desc?} / removeScene{name} / renameScene{name,to}（scene 型の値と開始シーンも直る） / setScene{name,desc?,start?}',
+    description: '複数の操作をまとめて行う（すべて成功するか、何も変えないか）。op: set{path,value} / setCells{path,cells:[[行,列,値]]} / addEntity{scene,entity:{id,name?,tags?,components?}} / removeEntity{scene,id} / addComponent{target,component,values?} / removeComponent{target,component} / rename{target,name} / insert{path,value?,index?}（リストに足す） / removeItem{path:"…[2]"} / moveItem{path:"…[2]",to} / addRow{table,row:{id,...},index?} / removeRow{table,id} / moveRow{table,id,to} / renameRow{table,id,to}（参照も直る） / setFrame{image,frame(番号か名前),name?,rect?:[x,y,w,h],pivot?:[x,y]|null,remove?}（ない名前に rect で追加。名前を変えると参照も直る） / setClip{image,clip,frames?,fps?,loop?,remove?} / setSheet{image,sheet|null} / moveAsset{from,to}（ファイルかフォルダの場所を変える。使っている値も直る） / removeAsset{path}（使っていないものだけ） / addScene{name,copy?,desc?} / removeScene{name} / renameScene{name,to}（scene 型の値と開始シーンも直る） / setScene{name,desc?,start?} / dockUI{target,edge,margin?}（UI を画面・親の端や角に付ける） / attachUI{target,to,side?,gap?,align?}（UI を別の UI の隣に接して置く。重ならず、相手と一緒に動く）',
     inputSchema: { type: 'object', properties: { ...dirProp, ops: { type: 'array', items: { type: 'object' } }, force: { type: 'boolean' } }, required: ['ops'] },
     run: (a, dir) => cmdPatch(dir, a.ops as Op[], !!a.force),
   },
@@ -101,6 +101,12 @@ const TOOLS: Tool[] = [
       if (a.twice) f.twice = true;
       return cmdRun(dir, f);
     },
+  },
+  {
+    name: 'ages_ui',
+    description: 'UI の配置を文字で（四角・置き方・重なり・はみ出し）。直すのは ages_patch の dockUI（画面・親の端に付ける）/ attachUI（別の UI の隣に接して置く）',
+    inputSchema: { type: 'object', properties: { ...dirProp, scene: { type: 'string', description: 'シーン（省くと開始のシーン）' } } },
+    run: (a, dir) => cmdUi(dir, a.scene),
   },
   {
     name: 'ages_check',

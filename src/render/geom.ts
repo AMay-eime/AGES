@@ -2,7 +2,7 @@
 import type { World, Entity } from '../core/world.ts';
 import { findFrame, type FrameRef, type SheetDef } from '../core/sheet.ts';
 
-export type DrawKind = 'sprite' | 'shape' | 'text' | 'particles';
+export type DrawKind = 'sprite' | 'shape' | 'text' | 'particles' | 'gauge';
 
 export interface Drawable {
   e: Entity;
@@ -18,9 +18,9 @@ export function collectDrawables(world: World, extra: Entity[] = []): Drawable[]
   const out: Drawable[] = [];
   let idx = 0;
   for (const e of [...world.entities.values(), ...extra]) {
-    if (!e.c.Transform) continue;
-    for (const kind of ['sprite', 'shape', 'text', 'particles'] as const) {
-      const c = e.c[kind === 'sprite' ? 'Sprite' : kind === 'shape' ? 'Shape' : kind === 'text' ? 'Text' : 'Particles'];
+    if (!e.c.Transform && !e.c.UI) continue;
+    for (const kind of ['sprite', 'shape', 'gauge', 'text', 'particles'] as const) {
+      const c = e.c[kind === 'sprite' ? 'Sprite' : kind === 'shape' ? 'Shape' : kind === 'text' ? 'Text' : kind === 'gauge' ? 'Gauge' : 'Particles'];
       if (!c || c.visible === false) continue;
       out.push({ e, kind, layer: c.layer ?? 0, order: c.order ?? 0, idx: idx++ });
     }

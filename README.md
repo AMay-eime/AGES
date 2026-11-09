@@ -66,6 +66,7 @@ claude mcp add ages -- node /path/to/AGES/src/mcp/server.ts --project /path/to/m
 - 表（武器・敵・カードなど同じ形の行が並ぶデータ）は表のエディタで。セルの直接編集、表計算ソフトからの貼り付け、CSV の書き出し・読み込み、セル・行ごとのロック
 - 画像の切り方（スプライトエディタ）: 格子・数・自動で切る、矩形の編集、基準点、動き
 - 標準の部品: 画像・アニメーション・図形・文字・カメラ（追いかけ・揺れ・複数）・音（区分・BGM の重ね）・パーティクル
+- UI: 画面に固定する物（画面や親のどこに合わせるか・並べる・ボタン・ゲージとスライダー・ダイアログ・折り返す文字・9つに切って伸ばす画像）。シーンに置いてエディタで配置を直せる。端に付ける・隣に接して置く操作（dockUI・attachUI）と、配置を文字で見る `ages ui`（重なり・はみ出しを知らせる）。ボタンは `ctx.ui.clicked('ID')`、AI は `ages run --keys "300:click=retry"` で押して確かめる
 - シェーダー: 物ごとの効果（Effect）と画面全体の後処理（PostEffect）。書くのは関数1つと値の宣言だけで、値はインスペクタの欄になり、トゥイーンで動かせる。標準で光らせる・縁取り・溶かす・色を抜く・端を暗く・ブラウン管ふう。コンパイルのエラーは `ages check` にも出る
 - 演出: トゥイーン（値を時間で変える。手触りは表 $tweens で決める。フレームで数えるので毎回同じ結果）とパーティクル（粒は描く側で動かす。編集中は選んだ物で試せる）
 - シーン: ゲームのコードから切り替え（フェード・次のシーンへ渡す値・残す物・シーンごとのシステム）、画像・音の事前読み込み。階層の ⚙ でシーンを作る・複製・名前・開始
@@ -87,8 +88,8 @@ claude mcp add ages -- node /path/to/AGES/src/mcp/server.ts --project /path/to/m
 ## フォルダ構成
 
 ```
-src/core/     エンジンの核（ブラウザでもNodeでも動く）: 型・住所・差分編集・表・シート・カメラ・音の命令・トゥイーン・シェーダーの宣言
-src/std/      標準の部品（Transform / Sprite / Animator / Shape / Text / Camera / Sound / AudioBus / Particles / Effect / PostEffect）と標準の表（$actions / $tweens）
+src/core/     エンジンの核（ブラウザでもNodeでも動く）: 型・住所・差分編集・表・シート・カメラ・音の命令・トゥイーン・シェーダーの宣言・UI の置き方と操作
+src/std/      標準の部品（Transform / Sprite / Animator / Shape / Text / Camera / Sound / AudioBus / Particles / Effect / PostEffect / UI / Layout / Button / Gauge）と標準の表（$actions / $tweens）
 src/render/   描画（WebGL2）
 src/audio/    音を鳴らす側（Web Audio。ブラウザ専用）
 src/input/    入力の機器（キーボード・マウス・タッチ・ゲームパッド → ボタンの名前と軸の値。ブラウザ専用）

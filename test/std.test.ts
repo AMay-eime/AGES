@@ -86,7 +86,7 @@ test('描く順番は 層 → 順番 → 入った順。選択は見えている
   const b = g.world.spawn('bullet', { Transform: { x: 50, y: 50 }, Sprite: { layer: 2, order: -1 } });
   const ids = collectDrawables(g.world).map((d) => d.e.id);
   assert.ok(ids.indexOf(b.id) < ids.indexOf(a.id), '同じ層では order の小さい方が奥');
-  assert.equal(ids.at(-1), 'hud', 'HUD は層 10 で一番手前');
+  assert.deepEqual(ids.slice(-3), ['hud', 'hpGauge', 'hpLabel'], 'HUD は層 10 で一番手前（同じ層は入った順）');
 
   // 横長の箱を 90度回すと縦長になる
   const q = cornersOf({ x: 0, y: 0, rot: 90, sx: 2, sy: 1 }, 10, 4, 0.5, 0.5);

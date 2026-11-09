@@ -1,6 +1,6 @@
 {
   "name": "result",
-  "desc": "ゲームオーバーの後の結果（得点を出し、fire でもう一度）",
+  "desc": "ゲームオーバーの後の結果（得点を出し、「もう一度」のボタンか fire でもう一度）",
   "entities": [
     {
       "id": "title",
@@ -43,11 +43,32 @@
           "y": 400
         },
         "Text": {
-          "text": "fire でもう一度",
+          "text": "fire でも、もう一度",
           "size": 14,
           "color": "#8a91a3",
           "align": "center"
         }
+      }
+    },
+    {
+      "id": "retry",
+      "name": "Retry Button",
+      "components": {
+        "UI": {
+          "anchor": "center",
+          "y": 120,
+          "w": 180,
+          "h": 48
+        },
+        "Shape": {
+          "color": "#34466e"
+        },
+        "Text": {
+          "text": "もう一度",
+          "size": 20,
+          "align": "center"
+        },
+        "Button": {}
       }
     }
   ]

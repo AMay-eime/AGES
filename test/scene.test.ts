@@ -143,7 +143,7 @@ test('コードの goto で使っているシーンは消せない。地図に�
   const map = await cmdMap(dir);
   assert.match(map, /goto の行き先（コード）: result main/);
   assert.match(map, /^main（\d+体） 開始$/m);
-  assert.match(map, /^result（3体） ゲームオーバーの後の結果/m);
+  assert.match(map, /^result（4体） ゲームオーバーの後の結果/m);
   assert.match(map, /toResult .* シーン:mainだけ/);
 });
 

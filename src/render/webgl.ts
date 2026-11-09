@@ -4,7 +4,8 @@
 // - 描いたものの形を shapes に残す（クリックでの選択に使う）
 import type { World, Entity } from '../core/world.ts';
 import type { SheetDef } from '../core/sheet.ts';
-import { camerasOf, worldToScreen, type CameraView } from '../core/camera.ts';
+import { camerasOf, defaultCamera, worldToScreen, type CameraView } from '../core/camera.ts';
+import { layoutUI, type UiRect } from '../core/ui.ts';
 import { collectDrawables, cornersOf, pointInCorners, spriteGeometry, type Corners } from './geom.ts';
 import { ParticleSim } from './particles.ts';
 import { STD_SHADERS, codeHash, wrapShader, type ShaderDef } from '../core/shader.ts';
@@ -111,6 +112,15 @@ export class Renderer {
   private curTex: WebGLTexture | null = null;
   private curBlend = '';
   private curMat: Mat | null = null;
+  /** UI の物の四角（描くたびに求める。ロジックと同じ計算） */
+  private uiRects = new Map<string, UiRect>();
+  /** UI を描いた視点（UI の物がなければ null） */
+  uiView: CameraView | null = null;
+
+  /** UI の物の四角（直前に描いたときの） */
+  uiRect(id: string): UiRect | undefined {
+    return this.uiRects.get(id);
+  }
   private curSize: [number, number] = [1, 1];
   /** 描く先の大きさ（u_res） */
   private resW = 1;
@@ -196,6 +206,11 @@ export class Renderer {
     gl.uniform2f(gl.getUniformLocation(this.prog, 'u_res'), W, H);
     if (o.particles) this.particles.update(world, o.particles.dt, o.particles.preview);
     const all = collectDrawables(world, this.particles.orphans());
+    // UI の物は、カメラに関係なく画面に固定して、カメラの後に描く
+    const dw = o.design?.width ?? W, dh = o.design?.height ?? H;
+    this.uiRects = layoutUI(world, dw, dh);
+    const ui = all.filter((d) => d.e.c.UI);
+    const world2 = ui.length ? all.filter((d) => !d.e.c.UI) : all;
     gl.enable(gl.SCISSOR_TEST);
     this.cams.forEach((cam, i) => {
       this.cam = cam;
@@ -207,12 +222,9 @@ export class Renderer {
         gl.clearColor(cr, cg, cb, 1);
         gl.clear(gl.COLOR_BUFFER_BIT);
       }
-      for (const d of all) {
+      for (const d of world2) {
         if (d.layer < cam.layerMin || d.layer > cam.layerMax) continue;
-        if (d.kind === 'sprite') this.sprite(d.e);
-        else if (d.kind === 'shape') this.shape(d.e);
-        else if (d.kind === 'particles') this.drawParticles(d.e);
-        else this.text(d.e);
+        this.drawOne(d.kind, d.e);
       }
       this.flush();
       const here = passes.get(i);
@@ -225,6 +237,17 @@ export class Renderer {
       }
     });
     gl.disable(gl.SCISSOR_TEST);
+    this.uiView = null;
+    if (this.uiRects.size) {
+      // 設計の大きさの画面をそのまま映す視点（エディタの自由な視点なら、その視点）
+      const view = o.view ?? defaultCamera(W, H, dw, dh);
+      this.uiView = view;
+      this.cam = view;
+      this.camIndex = this.cams.indexOf(view);
+      if (this.camIndex < 0) { this.cams.push(view); this.camIndex = this.cams.length - 1; }
+      for (const d of ui) if (this.uiRects.get(d.e.id)?.visible) this.drawOne(d.kind, d.e);
+      this.flush();
+    }
     if (passes.size) {
       const last = passes.get(-1);
       if (last) this.applyPost(last, cur, W, H, true);
@@ -271,8 +294,63 @@ export class Renderer {
 
   // ---------- 描くもの ----------
 
+  private drawOne(kind: string, e: Entity): void {
+    if (kind === 'sprite') this.sprite(e);
+    else if (kind === 'shape') this.shape(e);
+    else if (kind === 'particles') this.drawParticles(e);
+    else if (kind === 'gauge') this.gauge(e);
+    else this.text(e);
+  }
+
+  /** UI の物は、その四角（中心・大きさ）で描く。Transform があれば回転・倍率だけ使う */
+  private uiBox(e: Entity): { t: TransformLike; w: number; h: number; r: UiRect } | null {
+    const r = e.c.UI ? this.uiRects.get(e.id) : undefined;
+    if (!r) return null;
+    const tr = e.c.Transform ?? {};
+    return { t: { x: r.x + r.w / 2, y: r.y + r.h / 2, rot: tr.rot ?? 0, sx: tr.sx ?? 1, sy: tr.sy ?? 1 }, w: r.w, h: r.h, r };
+  }
+
+  /** ボタンの状態の色をかける */
+  private stateColor(e: Entity, color: string): string {
+    const b = e.c.Button;
+    if (!b) return color;
+    const k = b[b.state ?? 'normal'] ?? b.normal ?? '#ffffff';
+    const [r1, g1, b1] = this.rgb(color), [r2, g2, b2] = this.rgb(k);
+    const hx = (v: number) => Math.round(v * 255).toString(16).padStart(2, '0');
+    return `#${hx(r1 * r2)}${hx(g1 * g2)}${hx(b1 * b2)}`;
+  }
+
+  /** 四角の中の一部（0〜1 で指定）の4つの角。回転・倍率は中心まわり */
+  private part(t: TransformLike, w: number, h: number, x0: number, y0: number, x1: number, y1: number): Corners {
+    const sx = t.sx ?? 1, sy = t.sy ?? 1;
+    const rad = ((t.rot ?? 0) * Math.PI) / 180, c = Math.cos(rad), s = Math.sin(rad);
+    const pt = (x: number, y: number): [number, number] => {
+      const lx = (x - 0.5) * w * sx, ly = (y - 0.5) * h * sy;
+      return [t.x + lx * c - ly * s, t.y + lx * s + ly * c];
+    };
+    return [...pt(x0, y0), ...pt(x1, y0), ...pt(x1, y1), ...pt(x0, y1)] as Corners;
+  }
+
+  private gauge(e: Entity): void {
+    const g = e.c.Gauge;
+    const box = this.uiBox(e);
+    const t = box?.t ?? (e.c.Transform as TransformLike);
+    const w = box?.w ?? g.w, h = box?.h ?? g.h;
+    if (!t || w <= 0 || h <= 0) return;
+    const k = Math.max(0, Math.min(1, (g.value ?? 0) / (g.max || 1)));
+    const mat = this.material(e);
+    const back = this.place(e.id, this.part(t, w, h, 0, 0, 1, 1));
+    if (!back) return;
+    if ((g.backAlpha ?? 1) > 0) this.quad(this.white, 'normal', back, 0, 0, 1, 1, this.stateColor(e, g.back), g.backAlpha ?? 1, mat);
+    if (k <= 0) return;
+    const [x0, y0, x1, y1] = g.dir === 'rightToLeft' ? [1 - k, 0, 1, 1] : g.dir === 'bottomToTop' ? [0, 1 - k, 1, 1] : g.dir === 'topToBottom' ? [0, 0, 1, k] : [0, 0, k, 1];
+    const fill = this.place(e.id, this.part(t, w, h, x0, y0, x1, y1), false);
+    if (fill) this.quad(this.white, 'normal', fill, 0, 0, 1, 1, this.stateColor(e, g.color), 1, mat);
+  }
+
   private sprite(e: Entity): void {
-    const s = e.c.Sprite, t = e.c.Transform as TransformLike;
+    const s = e.c.Sprite;
+    let t = e.c.Transform as TransformLike;
     let tex: Tex = this.missing;
     let u0 = 0, v0 = 0, u1 = 1, v1 = 1;
     let w = 16, h = 16, ax = s.anchor?.[0] ?? 0.5, ay = s.anchor?.[1] ?? 0.5;
@@ -293,10 +371,34 @@ export class Renderer {
       if (s.size?.[0] > 0) w = s.size[0];
       if (s.size?.[1] > 0) h = s.size[1];
     }
+    // UI の物は四角いっぱいに描く
+    const box = this.uiBox(e);
+    if (box) { t = box.t; w = box.w; h = box.h; ax = ay = 0.5; }
+    else if (s.slice > 0 && tex !== this.missing) {
+      if (s.size?.[0] > 0) w = s.size[0];
+      if (s.size?.[1] > 0) h = s.size[1];
+    }
+    const color = this.stateColor(e, s.tint ?? '#ffffff');
+    if (s.slice > 0 && tex !== this.missing && w > 0 && h > 0) {
+      // 9つに切って伸ばす: 四隅は元の大きさ、辺と真ん中を伸ばす
+      const c = { x: t.x + (0.5 - ax) * w * (t.sx ?? 1), y: t.y + (0.5 - ay) * h * (t.sy ?? 1), rot: t.rot ?? 0, sx: t.sx ?? 1, sy: t.sy ?? 1 };
+      const bx = Math.min(s.slice, w / 2) / w, by = Math.min(s.slice, h / 2) / h;
+      const su = (s.slice / tex.w) * Math.sign(u1 - u0), sv = (s.slice / tex.h) * Math.sign(v1 - v0);
+      const xs = [0, bx, 1 - bx, 1], ys = [0, by, 1 - by, 1];
+      const us = [u0, u0 + su, u1 - su, u1], vs = [v0, v0 + sv, v1 - sv, v1];
+      const outline = this.place(e.id, this.part(c, w, h, 0, 0, 1, 1));
+      if (!outline) return;
+      const mat = this.material(e, [u0, v0, u1, v1]);
+      for (let j = 0; j < 3; j++) for (let i = 0; i < 3; i++) {
+        const q = this.place(e.id, this.part(c, w, h, xs[i], ys[j], xs[i + 1], ys[j + 1]), false);
+        if (q) this.quad(tex, s.blend ?? 'normal', q, us[i], vs[j], us[i + 1], vs[j + 1], color, s.alpha ?? 1, mat);
+      }
+      return;
+    }
     if (s.flipX) [u0, u1] = [u1, u0];
     if (s.flipY) [v0, v1] = [v1, v0];
     const q = this.place(e.id, cornersOf(t, w, h, ax, ay));
-    if (q) this.quad(tex, s.blend ?? 'normal', q, u0, v0, u1, v1, s.tint ?? '#ffffff', s.alpha ?? 1, this.material(e, [u0, v0, u1, v1]));
+    if (q) this.quad(tex, s.blend ?? 'normal', q, u0, v0, u1, v1, color, s.alpha ?? 1, this.material(e, [u0, v0, u1, v1]));
   }
 
   /** パーティクル（描く側で動かす）。粒は選べない */
@@ -328,22 +430,25 @@ export class Renderer {
   }
 
   private shape(e: Entity): void {
-    const s = e.c.Shape, t = e.c.Transform as TransformLike;
-    const q = this.place(e.id, cornersOf(t, s.w, s.h, 0.5, 0.5));
-    if (q) this.quad(s.kind === 'circle' ? this.circle : this.white, 'normal', q, 0, 0, 1, 1, s.color, s.alpha ?? 1, this.material(e));
+    const s = e.c.Shape;
+    const box = this.uiBox(e);
+    const q = this.place(e.id, box ? cornersOf(box.t, box.w, box.h, 0.5, 0.5) : cornersOf(e.c.Transform as TransformLike, s.w, s.h, 0.5, 0.5));
+    if (q) this.quad(s.kind === 'circle' ? this.circle : this.white, 'normal', q, 0, 0, 1, 1, this.stateColor(e, s.color), s.alpha ?? 1, this.material(e));
   }
 
   private text(e: Entity): void {
-    const tx = e.c.Text, t = e.c.Transform as TransformLike;
+    const tx = e.c.Text;
+    let t = e.c.Transform as TransformLike;
     if (!tx.text) return;
     const font = `${Math.round(tx.size)}px ${tx.font ? this.fontFamily(tx.font) : 'system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif'}`;
-    const key = `${font}|${tx.text}`;
+    const wrap = tx.wrap > 0 ? tx.wrap : 0, lhk = tx.lineHeight || 1.25;
+    const key = `${font}|${wrap}|${lhk}|${tx.text}`;
     let tex = this.textCache.get(key);
     if (!tex) {
       this.measure.font = font;
-      const lines = String(tx.text).split('\n');
+      const lines = String(tx.text).split('\n').flatMap((l) => (wrap ? this.wrapLine(l, wrap) : [l]));
       const w = Math.max(1, Math.ceil(Math.max(...lines.map((l) => this.measure.measureText(l).width))) + 4);
-      const lh = Math.ceil(tx.size * 1.25);
+      const lh = Math.ceil(tx.size * lhk);
       const c = this.makeCanvas(w, lh * lines.length, (g) => {
         g.font = font;
         g.fillStyle = '#fff';
@@ -355,8 +460,27 @@ export class Renderer {
     }
     tex.used = this.frameNo;
     const ax = tx.align === 'center' ? 0.5 : tx.align === 'right' ? 1 : 0;
+    // UI の物は、四角の中で揃える（縦は真ん中）
+    const box = this.uiBox(e);
+    if (box) t = { ...box.t, x: box.t.x + (ax - 0.5) * box.w * (box.t.sx ?? 1) };
     const q = this.place(e.id, cornersOf(t, tex.w, tex.h, ax, 0.5));
-    if (q) this.quad(tex, 'normal', q, 0, 0, 1, 1, tx.color, 1, this.material(e));
+    if (q) this.quad(tex, 'normal', q, 0, 0, 1, 1, this.stateColor(e, tx.color), 1, this.material(e));
+  }
+
+  /** 1行を幅で折り返す（英語は単語の切れ目で、日本語は文字ごとに） */
+  private wrapLine(line: string, width: number): string[] {
+    const out: string[] = [];
+    let cur = '';
+    for (const ch of line) {
+      const next = cur + ch;
+      if (cur && this.measure.measureText(next).width > width) {
+        const sp = cur.lastIndexOf(' ');
+        if (ch !== ' ' && sp > 0 && /[\x21-\x7e]$/.test(cur)) { out.push(cur.slice(0, sp)); cur = cur.slice(sp + 1) + ch; }
+        else { out.push(cur); cur = ch === ' ' ? '' : ch; }
+      } else cur = next;
+    }
+    out.push(cur);
+    return out;
   }
 
   // ---------- まとめて描く ----------
