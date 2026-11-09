@@ -142,13 +142,13 @@ export const combat = defineSystem({
 
 export const hud = defineSystem({
   name: 'hud',
-  desc: '得点と体力を Text と体力のゲージ（hpGauge）に書き出す',
+  desc: '得点を Text に、体力を右上のゲージ（hpGauge。隣に hpLabel）に書き出す',
   reads: ['Score', 'Health'],
   writes: ['Text', 'Gauge'],
   update({ world }) {
     const hp = world.query('Player', 'Health')[0]?.c.Health.hp ?? 0;
     for (const e of world.query('Score', 'Text')) {
-      e.c.Text.text = `SCORE ${e.c.Score.value}   HP ${hp}`;
+      e.c.Text.text = `SCORE ${e.c.Score.value}`;
     }
     const gauge = world.get('hpGauge')?.c.Gauge;
     if (gauge) gauge.value = hp;

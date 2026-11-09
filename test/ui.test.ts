@@ -9,7 +9,8 @@ import { Game, type Ctx } from '../src/core/game.ts';
 import type { ProjectConfig, SceneDoc } from '../src/core/docs.ts';
 import { layoutUI } from '../src/core/ui.ts';
 import type { FrameInput } from '../src/core/input.ts';
-import { cmdRun } from '../src/cli/ages.ts';
+import { cmdRun, cmdUi } from '../src/cli/ages.ts';
+import { Project } from '../src/project/project.ts';
 
 process.env.AGES_HOME ??= await mkdtemp(join(tmpdir(), 'ages-home-'));
 const CONFIG: ProjectConfig = { name: 't', fps: 60, seed: 1, view: { width: 400, height: 300, background: '#000' }, startScene: 'a', game: 'game/index.ts' };
@@ -29,6 +30,13 @@ function game(entities: ReturnType<typeof ent>[], log: string[] = []) {
   return new Game(reg, CONFIG, scene);
 }
 const at = (x: number, y: number, ...buttons: string[]): FrameInput => ({ buttons, pointer: { x, y } });
+const ai = { who: 'ai', kind: 'ai' as const, win: 'cli' };
+async function fresh(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'ages-'));
+  await cp(new URL('../examples/shooter', import.meta.url), dir, { recursive: true });
+  await rm(join(dir, '.ages'), { recursive: true, force: true });
+  return dir;
+}
 
 test('置き方: 画面（または親）のどこに合わせるか。自分の同じ所がそこに来る', () => {
   const g = game([
@@ -158,4 +166,50 @@ test('同じ入力なら同じ結果（UI の状態も hash に入る）。ages 
   assert.match(out, /ui: 押されたボタン retry×1/);
   // 座標でも押せる（1フレームだけ押す）
   assert.match(await cmdRun(dir, { scene: 'result', frames: '100', keys: '60:click=240,440' }), /scenes: result@0 → main@/);
+});
+
+test('隣に付ける（beside）: 相手の右・左・下・上に接して置き、揃える。相手が動けば一緒に動く。輪になっても止まらない', () => {
+  const g = game([
+    ent('gauge', { UI: { anchor: 'topRight', x: -10, y: 10, w: 100, h: 10 } }),
+    ent('label', { UI: { beside: 'gauge', side: 'left', gap: 6, align: 'center', w: 24, h: 16 } }),
+    ent('under', { UI: { beside: 'gauge', side: 'below', gap: 0, align: 'end', w: 40, h: 8 } }),
+    ent('under2', { UI: { beside: 'under', side: 'below', w: 40, h: 8, x: 2 } }),
+    ent('a', { UI: { beside: 'b', w: 10, h: 10 } }),
+    ent('b', { UI: { beside: 'a', w: 10, h: 10 } }),
+  ]);
+  let r = layoutUI(g.world, 400, 300);
+  assert.deepEqual([r.get('gauge')!.x, r.get('gauge')!.y], [290, 10]);
+  assert.deepEqual([r.get('label')!.x, r.get('label')!.y], [290 - 6 - 24, 10 + (10 - 16) / 2]);
+  assert.deepEqual([r.get('under')!.x, r.get('under')!.y], [290 + 100 - 40, 20], '下に接して、右端を揃える');
+  assert.deepEqual([r.get('under2')!.x, r.get('under2')!.y], [352, 28], 'x・y は最後に足すずれ');
+  assert.ok(r.has('a') && r.has('b'));
+  g.world.get('gauge')!.c.UI.y = 50;
+  r = layoutUI(g.world, 400, 300);
+  assert.equal(r.get('under2')!.y, 68, '相手が動けば一緒に動く');
+});
+
+test('レール: dockUI で画面の端・角に付け、attachUI で別の UI の隣に接して置く。ages ui で配置・重なり・はみ出しを文字で見る', async () => {
+  const dir = await fresh();
+  const p = await Project.load(dir);
+  await p.apply([
+    { op: 'addEntity', scene: 'main', entity: { id: 'coins', name: 'Coins', components: { UI: { anchor: 'center', w: 80, h: 20 } } } },
+    { op: 'addEntity', scene: 'main', entity: { id: 'over', name: 'Over', components: { UI: { anchor: 'topRight', x: -20, y: 10, w: 60, h: 10 } } } },
+    { op: 'addEntity', scene: 'main', entity: { id: 'out', name: 'Out', components: { UI: { anchor: 'left', x: -30, w: 60, h: 10 } } } },
+  ], ai);
+  await p.apply([{ op: 'dockUI', target: 'main#coins', edge: 'bottomRight', margin: 8 }], ai);
+  assert.deepEqual(p.docs.scenes.get('main')!.entities.find((e) => e.id === 'coins')!.components.UI, { anchor: 'bottomRight', w: 80, h: 20, x: -8, y: -8 });
+  await p.apply([{ op: 'attachUI', target: 'main#coins', to: 'hpGauge', side: 'below', gap: 4, align: 'end' }], ai);
+  const out = await cmdUi(dir, 'main');
+  assert.match(out, /^coins 388,26 80x20 ← hpGauge の下に間 4・端揃え$/m, 'ずれ（x・y）は 0 に戻る');
+  assert.match(out, /⚠ 重なっている: hpGauge と over/);
+  assert.match(out, /⚠ 画面からはみ出している: out/);
+  // dockUI で付け直すと、隣に付けたのは外れる
+  await p.apply([{ op: 'dockUI', target: 'main#coins', edge: 'top' }], ai);
+  assert.equal(p.docs.scenes.get('main')!.entities.find((e) => e.id === 'coins')!.components.UI.beside, null);
+  await assert.rejects(p.apply([{ op: 'dockUI', target: 'main#coins', edge: 'topRigt' }], ai), /もしかして: topRight/);
+  await assert.rejects(p.apply([{ op: 'attachUI', target: 'main#coins', to: 'hpGauje' }], ai), /hpGauje はありません。もしかして: hpGauge/);
+  await assert.rejects(p.apply([{ op: 'attachUI', target: 'main#coins', to: 'player' }], ai), /player に UI が付いていません/);
+  await p.apply([{ op: 'attachUI', target: 'main#over', to: 'coins' }], ai);
+  await assert.rejects(p.apply([{ op: 'attachUI', target: 'main#coins', to: 'over' }], ai), /輪になります/);
+  await assert.rejects(p.apply([{ op: 'set', path: 'main#coins.UI.beside', value: 'over' }], ai), /輪になっています/);
 });

@@ -71,6 +71,9 @@
   .lockbtn { opacity: .35; }
   .field:hover .lockbtn, .lockbtn.on { opacity: 1; }
   .lockbtn.on { color: var(--lock); }
+  .dock-grid { display: grid; grid-template-columns: repeat(3, 22px); gap: 2px; }
+  .dock-grid button { width: 22px; height: 20px; padding: 0; font-size: 12px; }
+  .dock-grid button.on { background: var(--accent, #3a6df0); color: #fff; }
   .game-wrap { flex: 1; display: flex; align-items: center; justify-content: center; background: #0e0f13; min-height: 0; position: relative; }
   .game-screen { position: relative; overflow: hidden; background: #000; flex: none; box-shadow: 0 0 0 1px var(--line); }
   .game-screen canvas { position: absolute; image-rendering: pixelated; }

@@ -109,12 +109,25 @@ export function inspectorPanel(app: App): Panel {
         return row;
       });
       const allLocked = entries.length > 0 && visible.length === 0;
+      // UI: 画面（親）の端・角に付けるボタン（押すと anchor と x・y が決まる。隣に付けていたら外れる）
+      let dock: HTMLElement | null = null;
+      if (cname === 'UI' && !playing && savable) {
+        const margin = h('input', { type: 'number', min: '0', step: '1', value: localStorage.getItem('ages.dockMargin') ?? '8', style: 'width:48px', title: '端からの間(px)。0 で接する' }) as HTMLInputElement;
+        margin.addEventListener('change', () => localStorage.setItem('ages.dockMargin', margin.value));
+        const marks = ['↖', '↑', '↗', '←', '・', '→', '↙', '↓', '↘'];
+        const edges = ['topLeft', 'top', 'topRight', 'left', 'center', 'right', 'bottomLeft', 'bottom', 'bottomRight'];
+        const grid = h('div', { class: 'dock-grid' }, edges.map((edge, i) => h('button', {
+          class: `icon tiny${values.anchor === edge && !values.beside ? ' on' : ''}`, title: `${edge} に付ける`,
+          onclick: () => app.patch([{ op: 'dockUI', target: base, edge, margin: Number(margin.value) || 0 }]),
+        }, marks[i])));
+        dock = h('div', { class: 'field wide' }, h('label', { title: '画面（親があれば親）の端・角に付ける。別の UI の隣に付けるなら beside を選ぶ' }, '端に付ける'), h('div', { class: 'ctl', style: 'gap:8px;align-items:center' }, grid, h('span', { class: 'muted' }, '間'), margin));
+      }
       return h('div', { class: 'comp' },
         h('div', { class: 'head' }, cname, h('span', { class: 'desc', title: def.desc }, allLocked ? '（すべて🔒）' : def.desc),
           cname === 'Sound' ? h('button', { class: 'icon', title: '今の設定で試しに鳴らす', onclick: () => app.previewSound(holder!.components.Sound as never) }, '▶') : null,
           !playing && savable && !entries.every(([fname]) => app.state.locks[`${base}.${cname}.${fname}`]) ? h('button', { class: 'icon', title: `${cname} の値をまとめてロックする（外すのはロックマネージャーで）`, onclick: () => app.lock(entries.map(([fname]) => `${base}.${cname}.${fname}`).filter((p2) => !app.state.locks[p2])) }, '🔓') : null,
           !playing && h('button', { class: 'icon', title: `${cname} を外す`, onclick: () => app.patch([{ op: 'removeComponent', target: base, component: cname }]) }, '×')),
-        rows);
+        dock, rows);
     });
 
     const missing = [...app.registry.components.keys()].filter((n) => !(n in holder!.components));
@@ -354,6 +367,17 @@ export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, 
       return { el: wrap, set: (v) => { t.value = String(v); } };
     }
     default: {
+      // UI の親・隣に付ける相手は、同じシーンの UI の物から選ぶ
+      if (f.type === 'ref' && ctx.comp === 'UI') {
+        const ids = (app.state.scenes[app.scene]?.entities ?? []).filter((e) => e.components.UI && e.components.UI !== ctx.holder.UI).map((e) => e.id);
+        const cur = value === null || value === undefined ? '' : String(value);
+        const options = ['', ...ids];
+        if (cur && !ids.includes(cur)) options.push(cur);
+        const sel = h('select', {}, options.map((o) => h('option', { value: o, selected: o === cur }, o === '' ? (ctx.field === 'parent' ? '（なし: 画面）' : '（なし）') : ids.includes(o) ? o : `${o}（ありません）`))) as HTMLSelectElement;
+        sel.addEventListener('change', () => commit(sel.value === '' ? null : sel.value, true));
+        wrap.append(sel);
+        return { el: wrap, set: (v) => { sel.value = v === null ? '' : String(v); } };
+      }
       const t = h('input', { type: 'text', value: value === null ? '' : String(value) }) as HTMLInputElement;
       t.addEventListener('change', () => commit(f.type === 'ref' && t.value === '' ? null : t.value, true));
       wrap.append(t);

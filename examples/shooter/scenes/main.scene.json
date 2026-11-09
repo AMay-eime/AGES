@@ -192,13 +192,34 @@
         "UI": {
           "anchor": "topRight",
           "x": -12,
-          "y": 17,
+          "y": 12,
           "w": 110,
           "h": 10
         },
         "Gauge": {
           "value": 3,
           "max": 3,
+          "layer": 10
+        }
+      }
+    },
+    {
+      "id": "hpLabel",
+      "name": "HP Label",
+      "components": {
+        "UI": {
+          "w": 24,
+          "h": 16,
+          "beside": "hpGauge",
+          "side": "left",
+          "gap": 6,
+          "align": "center"
+        },
+        "Text": {
+          "text": "HP",
+          "size": 12,
+          "color": "#e8ecff",
+          "align": "right",
           "layer": 10
         }
       }

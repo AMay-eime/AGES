@@ -23,6 +23,7 @@ import { FIT_MODES } from '../core/camera.ts';
 import { KNOWN_AXES, KNOWN_BUTTONS } from '../core/input.ts';
 import { checkSheet, checkSheetImage, findFrame, frameCount, sheetPathOf, type SheetDef } from '../core/sheet.ts';
 import { shaderMap } from '../core/shader.ts';
+import { besideLoop } from '../core/ui.ts';
 
 // ゲームコードの import ... from 'ages' を、どのフォルダにあるプロジェクトからでもこのエンジンに向ける
 const AGES_INDEX = new URL('../index.ts', import.meta.url).href;
@@ -452,6 +453,12 @@ export class Project {
           for (const [k, f] of Object.entries(def?.fields ?? {})) {
             const v = values[k];
             if (f.type === 'ref' && typeof v === 'string' && v && !ids.has(v)) errs.push(`${s.name}#${e.id}.${name}.${k}="${v}": シーン ${s.name} にそのIDはありません${suggest(v, all)}`);
+            // 隣に付ける相手は UI の物で、たどって自分に戻らないこと
+            if (name === 'UI' && k === 'beside' && typeof v === 'string' && v && ids.has(v)) {
+              const other = s.entities.find((x) => x.id === v)!;
+              if (!other.components.UI) errs.push(`${s.name}#${e.id}.UI.beside="${v}": ${v} に UI が付いていません`);
+              else if (besideLoop((id) => s.entities.find((x) => x.id === id)?.components.UI, e.id)) errs.push(`${s.name}#${e.id}.UI.beside="${v}": 隣に付ける相手をたどると自分に戻ります（輪になっています）`);
+            }
             // 後処理をかけるカメラは、Camera の付いた物
             if (name === 'PostEffect' && k === 'camera' && typeof v === 'string' && v && ids.has(v) && !s.entities.find((x) => x.id === v)!.components.Camera) {
               errs.push(`${s.name}#${e.id}.PostEffect.camera="${v}": ${v} に Camera が付いていません（カメラ: ${s.entities.filter((x) => x.components.Camera).map((x) => x.id).join(', ') || 'なし'}）`);
@@ -525,6 +532,7 @@ export class Project {
         : op.op === 'removeComponent' ? `${op.target}.${op.component}`
         : op.op === 'setSheet' || op.op === 'setFrame' || op.op === 'setClip' ? `sheet:${op.image}`
         : op.op === 'removeRow' || op.op === 'renameRow' ? `$${op.table}.${op.id}`
+        : op.op === 'dockUI' || op.op === 'attachUI' ? `${op.target}.UI`
         : null;
     // シーンを消す・名前を変えると、その中のロック・★の住所も変わる
     const sceneKeys = (op: Op, rec: Record<string, unknown>) => (op.op === 'removeScene' || op.op === 'renameScene' ? Object.keys(rec).filter((k) => k.startsWith(op.name + '#')) : []);
