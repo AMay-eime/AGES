@@ -195,6 +195,21 @@ export class Registry {
     return [...this.prefabs.keys()].map((n) => { try { return resolvePrefab(this.prefabs, n); } catch { return this.prefabs.get(n)!; } });
   }
 
+  /** コンポーネントデータの問題（build と同じ確かめ。写さないので軽い。検証で使う） */
+  problems(name: string, data: Record<string, unknown> = {}, where = ''): string[] {
+    const def = this.components.get(name);
+    if (!def) return [`コンポーネント ${name} はありません${suggest(name, [...this.components.keys()])}`];
+    const errs = checkComponent(def, data);
+    for (const [k, f] of Object.entries(def.fields)) {
+      if (f.type !== 'params') continue;
+      const sh = this.shaders.get(String(data[f.of] ?? defaultOf(def.fields[f.of]) ?? ''));
+      if (!sh) continue;
+      const e = checkAt(`${name}.${k}`, paramsField(sh), data[k] ?? {});
+      if (e) errs.push(e);
+    }
+    return errs.length ? [`${where ? where + ': ' : ''}${errs.join(' / ')}`] : [];
+  }
+
   /** 既定値で埋めたコンポーネントデータを作る（不正な値は例外） */
   build(name: string, data: Record<string, unknown> = {}, where = ''): Record<string, unknown> {
     const def = this.component(name);

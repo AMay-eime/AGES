@@ -436,12 +436,15 @@ export class Project {
 
   /** 値の中（リスト・構造体・どれか1つの中まで）の参照を確かめる: 表の行・プレハブ・ファイル */
   private checkNested(at: string, f: Field, v: unknown, errs: string[]): void {
-    const assetPaths = new Set(this.assets.map((a) => a.path));
+    // アセットの場所・表の行の名前は、検証の1回のあいだ作り置く（大きなプロジェクトでは、呼ぶたびに作ると検証が数秒かかる）
+    const c = (this.nestedCache ??= { assets: new Set(this.assets.map((a) => a.path)), rows: new Map() });
+    const assetPaths = c.assets;
     visit(f, v, at, (lf, lv, lat) => {
       if (lf.type === 'row' && typeof lv === 'string' && lv) {
         if (!this.registry.tables.has(lf.table)) { errs.push(`${lat}: 表 ${lf.table} の形がありません${suggest(lf.table, [...this.registry.tables.keys()])}`); return; }
-        const ids = (this.docs.tables.get(lf.table)?.rows ?? []).map((r) => r.id);
-        if (!ids.includes(lv)) errs.push(`${lat}="${lv}": 表 ${lf.table} にその行はありません${suggest(lv, ids)}`);
+        let ids = c.rows.get(lf.table);
+        if (!ids) c.rows.set(lf.table, (ids = new Set((this.docs.tables.get(lf.table)?.rows ?? []).map((r) => r.id))));
+        if (!ids.has(lv)) errs.push(`${lat}="${lv}": 表 ${lf.table} にその行はありません${suggest(lv, [...ids])}`);
       }
       if (lf.type === 'input' && typeof lv === 'string') {
         const known = lf.analog ? KNOWN_AXES : KNOWN_BUTTONS;
@@ -454,13 +457,20 @@ export class Project {
     });
   }
 
+  private nestedCache: { assets: Set<string>; rows: Map<string, Set<string>> } | null = null;
+
   /** 全文書を検証する。問題の一覧を返す（空なら健全）。 */
   validate(): string[] {
+    this.nestedCache = null;
+    try { return this.validateAll(); } finally { this.nestedCache = null; }
+  }
+
+  private validateAll(): string[] {
     const errs: string[] = [];
     const assetPaths = new Map(this.assets.map((a) => [a.path, a]));
     const check = (where: string, comps: Record<string, Record<string, unknown>>) => {
       for (const [name, values] of Object.entries(comps)) {
-        try { this.registry.build(name, values, where); } catch (e) { errs.push((e as Error).message); }
+        errs.push(...this.registry.problems(name, values, where));
         const def = this.registry.components.get(name);
         if (!def) continue;
         for (const [k, f] of Object.entries(def.fields)) {
@@ -1101,12 +1111,31 @@ export class Project {
   /** このプロセスが書いたファイルと内容（エディタが「外部からの編集」と区別するため） */
   written = new Map<string, string>();
 
+  /**
+   * ファイルを書きかえる（いったん .ages/tmp に書いてから置きかえる）。
+   * 書いている途中で止まっても、別の書き込みと重なっても、半分だけ書かれたファイルを残さない
+   */
+  private async writeAtomic(path: string, text: string): Promise<void> {
+    const dir = join(this.dir, '.ages', 'tmp');
+    await mkdir(dir, { recursive: true });
+    const tmp = join(dir, `${process.pid}-${++this.tmpSeq}.tmp`);
+    await writeFile(tmp, text);
+    try {
+      await rename(tmp, path);
+    } catch {
+      // 置きかえられない場所（別のドライブなど）では、そのまま書く
+      await rm(tmp, { force: true });
+      await writeFile(path, text);
+    }
+  }
+  private tmpSeq = 0;
+
   async saveDirty(dirty: Iterable<string>): Promise<void> {
     for (const key of dirty) {
       if (key === 'config') {
         const path = join(this.dir, 'ages.project.json');
         const text = JSON.stringify(this.config, null, 2) + '\n';
-        await writeFile(path, text);
+        await this.writeAtomic(path, text);
         this.written.set(path, text);
         continue;
       }
@@ -1117,7 +1146,7 @@ export class Project {
         await mkdir(join(this.dir, 'data'), { recursive: true });
         if (!t) { await rm(path, { force: true }); this.written.set(path, ''); continue; }
         const text = formatTable(t);
-        await writeFile(path, text);
+        await this.writeAtomic(path, text);
         this.written.set(path, text);
         continue;
       }
@@ -1127,7 +1156,7 @@ export class Project {
         const sheet = this.docs.sheets.get(image);
         if (!sheet) { await rm(path, { force: true }); this.written.set(path, ''); continue; }
         const text = formatSheet(sheet);
-        await writeFile(path, text);
+        await this.writeAtomic(path, text);
         this.written.set(path, text);
         continue;
       }
@@ -1137,7 +1166,7 @@ export class Project {
       if (!doc) { await rm(path, { force: true }); this.written.set(path, ''); continue; }
       const text = formatJson(doc);
       await mkdir(join(this.dir, kind === 'scene' ? 'scenes' : 'prefabs'), { recursive: true });
-      await writeFile(path, text);
+      await this.writeAtomic(path, text);
       this.written.set(path, text);
     }
   }
