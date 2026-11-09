@@ -80,6 +80,7 @@ export function makeTools(defaultProject: string): Tool[] {
         properties: {
           ...dirProp,
           frames: { type: 'number' }, scene: { type: 'string' }, seed: { type: 'number' }, keys: { type: 'string' },
+          spawn: { type: 'string', description: 'プレハブだけを空のシーンの真ん中に出して試す（例 "enemy,explosion@40,0"。消えたら止まる）' },
           input: { type: 'string', description: '入力の記録のファイル（recordings/xxx.input.json）' },
           watch: { type: 'array', items: { type: 'string' } }, every: { type: 'number' }, until: { type: 'string' }, twice: { type: 'boolean' },
           save: { type: 'string', description: 'この保存データ（saves/x.save.json）から始める。省くと空' },
@@ -89,7 +90,7 @@ export function makeTools(defaultProject: string): Tool[] {
       },
       run: (a, dir) => {
         const f: Record<string, string | true> = {};
-        for (const k of ['frames', 'scene', 'seed', 'keys', 'input', 'every', 'until', 'lang']) if (a[k] !== undefined) f[k] = String(a[k]);
+        for (const k of ['frames', 'scene', 'spawn', 'seed', 'keys', 'input', 'every', 'until', 'lang']) if (a[k] !== undefined) f[k] = String(a[k]);
         if (a.watch?.length) f.watch = a.watch.join(',');
         if (a.twice) f.twice = true;
         if (a.save) f.save = String(a.save);

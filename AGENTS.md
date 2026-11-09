@@ -34,7 +34,7 @@
 ## 確かめる
 
 - `ages run <dir> --frames 1800 --keys "0-1800:@fire;0-300:@move_x=-1" --watch player.Health.hp --until gameOver`（keys の書き方は guide:input）
-- 変更後は `--twice` で再現性を確かめる。人の操作の再現は `--input recordings/<名前>.input.json`
+- 変更後は `--twice` で再現性を確かめる。人の操作の再現は `--input recordings/<名前>.input.json`。プレハブだけを試すのは `--spawn 名前`（空のシーンの真ん中に出す。消えたら止まる）
 - 画面・画像・音を開かずに、要約の行（`sounds:` `hits:` `ui:` `particles:` `save:` など）と ⚠ で確かめる。画面の確認が要るときだけスクリーンショット（画像は高い）
 
 ## ゲームコードの決まり（game/*.ts）
