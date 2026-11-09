@@ -1100,12 +1100,12 @@ export class Project {
   }
 
   /** ゲームを作る。doc を渡すと、そのシーン（試しのシーンなど）で始める */
-  newGame(scene = this.config.startScene, seed = this.config.seed, store?: SaveStore, lang?: string, sceneDoc?: SceneDoc): Game {
+  newGame(scene = this.config.startScene, seed = this.config.seed, store?: SaveStore, lang?: string, sceneDoc?: SceneDoc, params?: Record<string, unknown>): Game {
     const doc = sceneDoc ?? this.docs.scenes.get(scene);
     if (!doc) throw new Error(`シーン ${scene} はありません${suggest(scene, [...this.docs.scenes.keys()])}`);
     const langs = languagesOf(this.config);
     if (lang && !langs.includes(lang)) throw new Error(`言語 ${lang} はありません${suggest(lang, langs)}（ages.project.json の languages: ${langs.join(', ')}）`);
-    return new Game(this.registry, this.config, doc, seed, { store, lang });
+    return new Game(this.registry, this.config, doc, seed, { store, lang, params });
   }
 }
 

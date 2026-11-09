@@ -43,6 +43,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   run    <dir> [--frames 600] [--scene main | --spawn enemy,explosion@40,0（プレハブだけを空のシーンの真ん中に出して試す）] [--seed 1] [--keys "0-120:ArrowLeft+KeyZ;120-200:@move_x=1;30:Mouse0+ptr=240,100"]
                [--input recordings/x.input.json] [--watch player.Health.hp,@enemy.Health.hp,...（@プレハブ名 はいる最初の1つ）] [--every 60] [--until gameOver | scene:result | click:ボタンのID] [--twice] [--dump]
                [--save saves/x.save.json]（この保存データから始める。省くと空） [--save-out saves/y.save.json]（終わりの保存データを書き出す） [--lang en]（言語）
+               [--params stage=s1,level=2]（始めのシーンに渡す ctx.scene.params。JSON でもよい）
   log    <dir> [--all] [--peek]      前回からの編集の要約（--peek は既読にしない）
   undo   <dir> [--tx id] [--force]   自分（AI）の直前の編集を元に戻す（その後で変えられた所があれば止まる）。redo <dir> でやり直す
   check  <dir>                       全データの検証とロックの検査
@@ -466,13 +467,15 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
   const watch = typeof f.watch === 'string' ? f.watch.split(',').map((s) => s.trim()).filter(Boolean) : [];
   const every = f.every !== undefined ? Number(f.every) : 0;
   const until = typeof f.until === 'string' ? f.until : '';
+  // --params: 始めのシーンに渡すもの（ctx.scene.params）。stage=s1,level=2 か JSON
+  const params = typeof f.params === 'string' ? parseParams(f.params) : undefined;
 
   // --spawn: 選んだプレハブだけを空のシーンの真ん中に出して試す（出した物がすべて消えたら止まる）
   const spawns = typeof f.spawn === 'string' ? parseSpawns(f.spawn) : [];
   if (f.spawn !== undefined && !spawns.length) throw new Error('--spawn にはプレハブの名前が要ります（例 --spawn enemy_fast,explosion@40,0。@ の後は画面の真ん中からのずれ）');
   const once = () => {
     const lang = typeof f.lang === 'string' ? f.lang : undefined;
-    const game = spawns.length ? p.newGame(undefined, seed, new MemoryStore(initialSave), lang, tryoutScene()) : p.newGame(scene, seed, new MemoryStore(initialSave), lang);
+    const game = spawns.length ? p.newGame(undefined, seed, new MemoryStore(initialSave), lang, tryoutScene()) : p.newGame(scene, seed, new MemoryStore(initialSave), lang, undefined, params);
     const spawned = spawns.length ? spawnTryout(game, spawns, p.config.view.width, p.config.view.height) : [];
     const play = new InputPlayback(events);
     const lines: string[] = [];
@@ -699,6 +702,23 @@ async function main(argv: string[]): Promise<void> {
     default: throw new Error(`未知のコマンド ${cmd}。ages help で一覧を表示します`);
   }
   console.log(out);
+}
+
+/** --params の書き方: a=1,b=名前 か {"a":1} */
+export function parseParams(text: string): Record<string, unknown> {
+  const t = text.trim();
+  if (t.startsWith('{')) {
+    const v = JSON.parse(t);
+    if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('--params は {"名前":値} か 名前=値,名前=値 で書いてください');
+    return v as Record<string, unknown>;
+  }
+  const out: Record<string, unknown> = {};
+  for (const part of t.split(',').map((x) => x.trim()).filter(Boolean)) {
+    const i = part.indexOf('=');
+    if (i <= 0) throw new Error(`--params の ${part} が読めません（名前=値,名前=値 か JSON）`);
+    out[part.slice(0, i).trim()] = parseLiteral(part.slice(i + 1).trim());
+  }
+  return out;
 }
 
 function need(v: string | undefined, what: string): string {

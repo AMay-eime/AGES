@@ -231,7 +231,7 @@ export class Game {
   /** これまでのシーンの移り変わり（ages run の要約に載る） */
   sceneLog: { frame: number; name: string }[] = [];
 
-  constructor(registry: Registry, config: ProjectConfig, scene: SceneDoc, seed = config.seed, opts: { store?: SaveStore; lang?: string } = {}) {
+  constructor(registry: Registry, config: ProjectConfig, scene: SceneDoc, seed = config.seed, opts: { store?: SaveStore; lang?: string; params?: Record<string, unknown> } = {}) {
     this.registry = registry;
     this.config = config;
     this.world = new World(registry);
@@ -239,6 +239,8 @@ export class Game {
     this.dt = 1 / config.fps;
     this.sceneName = scene.name;
     this.sceneLog.push({ frame: 0, name: scene.name });
+    // 始めのシーンに渡すもの（ages run --params。ふだんは前のシーンの goto が渡す）
+    if (opts.params) this.sceneParams = { ...opts.params };
     if (!registry.scenes.has(scene.name)) registry.scenes.set(scene.name, scene);
     for (const e of scene.entities) this.world.add(e);
     // 操作の名前と割り当て（標準の表 $actions）
