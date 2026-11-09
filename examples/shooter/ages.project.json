@@ -9,6 +9,10 @@
     "filter": "nearest"
   },
   "startScene": "main",
+  "languages": [
+    "ja",
+    "en"
+  ],
   "game": "game/index.ts",
   "editorWindows": [
     "editor/wave-tuner.window.ts"

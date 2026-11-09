@@ -14,7 +14,8 @@
           "text": "GAME OVER",
           "size": 40,
           "color": "#ff7a8a",
-          "align": "center"
+          "align": "center",
+          "key": "gameOver"
         }
       }
     },
@@ -46,7 +47,8 @@
           "text": "fire でも、もう一度",
           "size": 14,
           "color": "#8a91a3",
-          "align": "center"
+          "align": "center",
+          "key": "prompt"
         }
       }
     },
@@ -66,7 +68,8 @@
         "Text": {
           "text": "もう一度",
           "size": 20,
-          "align": "center"
+          "align": "center",
+          "key": "retry"
         },
         "Button": {}
       }

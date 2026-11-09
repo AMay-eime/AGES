@@ -36,7 +36,18 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
   const hitsBox = h('label', { class: 'row muted', style: 'gap:4px;white-space:nowrap', title: '当たり判定（Collider）の形を重ねて見せる。グループごとに色が変わる' },
     h('input', { type: 'checkbox', checked: showHits, onchange: (e: Event) => { showHits = (e.target as HTMLInputElement).checked; localStorage.setItem('ages.showHits', showHits ? '1' : '0'); } }), '当たり判定');
   const saveBtn = h('button', { class: 'icon', title: '保存データ（このブラウザに残る。消す・saves/ に書き出す・saves/ から戻す）', onclick: () => saveDialog(app) }, '💾');
-  const bar = h('div', { class: 'game-hud' }, hud, resetBtn, viewSel, screenSel, fitSel, hitsBox, saveBtn);
+  // 言語（2つ以上あるとき）: 止めている画面と再生の言語を選ぶ
+  const langSel = h('select', { title: '見る言語（表 $text の列。「設定のまま」なら保存の設定か既定の言語）' }) as HTMLSelectElement;
+  const fillLang = () => {
+    const langs = app.state.config.languages ?? [];
+    langSel.style.display = langs.length > 1 ? '' : 'none';
+    const cur = app.previewLang;
+    langSel.replaceChildren(h('option', { value: '', selected: cur === '' }, '言語: 設定のまま'), ...langs.map((l) => h('option', { value: l, selected: cur === l }, `言語: ${l}`)));
+  };
+  langSel.addEventListener('change', () => { app.previewLang = langSel.value; });
+  app.on('change', fillLang);
+  fillLang();
+  const bar = h('div', { class: 'game-hud' }, hud, resetBtn, viewSel, screenSel, fitSel, hitsBox, langSel, saveBtn);
   const wrap = h('div', { class: 'game-wrap' }, screen);
   // 状態の表示はゲーム画面の外（上の帯）に出す。画面の左上はゲームの HUD が来やすいので重ねない
   const el = h('div', {}, bar, wrap);

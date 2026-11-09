@@ -4,6 +4,7 @@ import { frameCount } from '../core/sheet.ts';
 import { assetRefs, baseOf, dirOf, isUnder } from '../core/assets.ts';
 import type { AssetKind } from '../core/schema.ts';
 import type { Project } from './project.ts';
+import { languagesOf } from '../core/i18n.ts';
 import type { WindowInfo } from './windows.ts';
 import type { LockMark, TouchMark } from './oplog.ts';
 
@@ -30,6 +31,13 @@ export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, l
   // 当たり判定のグループ（Collider.group と、重なり始めを記録する相手 with）
   const groups = collisionGroups(p);
   if (groups.size) out.push(`当たり判定のグループ（Collider.group → with。ctx.hit で調べる）: ${[...groups].map(([g, w]) => (w.size ? `${g || '（なし）'}→${[...w].join(',')}` : g || '（なし）')).join('  ')}`);
+
+  // 多言語（言語が2つ以上のときだけ）
+  const langs = languagesOf(p.config);
+  if (langs.length > 1) {
+    const miss = p.missingText();
+    out.push(`多言語（表 $text・ctx.t('名前')・Text.key）: ${langs.join(' ')}（既定 ${langs[0]}）${miss.size ? '。未訳 ' + [...miss].map(([l, ks]) => `${l}:${ks.length}件(${ks.slice(0, 5).join(',')}${ks.length > 5 ? '…' : ''})`).join(' ') + '（ages table <dir> text --empty 言語）' : '。未訳なし'}`);
+  }
 
   // 保存データのファイル（その状態から始めて確かめる）
   if (p.saves.size) out.push(`保存データ（ages run --save で、その状態から始める）: ${[...p.saves].map(([path, v]) => (v.error ? `${path} ⚠` : `${path}(${Object.keys(v.data ?? {}).join(',')})`)).join('  ')}`);

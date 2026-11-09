@@ -67,6 +67,7 @@ claude mcp add ages -- node /path/to/AGES/src/mcp/server.ts --project /path/to/m
 - 画像の切り方（スプライトエディタ）: 格子・数・自動で切る、矩形の編集、基準点、動き
 - 標準の部品: 画像・アニメーション・図形・文字・カメラ（追いかけ・揺れ・複数）・音（区分・BGM の重ね）・パーティクル
 - UI: 画面に固定する物（画面や親のどこに合わせるか・並べる・ボタン・ゲージとスライダー・ダイアログ・折り返す文字・9つに切って伸ばす画像）。シーンに置いてエディタで配置を直せる。端に付ける・隣に接して置く操作（dockUI・attachUI）と、配置を文字で見る `ages ui`（重なり・はみ出しを知らせる）。ボタンは `ctx.ui.clicked('ID')`、AI は `ages run --keys "300:click=retry"` で押して確かめる
+- 多言語: 言葉は表 `$text`（列が言語）。`ctx.t('名前', { 値 })` と Text.key、言語の切り替えは設定として自動で保存。名前の間違い・未訳を検証と地図で知らせ、`ages run --lang` で確かめる
 - セーブ: `ctx.save`（ブラウザでは localStorage、画面なしではメモリ）。物をまとめて保存して今の型に合わせて戻す、設定（キーの割り当て・音量）の自動保存、`ages run --save` で保存データの状態から確かめる、エディタの 💾 で見る・消す・書き出す
 - 当たり判定: 円・矩形（回転・倍率込み）とグループ。重なっている相手・点・円・矩形・線で調べる。当たった回数が `ages run` に出る。エディタで形を重ねて見られる（物理演算は本体に入れない）
 - シェーダー: 物ごとの効果（Effect）と画面全体の後処理（PostEffect）。書くのは関数1つと値の宣言だけで、値はインスペクタの欄になり、トゥイーンで動かせる。標準で光らせる・縁取り・溶かす・色を抜く・端を暗く・ブラウン管ふう。コンパイルのエラーは `ages check` にも出る
@@ -91,7 +92,7 @@ claude mcp add ages -- node /path/to/AGES/src/mcp/server.ts --project /path/to/m
 
 ```
 src/core/     エンジンの核（ブラウザでもNodeでも動く）: 型・住所・差分編集・表・シート・カメラ・音の命令・トゥイーン・シェーダーの宣言・UI の置き方と操作・当たり判定
-src/std/      標準の部品（Transform / Sprite / Animator / Shape / Text / Camera / Sound / AudioBus / Particles / Effect / PostEffect / UI / Layout / Button / Gauge / Collider）と標準の表（$actions / $tweens）
+src/std/      標準の部品（Transform / Sprite / Animator / Shape / Text / Camera / Sound / AudioBus / Particles / Effect / PostEffect / UI / Layout / Button / Gauge / Collider）と標準の表（$actions / $tweens / $text）
 src/render/   描画（WebGL2）
 src/audio/    音を鳴らす側（Web Audio。ブラウザ専用）
 src/input/    入力の機器（キーボード・マウス・タッチ・ゲームパッド → ボタンの名前と軸の値。ブラウザ専用）
