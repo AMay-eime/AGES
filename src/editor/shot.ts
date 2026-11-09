@@ -25,10 +25,12 @@ export interface ShotConfig {
   spawns?: TryoutSpawn[];
   /** 画面の大きさの倍率（1 = view の大きさ） */
   scale?: number;
+  /** 状態をまるごと返す（ages run と違うときに、どこが違うかを調べる） */
+  dump?: boolean;
 }
 
 export interface ShotResult {
-  shots: { frame: number; hash: string; png: string }[];
+  shots: { frame: number; hash: string; png: string; snapshot?: unknown }[];
   /** 進めたフレーム */
   frame: number;
   error?: string;
@@ -88,7 +90,9 @@ async function shoot(cfg: ShotConfig): Promise<ShotResult> {
         game.step(input);
         renderer.particles.update(game.world, dt);
       }
-      shots.push({ frame: game.frame, hash: game.hash(), png: await capture() });
+      const hash = game.hash();
+      const snapshot = cfg.dump ? game.snapshot() : undefined;
+      shots.push({ frame: game.frame, hash, png: await capture(), ...(snapshot ? { snapshot } : {}) });
     }
   } catch (e) {
     return { shots, frame: game.frame, error: (e as Error).message };

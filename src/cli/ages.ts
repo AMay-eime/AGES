@@ -479,6 +479,8 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
     return n;
   }) : [];
   const shotHashes = new Map<number, string>();
+  /** 撮るフレームの状態（撮ったページの状態と比べて、違えばどこがどれだけ違うかを出す） */
+  const shotSnaps = new Map<number, unknown>();
 
   // --spawn: 選んだプレハブだけを空のシーンの真ん中に出して試す（出した物がすべて消えたら止まる）
   const spawns = typeof f.spawn === 'string' ? parseSpawns(f.spawn) : [];
@@ -490,7 +492,7 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
     const play = new InputPlayback(events);
     const lines: string[] = [];
     const first = watch.map((w) => readWatch(game, w));
-    if (shotFrames.includes(0) && !shotHashes.has(0)) shotHashes.set(0, game.hash());
+    if (shotFrames.includes(0) && !shotHashes.has(0)) { shotHashes.set(0, game.hash()); shotSnaps.set(0, game.snapshot()); }
     let stopped = '';
     if (until.startsWith('scene:')) game.sceneListeners.push((_from, to) => { if (to === until.slice(6) && !stopped) stopped = `${until} @f${game.frame}`; });
     else if (until.startsWith('click:')) game.listeners.push((ev) => { if (ev.name === 'ui.click' && (ev.data as { id?: string })?.id === until.slice(6) && !stopped) stopped = `${until} @f${ev.frame}`; });
@@ -501,7 +503,7 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
         const { input: inp, warning } = frameInput(game, play, clicks, p.config.view.width, p.config.view.height);
         if (warning) lines.push(`⚠ f${game.frame} click=${warning}: UI の付いた物 ${warning} がありません${suggest(warning, [...game.world.entities.values()].filter((e) => e.c.UI).map((e) => e.id))}`);
         game.step(inp);
-        if (shotFrames.includes(game.frame) && !shotHashes.has(game.frame)) shotHashes.set(game.frame, game.hash());
+        if (shotFrames.includes(game.frame) && !shotHashes.has(game.frame)) { shotHashes.set(game.frame, game.hash()); shotSnaps.set(game.frame, game.snapshot()); }
         if (spawned.length && !stopped && tryoutGone(game, spawned)) stopped = `出した物がすべて消えた @f${game.frame}`;
         if (every && game.frame % every === 0) {
           lines.push(`f${game.frame} ` + watch.map((w) => `${w.split('.').pop()}=${fmt(readWatch(game, w))}`).join(' '));
@@ -546,12 +548,37 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
     await mkdir(dirname(to), { recursive: true });
     await writeFile(to, JSON.stringify(g.save.all(), null, 2) + '\n');
   }
-  if (shotFrames.length) out.push(...(await shots(p, f, shotFrames, shotHashes, { scene, seed, events, clicks, params, save: initialSave, spawns })));
+  if (shotFrames.length) out.push(...(await shots(p, f, shotFrames, shotHashes, shotSnaps, { scene, seed, events, clicks, params, save: initialSave, spawns })));
   return withLockReport(p, out.join('\n'));
 }
 
+/**
+ * ages run と撮ったページの状態の違い。Node と Chrome では Math.sin などの計算の最後の桁が違うことがある（JavaScript の決まりで許されている）。
+ * そのような小さな違いだけなら、画面はほぼ同じなので軽く知らせる。それより大きいときは、どこが違うかを出す
+ */
+export function snapshotDiff(a: unknown, b: unknown): string {
+  const diffs: { path: string; tiny: boolean }[] = [];
+  const walk = (x: unknown, y: unknown, path: string) => {
+    if (diffs.length > 200 || x === y) return;
+    if (typeof x === 'number' && typeof y === 'number') {
+      diffs.push({ path, tiny: Math.abs(x - y) <= 1e-9 * Math.max(1, Math.abs(x), Math.abs(y)) });
+      return;
+    }
+    if (x && y && typeof x === 'object' && typeof y === 'object') {
+      for (const k of new Set([...Object.keys(x), ...Object.keys(y)])) walk((x as Record<string, unknown>)[k], (y as Record<string, unknown>)[k], `${path}.${k}`);
+      return;
+    }
+    if (JSON.stringify(x) !== JSON.stringify(y)) diffs.push({ path, tiny: false });
+  };
+  walk(JSON.parse(JSON.stringify(a ?? null)), b ?? null, '');
+  const big = diffs.filter((d) => !d.tiny);
+  if (!diffs.length) return '';
+  if (!big.length) return `（ages run と数の最後の桁だけ違う所が ${diffs.length} か所。Node と Chrome の Math の計算の違いで、画面はほぼ同じ）`;
+  return `⚠ 画面のページの状態が ages run と違います（${big.length}${diffs.length > 200 ? '+' : ''} か所。例 ${big.slice(0, 3).map((d) => d.path).join(' ')}。Math の計算の小さな違いが積もった可能性。撮った画面は ages run の状態と少し違う）`;
+}
+
 /** --shot: ages run と同じ入力で、そのフレームの画面を撮って .ages/shots（--shot-dir）に PNG で置く */
-async function shots(p: Project, f: Args['flags'], frames: number[], hashes: Map<number, string>, o: { scene: string; seed: number; events: InputEvent[]; clicks: Map<number, string>; params?: Record<string, unknown>; save: Record<string, unknown>; spawns: import('../core/tryout.ts').TryoutSpawn[] }): Promise<string[]> {
+async function shots(p: Project, f: Args['flags'], frames: number[], hashes: Map<number, string>, snaps: Map<number, unknown>, o: { scene: string; seed: number; events: InputEvent[]; clicks: Map<number, string>; params?: Record<string, unknown>; save: Record<string, unknown>; spawns: import('../core/tryout.ts').TryoutSpawn[] }): Promise<string[]> {
   const scale = f['shot-scale'] !== undefined ? Number(f['shot-scale']) : 1;
   if (!(scale > 0 && scale <= 2)) throw new Error('--shot-scale は 0 より大きく 2 以下（例 0.5 で半分の大きさ。画像のトークンも減る）');
   const reach = frames.filter((n) => n === 0 || hashes.has(n));
@@ -559,7 +586,7 @@ async function shots(p: Project, f: Args['flags'], frames: number[], hashes: Map
   for (const n of frames.filter((x) => !reach.includes(x))) out.push(`⚠ shot f${n}: そのフレームまで進んでいません（--frames を増やすか、--until で止まる前のフレームに）`);
   if (!reach.length) return out;
   try {
-    const r = await captureShots(p.dir, { scene: o.scene, seed: o.seed, frames: reach, events: o.events, clicks: [...o.clicks], params: o.params, save: o.save, lang: typeof f.lang === 'string' ? f.lang : undefined, spawns: o.spawns, scale });
+    const r = await captureShots(p.dir, { scene: o.scene, seed: o.seed, frames: reach, events: o.events, clicks: [...o.clicks], params: o.params, save: o.save, lang: typeof f.lang === 'string' ? f.lang : undefined, spawns: o.spawns, scale, dump: true });
     const dir = resolve(p.dir, typeof f['shot-dir'] === 'string' ? f['shot-dir'] : '.ages/shots');
     await mkdir(dir, { recursive: true });
     const name = o.spawns.length ? 'tryout' : o.scene;
@@ -569,7 +596,7 @@ async function shots(p: Project, f: Args['flags'], frames: number[], hashes: Map
       await writeFile(file, Buffer.from(s.png, 'base64'));
       const same = hashes.get(s.frame) === s.hash;
       const rel = relative(p.dir, file).split(sep).join('/');
-      out.push(`shot f${s.frame}: ${rel.startsWith('..') ? file : rel} ${Math.round(width * scale)}x${Math.round(height * scale)}${same ? '' : ` ⚠ 画面のページの状態が ages run と違います（hash ${hashes.get(s.frame)} と ${s.hash}）`}`);
+      out.push(`shot f${s.frame}: ${rel.startsWith('..') ? file : rel} ${Math.round(width * scale)}x${Math.round(height * scale)}${same ? '' : ' ' + snapshotDiff(snaps.get(s.frame), s.snapshot)}`);
     }
     if (r.error) out.push(`⚠ 画面のページでエラー（f${r.frame}）: ${r.error}`);
   } catch (e) {
