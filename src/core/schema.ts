@@ -31,6 +31,9 @@ export type Field =
   | StructField
   | OneOfField;
 
+/** 型の名前の一覧（エディタ拡張の欄の見せ方で、型で選ぶときの名前） */
+export const FIELD_TYPES = ['number', 'int', 'bool', 'string', 'enum', 'color', 'vec2', 'ref', 'prefab', 'asset', 'frame', 'row', 'scene', 'ease', 'input', 'params', 'matrix', 'list', 'struct', 'oneOf'] as const satisfies readonly Field['type'][];
+
 /** リスト（同じ型の値の並び）。min / max は長さ */
 export interface ListField {
   type: 'list';

@@ -9,9 +9,7 @@ import { matrixPanel } from './ui/matrix.ts';
 import { spritePanel } from './ui/sprite.ts';
 import { tablePanel } from './ui/table.ts';
 import { assetsPanel } from './ui/assets.ts';
-import type { EditorApi, EditorWindow } from './window-api.ts';
-import type { Op } from '../core/patch.ts';
-import { parseAddress } from '../core/docs.ts';
+import { builtinExtensions, projectExtension, type LoadedExtension } from './extensions.ts';
 
 const app = new App();
 (window as unknown as { ages: App }).ages = app; // デバッグ・AIのブラウザ操作用
@@ -132,57 +130,40 @@ window.addEventListener('keydown', (e) => {
   else if ((k === 'z' && e.shiftKey) || k === 'y') { e.preventDefault(); app.undo(true); }
 });
 
-// ---------- プロジェクト独自のウインドウ ----------
-const windows = new Map<string, { el: HTMLElement; cleanup?: () => void }>();
+// ---------- エディタ拡張（本体の拡張と、プロジェクトの editor/*.window.ts・*.ext.ts） ----------
+const panels = new Map<string, { el: HTMLElement; cleanup?: () => void }>();
 async function mountWindows(): Promise<void> {
-  for (const w of windows.values()) w.cleanup?.();
-  const paths = app.state.config?.editorWindows ?? [];
-  for (const path of paths) {
-    let def: EditorWindow;
+  for (const w of panels.values()) { try { w.cleanup?.(); } catch (e) { console.error(e); } w.cleanup = undefined; }
+  const loaded: LoadedExtension[] = builtinExtensions(app);
+  for (const path of app.state.config?.editorWindows ?? []) {
     try {
-      def = (await import(`/project@${app.state.version}/${path}`)).default;
+      loaded.push(projectExtension(app, path, (await import(`/project@${app.state.version}/${path}`)).default));
     } catch (e) {
-      toast(`ウインドウ ${path} を読み込めません: ${(e as Error).message}`, 'bad', 8000);
-      continue;
+      toast(`拡張 ${path} を読み込めません: ${(e as Error).message}`, 'bad', 8000);
     }
-    const id = `win:${def.id}`;
-    let slot = windows.get(id);
+  }
+  app.extensions = loaded;
+  // パネル（Unity の EditorWindow）
+  for (const x of loaded) {
+    const p = x.ext.panel;
+    if (!p) continue;
+    const id = `win:${x.ext.id}`;
+    let slot = panels.get(id);
     if (!slot) {
       slot = { el: h('div', {}) };
-      windows.set(id, slot);
-      const panel: Panel = { id, title: def.title, el: slot.el };
+      panels.set(id, slot);
+      const panel: Panel = { id, title: p.title ?? x.ext.title ?? x.ext.id, el: slot.el, ...(p.area ? { area: p.area } : {}) };
       layout.add(panel);
     }
     slot.el.replaceChildren();
     try {
-      slot.cleanup = def.mount(slot.el, makeApi(def.id)) ?? undefined;
+      slot.cleanup = p.mount(slot.el, x.api) ?? undefined;
     } catch (e) {
       slot.el.append(h('div', { class: 'pad', style: 'color:var(--bad)' }, `エラー: ${(e as Error).message}`));
     }
   }
-}
-
-function makeApi(id: string): EditorApi {
-  return {
-    get state() { return app.state; },
-    get user() { return app.user; },
-    get playing() { return !!app.play; },
-    patch: (ops: Op[]) => app.patch(ops, `window:${id}`),
-    get(path: string) {
-      const a = parseAddress(path);
-      const holder = a.kind === 'prefab' ? app.state.prefabs[a.doc] : app.state.scenes[a.doc]?.entities.find((e) => e.id === a.entity);
-      const comp = a.component ? holder?.components[a.component] : undefined;
-      if (!a.field) return comp ?? holder;
-      return comp && a.field in comp ? comp[a.field] : app.registry.components.get(a.component!)?.fields[a.field]?.default;
-    },
-    select(address: string) {
-      const a = parseAddress(address);
-      app.select(a.kind === 'prefab' ? { kind: 'prefab', name: a.doc } : { kind: 'scene', scene: a.doc, id: a.entity! });
-    },
-    simulate: (frames, keys, seed) => app.simulate(frames, keys, seed),
-    on: ((ev: string, fn: (d?: unknown) => void) => app.on(ev, fn)) as EditorApi['on'],
-    h: h as unknown as EditorApi['h'],
-  };
+  // 欄・部品の見せ方は、インスペクタが描き直すときに使う
+  app.emit('extensions');
 }
 
 // ---------- サーバーからの通知 ----------

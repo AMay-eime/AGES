@@ -70,6 +70,8 @@ export class App {
   preview: Game | null = null;
   /** キーボード・マウス・タッチ・ゲームパッド（再生中だけゲームへ） */
   readonly devices = new Devices();
+  /** エディタ拡張（本体の拡張とプロジェクトの拡張。extensions.ts） */
+  extensions: import('./extensions.ts').LoadedExtension[] = [];
   private loadedVersion = 0;
   private listeners = new Map<string, Set<Listener>>();
 

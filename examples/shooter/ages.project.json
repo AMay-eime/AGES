@@ -15,6 +15,7 @@
   ],
   "game": "game/index.ts",
   "editorWindows": [
-    "editor/wave-tuner.window.ts"
+    "editor/wave-tuner.window.ts",
+    "editor/hp-hearts.ext.ts"
   ]
 }

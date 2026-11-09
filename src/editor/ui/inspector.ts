@@ -14,6 +14,7 @@ import { captureNext } from '../../input/devices.ts';
 import { ASSET_MIME } from './assets.ts';
 import { kindOf } from '../../core/assets.ts';
 import type { Panel } from './layout.ts';
+import { componentDrawersFor, fieldDrawerFor } from '../extensions.ts';
 
 interface Live { path: string; comp: string; field: string; set(v: unknown): void; el: HTMLElement }
 
@@ -23,7 +24,20 @@ export function inspectorPanel(app: App): Panel {
   // パラメータが多いとき用: ロックした値（もう人が決めた値）を隠す。設定で切り替える（人ごとにブラウザに記憶する）
   const setHide = (v: boolean) => { app.showLocked = !v; };
 
+  // 拡張（欄・部品の見せ方）の後片付け。描き直すたびに呼ぶ
+  let cleanups: (() => void)[] = [];
+  /** 拡張の mount を呼ぶ。失敗しても、インスペクタのほかの所は動かす */
+  const mountExt = (box: HTMLElement, id: string, mount: () => void | (() => void)) => {
+    try {
+      const c = mount();
+      if (typeof c === 'function') cleanups.push(c);
+    } catch (e) {
+      box.append(h('span', { style: 'color:var(--bad)', title: (e as Error).stack ?? '' }, `拡張 ${id} のエラー: ${(e as Error).message}`));
+    }
+  };
   const render = () => {
+    for (const c of cleanups) { try { c(); } catch (e) { console.error(e); } }
+    cleanups = [];
     live = [];
     const sel = app.sel;
     if (!app.state || app.state.error || !app.registry) return clear(el, h('div', { class: 'pad muted' }, app.state?.error ?? '読み込み中…'));
@@ -68,8 +82,27 @@ export function inspectorPanel(app: App): Panel {
       const def = app.registry.components.get(cname);
       if (!def) return h('div', { class: 'comp' }, h('div', { class: 'head' }, cname, h('span', { class: 'desc', style: 'color:var(--bad)' }, '未定義のコンポーネント')));
       const entries = Object.entries(def.fields);
-      const visible = !app.showLocked ? entries.filter(([fname]) => !app.state.locks[`${base}.${cname}.${fname}`]) : entries;
-      hiddenCount += entries.length - visible.length;
+      // 部品の見せ方（拡張）: 欄の上に中身を足す。hide の欄は出さない
+      const cds = componentDrawersFor(app, cname);
+      const hidden = new Set(cds.flatMap(({ drawer }) => (drawer.hide === 'all' ? entries.map(([k]) => k) : drawer.hide ?? [])));
+      const sections = cds.map(({ drawer, x }) => {
+        const box = h('div', { class: 'ext-comp', 'data-ext': x.ext.id });
+        const filled = { ...Object.fromEntries(entries.map(([k, f]) => [k, defaultOf(f)])), ...values };
+        const view = {
+          target: base, component: cname, values: filled, playing, editable: !playing && savable, holder: holder!.components,
+          locked: (field: string) => !!app.state.locks[`${base}.${cname}.${field}`],
+          set: (field: string, v: unknown) => {
+            if (app.state.locks[`${base}.${cname}.${field}`]) { toast(`🔒 ${base}.${cname}.${field} はロックされています`, 'lock'); return; }
+            if (playing || !savable) return;
+            x.api.patch([{ op: 'set', path: `${base}.${cname}.${field}`, value: v }]);
+          },
+        };
+        mountExt(box, x.ext.id, () => drawer.mount(box, view, x.api));
+        return box;
+      });
+      const shown = entries.filter(([fname]) => !hidden.has(fname));
+      const visible = !app.showLocked ? shown.filter(([fname]) => !app.state.locks[`${base}.${cname}.${fname}`]) : shown;
+      hiddenCount += shown.length - visible.length;
       const rows = visible.map(([fname, f]) => {
         const path = `${base}.${cname}.${fname}`;
         const has = fname in values;
@@ -98,11 +131,28 @@ export function inspectorPanel(app: App): Panel {
         };
         // シェーダーの値: 選んだシェーダーの uniform を並べる
         const pf = f.type === 'params' ? app.registry.shaderParams(values[f.of]) : null;
-        const w = f.type === 'matrix'
+        const standard = () => f.type === 'matrix'
           ? matrixWidget(app, path, value, f.cell ?? 'number')
           : f.type === 'params' ? { el: pf ? nestedWidget(app, pf, value, path, [], nestedEmit, wctx) : h('span', { class: 'muted' }, values[f.of] ? `シェーダー ${values[f.of]} が見つかりません` : `${f.of} でシェーダーを選ぶと、ここに値が並びます`), set: () => {} }
           : isNested(f) ? { el: nestedWidget(app, f, value, path, [], nestedEmit, wctx), set: () => {} }
           : widget(app, f, value, commit, wctx);
+        // 欄の見せ方（拡張）があれば、それで作る
+        const fd = fieldDrawerFor(app, path, cname, fname, f.type);
+        let w: { el: HTMLElement; set(v: unknown): void };
+        if (fd) {
+          const box = h('div', { class: 'ctl', 'data-ext': fd.x.ext.id });
+          const view = {
+            path, component: cname, field: fname, def: f, value, isDefault: !has, locked: !!lock, playing, holder: holder!.components,
+            set: (v: unknown, final = true) => {
+              if (lock) { toast(`🔒 ${path} はロックされています`, 'lock'); return; }
+              if (playing) commit(v, final);
+              else if (final) fd.x.api.patch([{ op: 'set', path, value: v }]);
+            },
+            standard: () => { const st = standard().el; st.style.flex = '1'; return st; },
+          };
+          mountExt(box, fd.x.ext.id, () => fd.drawer.mount(box, view, fd.x.api));
+          w = { el: box, set: () => {} };
+        } else w = standard();
         // ロックされた値は、ここでは見るだけ（変えるのはロックマネージャーで）
         if (lock) { w.el.setAttribute('inert', ''); w.el.classList.add('locked-value'); }
         const lockBtn = h('button', {
@@ -121,19 +171,6 @@ export function inspectorPanel(app: App): Panel {
         return row;
       });
       const allLocked = entries.length > 0 && visible.length === 0;
-      // UI: 画面（親）の端・角に付けるボタン（押すと anchor と x・y が決まる。隣に付けていたら外れる）
-      let dock: HTMLElement | null = null;
-      if (cname === 'UI' && !playing && savable) {
-        const margin = h('input', { type: 'number', min: '0', step: '1', value: localStorage.getItem('ages.dockMargin') ?? '8', style: 'width:48px', title: '端からの間(px)。0 で接する' }) as HTMLInputElement;
-        margin.addEventListener('change', () => localStorage.setItem('ages.dockMargin', margin.value));
-        const marks = ['↖', '↑', '↗', '←', '・', '→', '↙', '↓', '↘'];
-        const edges = ['topLeft', 'top', 'topRight', 'left', 'center', 'right', 'bottomLeft', 'bottom', 'bottomRight'];
-        const grid = h('div', { class: 'dock-grid' }, edges.map((edge, i) => h('button', {
-          class: `icon tiny${values.anchor === edge && !values.beside ? ' on' : ''}`, title: `${edge} に付ける`,
-          onclick: () => app.patch([{ op: 'dockUI', target: base, edge, margin: Number(margin.value) || 0 }]),
-        }, marks[i])));
-        dock = h('div', { class: 'field wide' }, h('label', { title: '画面（親があれば親）の端・角に付ける。別の UI の隣に付けるなら beside を選ぶ' }, '端に付ける'), h('div', { class: 'ctl', style: 'gap:8px;align-items:center' }, grid, h('span', { class: 'muted' }, '間'), margin));
-      }
       const inheritedComp = variantOf && !!resolvedBase(app, variantOf)?.components[cname];
       return h('div', { class: 'comp' },
         h('div', { class: 'head' }, cname, h('span', { class: 'desc', title: def.desc }, allLocked ? '（すべて🔒）' : variantOf && !inheritedComp ? `（派生で足した部品）${def.desc}` : def.desc),
@@ -141,7 +178,7 @@ export function inspectorPanel(app: App): Panel {
           cname === 'Sound' ? h('button', { class: 'icon', title: '今の設定で試しに鳴らす', onclick: () => app.previewSound(holder!.components.Sound as never) }, '▶') : null,
           !playing && savable && !entries.every(([fname]) => app.state.locks[`${base}.${cname}.${fname}`]) ? h('button', { class: 'icon', title: `${cname} の値をまとめてロックする（外すのはロックマネージャーで）`, onclick: () => app.lock(entries.map(([fname]) => `${base}.${cname}.${fname}`).filter((p2) => !app.state.locks[p2])) }, '🔓') : null,
           !playing && h('button', { class: 'icon', title: `${cname} を外す`, onclick: () => app.patch([{ op: 'removeComponent', target: base, component: cname }]) }, '×')),
-        dock, rows);
+        sections, rows);
     });
 
     const missing = [...app.registry.components.keys()].filter((n) => !(n in holder!.components));
@@ -181,6 +218,7 @@ export function inspectorPanel(app: App): Panel {
   app.on('nestToggle', render);
   app.on('settings', render);
   app.on('play', render);
+  app.on('extensions', render);
   return { id: 'inspector', title: 'インスペクタ', el, render };
 }
 
@@ -227,18 +265,6 @@ export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, 
   if ((ctx.comp === 'Sprite' || ctx.comp === 'Particles') && ctx.field === 'frame') {
     const s = sheetOfHolder(app, ctx.holder, ctx.comp);
     if (s) return frameWidget(app, s, value as FrameRef, commit);
-  }
-  if (ctx.comp === 'Animator' && ctx.field === 'clip') {
-    const s = sheetOfHolder(app, ctx.holder);
-    const clips = Object.keys(s?.sheet.clips ?? {});
-    if (clips.length) {
-      const wrap = h('div', { class: 'ctl' });
-      const options = clips.includes(String(value)) ? clips : [String(value), ...clips];
-      const sel = h('select', {}, options.map((o) => h('option', { value: o, selected: o === value }, clips.includes(o) ? `${o}（${s!.sheet.clips![o].frames.length}コマ ${s!.sheet.clips![o].fps}fps）` : `${o}（シートにありません）`))) as HTMLSelectElement;
-      sel.addEventListener('change', () => commit(sel.value, true));
-      wrap.append(sel);
-      return { el: wrap, set: (v) => { sel.value = String(v); } };
-    }
   }
   const wrap = h('div', { class: 'ctl' });
   switch (f.type) {

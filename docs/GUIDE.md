@@ -103,10 +103,14 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
 - 標準の Particles を物（プレハブ）に付ける（`ages schema <dir> Particles`）。現れたときに出すのは `burst`、出し続けるのは `rate`。後から出すのは `ctx.particles.burst(id)`
 - 粒の動きは描く側で動かし、ゲームの結果には入らない。出したかどうかは `ages run` の `particles:` で確かめる
 
-## window: プロジェクト独自のエディタウインドウ
-- `editor/<名前>.window.ts` に `defineWindow` で書き、`ages.project.json` の `editorWindows` に追加する。例: `examples/shooter/editor/wave-tuner.window.ts`
-- **作る前に地図の `## editor windows` を見る。** 近いものがあれば、新しく作らずにそれを直す（ウインドウが増えすぎないように）
-- `desc`（何のためか、1行）と `edits`（変える値の住所。`main#spawner.Spawner.*` のようにまとめても書ける）を必ず書く。地図にはこの宣言が1行で出る
-- ウインドウからは `edits` に書いた値しか変えられない。🔒ロックされた値はウインドウからは変えられない。ロックの操作をウインドウに作らない（作っても、サーバーが受け付けない）
-- 値を変えるのは `api.patch` だけ（エディタのサーバーを直接呼ばない）。モジュールの一番外では `document` などのブラウザの物を使わない（地図を作るときに Node で読むため）
-- 作ったら `ages check` で、宣言の誤り（ない住所・書き忘れ・登録し忘れ）を確かめる
+## window: プロジェクト独自のエディタ拡張（パネル・インスペクタの欄と部品の見せ方）
+- **作る前に地図の `## editor extensions` を見る。** 近いものがあれば、新しく作らずにそれを直す（拡張が増えすぎないように）
+- `editor/<名前>.ext.ts` に `defineExtension` で書き、`ages.project.json` の `editorWindows` に追加する。窓口は要る分だけ:
+  - `panel: { title, area?, mount(el, api) }` 調整用の画面（例 `examples/shooter/editor/wave-tuner.window.ts`。パネルだけなら `defineWindow` でもよい）
+  - `fields: [{ match, mount(el, field, api) }]` インスペクタの欄の見せ方。match は 型（`'color'`）・部品.フィールド（`'Health.hp'`）・住所（`'main#player.Health.hp'`）。`field.value` を見せ、`field.set(値)` で変える。`field.standard()` で標準の欄も並べられる（例 `examples/shooter/editor/hp-hearts.ext.ts`）
+  - `components: [{ component, hide?, mount(el, comp, api) }]` 部品の欄の上に中身を足す。`hide: 'all'` か名前の並びで標準の欄を隠す。`comp.set(フィールド, 値)`（例 AGES 本体の `src/editor/builtin/ui-dock.ts`）
+- `desc`（何のためか、1行）を必ず書く。パネルがあるなら `title` と `edits`（パネルが変える値の住所。`main#spawner.Spawner.*` のようにまとめても書ける）も。地図にはこの宣言が1行で出る
+- 拡張から変えられるのは、`edits` に書いた値と、見せている欄・部品の値だけ。🔒ロックされた値は拡張からは変えられない。ロックの操作を拡張に作らない（作っても、サーバーが受け付けない）
+- 値を変えるのは `api.patch`・`field.set`・`comp.set` だけ（エディタのサーバーを直接呼ばない）。読むのは `api.get`（派生は元と重ねた値）、知らせるのは `api.notify(文, 'warn')`、画像の切り方は `api.sheet(画像)`
+- モジュールの一番外では `document` などのブラウザの物を使わない（地図を作るときに Node で読むため）
+- 作ったら `ages check` で、宣言の誤り（ない住所・ない型や部品・書き忘れ・登録し忘れ）を確かめる
