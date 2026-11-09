@@ -29,8 +29,11 @@ export interface EditorApi {
   /** エディタを使っている人の名前 */
   readonly user: string;
   readonly playing: boolean;
-  /** 値を変える。操作ログには「window:<id>」から人が変更したと記録される。変えられるのは edits と、この拡張が見せている欄・部品だけ */
-  patch(ops: Op[]): Promise<Change[] | null>;
+  /**
+   * 値を変える。操作ログには「window:<id>」から人が変更したと記録される。変えられるのは edits と、この拡張が見せている欄・部品だけ。
+   * 1つずつ順に送る。ops を関数で渡すと、前の変更が終わった後に呼ぶ（その時の api.get・api.table で作る。続けてのクリックで古い値から作らないように）
+   */
+  patch(ops: Op[] | (() => Op[])): Promise<Change[] | null>;
   /** アドレスの値を読む（例: main#spawner.Spawner.interval・$enemies.basic.hp）。省略されていれば既定値、派生のプレハブなら元から受け継いだ値 */
   get(path: string): unknown;
   /** 表を読む（省いた列は既定値で埋めた行。ゲームのコードの ctx.table と同じ。変えるのは patch の set・addRow など） */
@@ -39,9 +42,9 @@ export interface EditorApi {
   select(address: string | null, add?: boolean): void;
   /**
    * 再生する（エディタの ▶ と同じ）。scene・params・date で始め方を選べる（省くと今のシーンを、再生の設定で）。再生中なら何もしない。
-   * 例 ステージを試す: api.play({ scene: 'battle', params: { stage: 'stage_0001' } })。止めると始めたシーンに戻る
+   * 例 ステージを試す: api.play({ scene: 'battle', params: { stage: 'stage_0001' } })。止めると始めたシーンに戻る。ゲームの画面を前に出す（show: false で出さない）
    */
-  play(opts?: { scene?: string; params?: Record<string, unknown>; date?: string }): void;
+  play(opts?: { scene?: string; params?: Record<string, unknown>; date?: string; show?: boolean }): void;
   /** 再生を止める（実行中の変更を保存するかは人に尋ねる） */
   stop(): Promise<void>;
   /** 画面なしで試し実行する。keys は ages run --keys と同じ書き方（"0-600:@fire;100-200:ArrowLeft"） */
@@ -93,6 +96,8 @@ export interface EditorApi {
   readonly dragTypes: { asset: string; prefab: string };
   on(event: 'change' | 'select' | 'play' | 'frame', fn: () => void): () => void;
   on(event: 'gameEvent', fn: (ev: GameEvent) => void): () => void;
+  /** 再生中にシーンが切り替わったとき */
+  on(event: 'scene', fn: (ev: { from: string; to: string }) => void): () => void;
   /** show で呼ばれたとき（この拡張あて） */
   on(event: 'show', fn: (args: unknown) => void): () => void;
   /** DOMを作る小さなヘルパー: h('div', { class: 'x', onclick }, '中身', ...) */

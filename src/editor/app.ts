@@ -388,10 +388,11 @@ export class App {
       const play: PlayState = { game, paused: false, edits: new Map(), recorder: opts.record ? new InputRecorder() : undefined, from, saveAtStart, ...(params ? { params } : {}) };
       this.play = play;
       // シーンが切り替わったら、エディタもそのシーンを見せ、次のシーンの画像・音を読み込む
-      game.sceneListeners.push((_from, to) => {
+      game.sceneListeners.push((from, to) => {
         this.scene = to;
         this.hold(play, to, false);
         this.emit('change');
+        this.emit('scene', { from, to });
       });
       this.hold(play, this.scene, true);
       if (this.scene !== from) { this.rebuildPreview(); this.emit('change'); }
@@ -445,8 +446,8 @@ export class App {
   }
 
   tick(): void {
-    const p = this.play!;
-    if (p.loading) return; // 読み込みが終わってから進める
+    const p = this.play;
+    if (!p || p.loading) return; // 止めた後（拡張がフレームの途中で止めたときも）・読み込みが終わるまでは進めない
     try {
       const input = this.devices.frame();
       p.recorder?.record(p.game.frame, input);
