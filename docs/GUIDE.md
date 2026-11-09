@@ -136,9 +136,10 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
   - `fields: [{ match, mount(el, field, api) }]` インスペクタと表のエディタの欄の見せ方。match は 型（`'color'`）・部品.フィールド（`'Health.hp'`）・`$表.列`（`'$talks.face'`。どの行にも）・住所（`'main#player.Health.hp'`）。入れ子の中は `[]` と `.名前`（`'Stage.elements[].enemy'`・`'$talks.lines[].face'`）。`field.value` を見せ、`field.set(値)` で変える。`field.standard()` で標準の欄も並べられる。入れ子の中なら `field.parent`（すぐ外の値）、表なら `field.row`（例 `examples/shooter/editor/hp-hearts.ext.ts`）
   - `components: [{ component, hide?, mount(el, comp, api) }]` 部品の欄の上に中身を足す。`hide: 'all'` か名前の並びで標準の欄を隠す。`comp.set(フィールド, 値)`（例 AGES 本体の `src/editor/builtin/ui-dock.ts`）
   - `rows: [{ table, hide?, mount(el, row, api) }]` 表のエディタで行を選んだときの右の欄の上に中身を足す（部品の見せ方の表版。`row.values` は既定値で埋めた行、`row.set(列, 値)`・`row.locked(列)`）。表の一覧は標準のまま、行の中身だけを作る
-  - `menus: [{ label, where: 'entity', when?(targets, api), run(targets, api) }]` シーンの物の右クリックのメニュー。targets は選んでいる物の住所（例 AGES 本体の `src/editor/builtin/entity-menu.ts`）
+  - `menus: [{ label, where: 'entity', when?(targets, api), run(targets, api) }]` シーンの物の右クリックのメニュー。targets は選んでいる物の住所（例 AGES 本体の `src/editor/builtin/entity-menu.ts`）。`where: 'prefab'` は階層のプレハブの右クリック（targets は `['@名前']`。例 `prefab-menu.ts`）
 - `desc`（何のためか、1行）を必ず書く。パネルがあるなら `title` と `edits`（パネルが変える値の住所。`main#spawner.Spawner.*` のようにまとめても書ける）も。地図にはこの宣言が1行で出る
-- 拡張から変えられるのは、`edits` に書いた値と、見せている欄（その中も）・部品・行の値だけ（行を足す・消すのは edits に `$表.*`）。🔒ロックされた値は拡張からは変えられない。ロックの操作を拡張に作らない（作っても、サーバーが受け付けない）
+- プレハブを作る・写す・名前を変える・消す拡張は `edits: ['@[enemy]']`（タグ enemy のプレハブすべて。派生が受け継いだタグも数える）。addPrefab（copy・base も）・renamePrefab・setPrefab・removePrefab・部品の付け外し・revert と中の値を変えられる。対象は変える前からそのタグを持つプレハブと新しく作るプレハブで、変えた後もタグを持つこと（作るときは tags を書くか、タグを持つものを copy・base に）。値だけなら `@[enemy].Enemy.*`。表の行の追加・削除・名前・並びは `$表.*`
+- 拡張から変えられるのは、`edits` に書いた値と、見せている欄（その中も）・部品・行の値だけ。🔒ロックされた値は拡張からは変えられない。ロックの操作を拡張に作らない（作っても、サーバーが受け付けない）
 - 値を変えるのは `api.patch`・`field.set`・`comp.set`・`row.set` だけ（エディタのサーバーを直接呼ばない）。読むのは `api.get`（派生は元と重ねた値）、知らせるのは `api.notify(文, 'warn')`、画像の切り方は `api.sheet(画像)`、選んでいる物は `api.selection`（すべては `api.selected`。`api.select(住所, true)` で足す。表のエディタで選んだ行は `$表.行`、`api.select('$表.行')` で表をその行で開く。変わると `api.on('select')`）、1行を尋ねるのは `await api.ask(題, 既定)`
 - パネルの中に標準の欄（数・選択・プレハブ・アセット・表の行・色・入れ子）を置くのは `api.input(型, 値, (値, final) => …)`。同じ欄を手で作らない
 - 表を読むのは `api.table(名前)`（省いた列は既定値で埋めた行。ctx.table と同じ）か `api.get('$表.行.列')`。再生を始めるのは `api.play({ scene, params })`（ステージを試すボタンなど。止めるのは `api.stop()`）

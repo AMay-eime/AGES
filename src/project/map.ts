@@ -6,7 +6,7 @@ import type { AssetKind } from '../core/schema.ts';
 import type { Project } from './project.ts';
 import { languagesOf } from '../core/i18n.ts';
 import { instanceOverrides, overridesOf } from '../core/variant.ts';
-import type { WindowInfo } from './windows.ts';
+import { tagCounts, type WindowInfo } from './windows.ts';
 import type { LockMark, TouchMark } from './oplog.ts';
 import { RECENT_WINDOW } from './recent.ts';
 
@@ -218,11 +218,18 @@ function extensionLines(p: Project, windows: WindowInfo[]): string[] {
   const out = ['## editor extensions（プロジェクト独自のエディタ拡張。作る前にここを見て、近いものがあれば直す。変える値は edits と、見せている欄・部品・行だけ）'];
   for (const w of windows.length ? windows : c.editorWindows.map((path) => ({ path }) as WindowInfo)) {
     if (w.error) { out.push(`${w.path} ⚠ ${w.error}`); continue; }
-    const edits = w.edits ? (w.edits.length ? compactPaths(w.edits) : 'なし（見るだけ）') : w.panel ? '⚠ 宣言なし' : '';
+    const edits = w.edits ? (w.edits.length ? withTagCounts(compactPaths(w.edits), p) : 'なし（見るだけ）') : w.panel ? '⚠ 宣言なし' : '';
     const parts = [w.panel ? 'パネル' : '', w.fields?.length ? `欄:${w.fields.join(',')}` : '', w.components?.length ? `部品:${w.components.join(',')}` : '', w.rows?.length ? `行:${w.rows.map((t) => '$' + t).join(',')}` : '', w.menus?.length ? `メニュー:${w.menus.join(',')}` : ''].filter(Boolean).join(' ');
     out.push(`${w.id ?? '?'}${w.title ? `「${w.title}」` : ''}${w.desc ? ' ' + w.desc : ''}${edits ? ` | 変える: ${edits}` : ''}${parts && parts !== 'パネル' ? ` | ${parts}` : ''} | ${w.path}`);
   }
   return out;
+}
+
+/** edits の @[タグ] に、そのタグのプレハブの数を添える（ないときは ⚠） */
+function withTagCounts(edits: string, p: Project): string {
+  if (!edits.includes('@[')) return edits;
+  const counts = tagCounts(p.docs.prefabs);
+  return edits.replace(/@\[([^\]]*)\]/g, (m, tag: string) => `${m}（${counts.get(tag) ? `${counts.get(tag)}個` : '⚠ まだ0個'}）`);
 }
 
 function shadersOf(p: Project) {
