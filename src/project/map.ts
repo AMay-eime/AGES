@@ -1,5 +1,5 @@
 // プロジェクトの地図。AIが最初に読む1枚。全体を少ないトークンで把握できる形にする。
-import { brief } from '../core/schema.ts';
+import { brief, suggest } from '../core/schema.ts';
 import { frameCount } from '../core/sheet.ts';
 import { assetRefs, baseOf, dirOf, isUnder } from '../core/assets.ts';
 import type { AssetKind } from '../core/schema.ts';
@@ -9,12 +9,39 @@ import { overridesOf } from '../core/variant.ts';
 import type { WindowInfo } from './windows.ts';
 import type { LockMark, TouchMark } from './oplog.ts';
 
-/** 地図の大きさの上限（文字）。超えるプロジェクトでは、細かいところを省いた要約の地図にする（詳しくは ages schema・ages get で引く） */
+
+/** 地図の大きさの上限（文字）。超えるプロジェクトでは細かいところを省いた要約の地図、それでも超えるなら目次の地図にする（中身は節ごと・名前で引く） */
 export const MAP_BUDGET = 12000;
 
+/** 地図の節（ages map <dir> <節> で1つだけ引ける） */
+export const MAP_SECTIONS = ['components', 'shaders', 'systems', 'tables', 'prefabs', 'scenes', 'assets', 'extensions'] as const;
+export type MapSection = (typeof MAP_SECTIONS)[number];
+/** full: 型・範囲・説明まで / compact: 名前と説明の初め / index: 節ごとの数と名前だけ（目次） */
+export type MapMode = 'full' | 'compact' | 'index';
+
+export interface MapInputs {
+  touched?: Record<string, TouchMark>;
+  locks?: Record<string, LockMark>;
+  code?: Map<string, string[]>;
+  windows?: WindowInfo[];
+  gotos?: Map<string, string[]>;
+}
+
 export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, locks: Record<string, LockMark> = {}, code = new Map<string, string[]>(), windows: WindowInfo[] = [], gotos = new Map<string, string[]>(), budget = MAP_BUDGET): string {
-  const full = buildMap(p, touched, locks, code, windows, gotos, false);
-  return full.length <= budget ? full : buildMap(p, touched, locks, code, windows, gotos, true);
+  const ins: MapInputs = { touched, locks, code, windows, gotos };
+  const full = buildMap(p, ins, 'full');
+  if (full.length <= budget) return full;
+  const compact = buildMap(p, ins, 'compact');
+  return compact.length <= budget ? compact : buildMap(p, ins, 'index');
+}
+
+/** 節を1つだけ（目次の地図から引く）。大きなプロジェクトでは要約の形、小さければ詳しい形 */
+export function renderMapSection(p: Project, section: string, ins: MapInputs = {}, budget = MAP_BUDGET): string {
+  const name = section.toLowerCase() as MapSection;
+  if (!MAP_SECTIONS.includes(name)) throw new Error(`地図の節 ${section} はありません${suggest(section, [...MAP_SECTIONS])}（${MAP_SECTIONS.join(' ')}）`);
+  const mode: MapMode = buildMap(p, ins, 'full').length <= budget ? 'full' : 'compact';
+  const lines = sectionLines(p, withDefaults(ins), mode)[name];
+  return lines.length ? lines.join('\n') : `（${name} はありません）`;
 }
 
 /** 説明の最初の一文（要約の地図で。長い説明は ages schema で引く） */
@@ -24,59 +51,80 @@ const firstSentence = (s: string | undefined, max = 40): string => {
   return cut.length > max ? cut.slice(0, max) + '…' : cut;
 };
 
-function buildMap(p: Project, touched: Record<string, TouchMark>, locks: Record<string, LockMark>, code: Map<string, string[]>, windows: WindowInfo[], gotos: Map<string, string[]>, compact: boolean): string {
+type Ins = Required<MapInputs>;
+const withDefaults = (i: MapInputs): Ins => ({ touched: i.touched ?? {}, locks: i.locks ?? {}, code: i.code ?? new Map(), windows: i.windows ?? [], gotos: i.gotos ?? new Map() });
+
+export function buildMap(p: Project, inputs: MapInputs, mode: MapMode): string {
+  const ins = withDefaults(inputs);
   const c = p.config;
   const out: string[] = [];
   out.push(`# ${c.name}  fps${c.fps} seed${c.seed} view${c.view.width}x${c.view.height} start:${c.startScene} code:${c.game}`);
-  if (compact) out.push(`（大きなプロジェクトなので要約の地図。型・範囲・既定値・説明は ages schema <dir> 名前,名前、物・プレハブの中身は ages get <dir> 住所）`);
+  if (mode === 'compact') out.push(`（大きなプロジェクトなので要約の地図。型・範囲・既定値・説明は ages schema <dir> 名前,名前、物・プレハブの中身は ages get <dir> 住所）`);
+  if (mode === 'index') out.push(`（とても大きなプロジェクトなので目次の地図。節の中身は ages map <dir> 節（${MAP_SECTIONS.join(' ')}）、名前・説明から探すのは ages find <dir> 語、型・範囲・説明は ages schema <dir> 名前、値は ages get <dir> 住所）`);
+  const sec = mode === 'index' ? indexLines(p, ins) : sectionLines(p, ins, mode);
+  out.push(...sec.components, ...sec.shaders, ...notes(p), ...sec.systems, ...sec.tables, ...sec.prefabs, ...sec.scenes, ...sec.assets, ...sec.extensions);
+  if (mode === 'index') out.push(...markRoots(ins));
+  const nl = Object.keys(ins.locks).length, nt = Object.keys(ins.touched).length;
+  if (nl || nt) out.push(`## 🔒ロック ${nl}件（AIは変更不可。理由があれば人に提案する） / ★人が調整 ${nt}件（変更前に人へ確認）`);
+  return out.join('\n');
+}
 
-  // 毎回読む1枚なので、使っていないものの行は出さない（標準の部品・シェーダー・表の説明は ages schema で引く）
-  const own = [...p.registry.components.values()].filter((def) => !p.registry.std.has(def.name));
-  if (own.length && compact) {
-    out.push('## components（名前 説明の初め | フィールドの名前 | 自動:実行中に変わる値）');
-    for (const def of own) {
-      const all = Object.entries(def.fields);
-      const auto = all.filter(([, f]) => isAutoField(f)).map(([k]) => k);
-      const fields = all.filter(([, f]) => !isAutoField(f)).map(([k]) => k).join(' ');
-      out.push(`${def.name} ${firstSentence(def.desc)} | ${fields || '（フィールドなし）'}${auto.length ? ` | 自動:${auto.join(',')}` : ''}`);
-    }
-  } else if (own.length) {
-    out.push('## components（名前 説明 | フィールド:型 範囲=既定値 | 自動:実行中に変わる値）');
-    for (const def of own) {
-      // 実行中に変わる値（desc に「自動で変化」）は人もAIも書かないので、型と範囲を省いて名前だけ（ages schema で引ける）
-      const all = Object.entries(def.fields);
-      const auto = all.filter(([, f]) => isAutoField(f)).map(([k]) => k);
-      const fields = all.filter(([, f]) => !isAutoField(f)).map(([k, f]) => `${k}:${brief(f)}`).join(' ');
-      out.push(`${def.name} ${def.desc} | ${fields || '（フィールドなし）'}${auto.length ? ` | 自動:${auto.join(',')}` : ''}`);
-    }
-  }
-
-  // シェーダー: 自分のシェーダーと、使っている標準のものだけ（調整できる値を1行で）
-  const shaders = [...p.registry.shaders.values()];
-  const ownShaders = shaders.filter((d) => !d.path.startsWith('std:'));
-  const used = usedShaders(p);
-  const stdUsed = shaders.filter((d) => d.path.startsWith('std:') && used.has(d.path));
-  if (ownShaders.length || stdUsed.length) {
-    out.push('## shaders（Effect・PostEffect の shader で選ぶ。値は params.名前）');
-    for (const d of ownShaders) out.push(`${d.path} ${d.desc} | ${Object.entries(d.uniforms).map(([k, f]) => `${k}:${brief(f)}`).join(' ') || '（値なし）'}${d.errors.length ? ` ⚠ ${d.errors.length}件の問題（ages check）` : ''}`);
-    if (stdUsed.length) out.push(`標準: ${stdUsed.map((d) => `${d.path}(${Object.keys(d.uniforms).join(',')})`).join(' ')}`);
-  }
-
+/** 節に入らない短い行（当たり判定のグループ・多言語・保存データ） */
+function notes(p: Project): string[] {
+  const out: string[] = [];
   // 当たり判定のグループ（Collider.group と、重なり始めを記録する相手 with）
   const groups = collisionGroups(p);
   if (groups.size) out.push(`当たり判定のグループ（Collider.group → with。ctx.hit で調べる）: ${[...groups].map(([g, w]) => (w.size ? `${g || '（なし）'}→${[...w].join(',')}` : g || '（なし）')).join('  ')}`);
-
   // 多言語（言語が2つ以上のときだけ）
   const langs = languagesOf(p.config);
   if (langs.length > 1) {
     const miss = p.missingText();
     out.push(`多言語（表 $text・ctx.t('名前')・Text.key）: ${langs.join(' ')}（既定 ${langs[0]}）${miss.size ? '。未訳 ' + [...miss].map(([l, ks]) => `${l}:${ks.length}件(${ks.slice(0, 5).join(',')}${ks.length > 5 ? '…' : ''})`).join(' ') + '（ages table <dir> text --empty 言語）' : '。未訳なし'}`);
   }
-
   // 保存データのファイル（その状態から始めて確かめる）
   if (p.saves.size) out.push(`保存データ（ages run --save で、その状態から始める）: ${[...p.saves].map(([path, v]) => (v.error ? `${path} ⚠` : `${path}(${Object.keys(v.data ?? {}).join(',')})`)).join('  ')}`);
+  return out;
+}
 
-  out.push('## systems（実行順。r=読む w=書く）');
+/** 自分のコンポーネント（標準のものは ages schema で引く） */
+const ownComponents = (p: Project) => [...p.registry.components.values()].filter((def) => !p.registry.std.has(def.name));
+
+function sectionLines(p: Project, ins: Ins, mode: 'full' | 'compact'): Record<MapSection, string[]> {
+  const compact = mode === 'compact';
+  const { touched, locks, code, windows, gotos } = ins;
+  const c = p.config;
+  const r: Record<MapSection, string[]> = { components: [], shaders: [], systems: [], tables: [], prefabs: [], scenes: [], assets: [], extensions: [] };
+
+  // 毎回読む1枚なので、使っていないものの行は出さない（標準の部品・シェーダー・表の説明は ages schema で引く）
+  const own = ownComponents(p);
+  if (own.length && compact) {
+    r.components.push('## components（名前 説明の初め | フィールドの名前 | 自動:実行中に変わる値）');
+    for (const def of own) {
+      const all = Object.entries(def.fields);
+      const auto = all.filter(([, f]) => isAutoField(f)).map(([k]) => k);
+      const fields = all.filter(([, f]) => !isAutoField(f)).map(([k]) => k).join(' ');
+      r.components.push(`${def.name} ${firstSentence(def.desc)} | ${fields || '（フィールドなし）'}${auto.length ? ` | 自動:${auto.join(',')}` : ''}`);
+    }
+  } else if (own.length) {
+    r.components.push('## components（名前 説明 | フィールド:型 範囲=既定値 | 自動:実行中に変わる値）');
+    for (const def of own) {
+      // 実行中に変わる値（desc に「自動で変化」）は人もAIも書かないので、型と範囲を省いて名前だけ（ages schema で引ける）
+      const all = Object.entries(def.fields);
+      const auto = all.filter(([, f]) => isAutoField(f)).map(([k]) => k);
+      const fields = all.filter(([, f]) => !isAutoField(f)).map(([k, f]) => `${k}:${brief(f)}`).join(' ');
+      r.components.push(`${def.name} ${def.desc} | ${fields || '（フィールドなし）'}${auto.length ? ` | 自動:${auto.join(',')}` : ''}`);
+    }
+  }
+
+  // シェーダー: 自分のシェーダーと、使っている標準のものだけ（調整できる値を1行で）
+  const { own: ownShaders, std: stdUsed } = shadersOf(p);
+  if (ownShaders.length || stdUsed.length) {
+    r.shaders.push('## shaders（Effect・PostEffect の shader で選ぶ。値は params.名前）');
+    for (const d of ownShaders) r.shaders.push(`${d.path} ${d.desc} | ${Object.entries(d.uniforms).map(([k, f]) => `${k}:${brief(f)}`).join(' ') || '（値なし）'}${d.errors.length ? ` ⚠ ${d.errors.length}件の問題（ages check）` : ''}`);
+    if (stdUsed.length) r.shaders.push(`標準: ${stdUsed.map((d) => `${d.path}(${Object.keys(d.uniforms).join(',')})`).join(' ')}`);
+  }
+
+  r.systems.push('## systems（実行順。r=読む w=書く）');
   // 標準のシステムは、続いている所を1行にまとめる（中身は ages schema guide で引く）
   const systems = p.registry.systems;
   for (let i = 0; i < systems.length; i++) {
@@ -84,57 +132,48 @@ function buildMap(p: Project, touched: Record<string, TouchMark>, locks: Record<
     if (s.name.startsWith('std.')) {
       let j = i;
       while (j + 1 < systems.length && systems[j + 1].name.startsWith('std.')) j++;
-      out.push(`${i + 1}${j > i ? `-${j + 1}` : ''} 標準: ${systems.slice(i, j + 1).map((x) => x.name).join(' ')}`);
+      r.systems.push(`${i + 1}${j > i ? `-${j + 1}` : ''} 標準: ${systems.slice(i, j + 1).map((x) => x.name).join(' ')}`);
       i = j;
       continue;
     }
     const rw = [s.reads?.length ? `r:${s.reads.join(',')}` : '', s.writes?.length ? `w:${s.writes.join(',')}` : ''].filter(Boolean).join(' ');
-    out.push(`${i + 1} ${s.name} ${compact ? firstSentence(s.desc, 30) : s.desc}${rw ? ' ' + rw : ''}${s.scenes ? ` シーン:${s.scenes.join(',')}だけ` : ''}`);
+    r.systems.push(`${i + 1} ${s.name} ${compact ? firstSentence(s.desc, 30) : s.desc}${rw ? ' ' + rw : ''}${s.scenes ? ` シーン:${s.scenes.join(',')}だけ` : ''}`);
   }
 
   if (p.registry.tables.size) {
-    out.push('## tables（$表.行.列 で参照。中身は ages table <dir> <表>）');
+    r.tables.push('## tables（$表.行.列 で参照。中身は ages table <dir> <表>）');
     for (const def of p.registry.tables.values()) {
       const rows = p.docs.tables.get(def.name)?.rows ?? [];
       const std = p.registry.stdTables.has(def.name);
       if (std && !rows.length) continue;
       const ids = rows.map((r) => r.id);
-      const lk = Object.keys(locks).filter((k) => k.startsWith(`$${def.name}.`)).length;
-      const tc = Object.keys(touched).filter((k) => k.startsWith(`$${def.name}.`)).length;
       // 標準の表は列が決まっているので、説明と列を省く（ages schema <dir> $表 で引ける）
       const head = std ? '（標準）' : compact
         ? `${def.desc ? ' ' + firstSentence(def.desc) : ''} | ${Object.keys(def.columns).join(' ')}`
         : `${def.desc ? ' ' + def.desc : ''} | ${Object.entries(def.columns).map(([k, f]) => `${k}:${brief(f)}`).join(' ')}`;
-      out.push(`$${def.name} ${rows.length}行${head} | 行: ${ids.slice(0, 8).join(' ')}${ids.length > 8 ? ' …' : ''}${lk ? ` 🔒${lk}` : ''}${tc ? ` ★${tc}` : ''}`);
+      r.tables.push(`$${def.name} ${rows.length}行${head} | 行: ${ids.slice(0, 8).join(' ')}${ids.length > 8 ? ' …' : ''}${tableMarks(ins, def.name)}`);
     }
   }
 
   if (p.docs.prefabs.size && compact) {
     // 同じ部品の組ごとに、名前だけを並べる（説明・タグ・変えた所は ages get <dir> @名前）
-    out.push(`## prefabs（${p.docs.prefabs.size}個。同じ部品の組ごとに名前だけ。←は派生の元）`);
-    const groups = new Map<string, string[]>();
-    for (const raw of p.docs.prefabs.values()) {
-      const pf = p.registry.findPrefab(raw.name) ?? raw;
-      const key = Object.keys(pf.components).join(' ');
-      const name = `${pf.name}${raw.base ? '←' + raw.base : ''}${marks(touched, locks, `@${pf.name}`)}`;
-      groups.set(key, [...(groups.get(key) ?? []), name]);
-    }
-    for (const [key, names] of groups) out.push(`[${key || '部品なし'}] ${names.length}: ${names.join(' ')}`);
+    r.prefabs.push(`## prefabs（${p.docs.prefabs.size}個。同じ部品の組ごとに名前だけ。←は派生の元）`);
+    for (const [key, names] of prefabGroups(p, ins)) r.prefabs.push(`[${key || '部品なし'}] ${names.length}: ${names.join(' ')}`);
   }
-  if (p.docs.prefabs.size && !compact) out.push(`## prefabs（@名前 で参照${[...p.docs.prefabs.values()].some((x) => x.base) ? '。← は派生の元、変: は元から変えた所' : ''}）`);
+  if (p.docs.prefabs.size && !compact) r.prefabs.push(`## prefabs（@名前 で参照${[...p.docs.prefabs.values()].some((x) => x.base) ? '。← は派生の元、変: は元から変えた所' : ''}）`);
   for (const raw of compact ? [] : p.docs.prefabs.values()) {
     const pf = p.registry.findPrefab(raw.name) ?? raw;
     const tags = pf.tags?.length ? ` tags:${pf.tags.join(',')}` : '';
-    const own = raw.base ? overridesOf(p.docs.prefabs, raw.name) : [];
+    const ov = raw.base ? overridesOf(p.docs.prefabs, raw.name) : [];
     const variant = raw.base ? ` ← @${raw.base}` : '';
-    out.push(`@${pf.name}${variant}${raw.desc ? ' ' + raw.desc : ''} [${Object.keys(pf.components).join(' ')}]${tags}${own.length ? ` 変:${own.join(',')}` : ''}${marks(touched, locks, `@${pf.name}`)}`);
+    r.prefabs.push(`@${pf.name}${variant}${raw.desc ? ' ' + raw.desc : ''} [${Object.keys(pf.components).join(' ')}]${tags}${ov.length ? ` 変:${ov.join(',')}` : ''}${marks(touched, locks, `@${pf.name}`)}`);
   }
 
-  out.push(`## scenes（シーン#ID "名前" [コンポーネント]）${gotos.size ? `\ngoto の行き先（コード）: ${[...gotos.keys()].join(' ')}` : ''}`);
+  r.scenes.push(`## scenes（シーン#ID "名前" [コンポーネント]）${gotos.size ? `\ngoto の行き先（コード）: ${[...gotos.keys()].join(' ')}` : ''}`);
   // 要約の地図では、前のシーンと同じ物（同じ ID・同じ部品）を繰り返さない
   const seen = new Map<string, string>();
   for (const s of p.docs.scenes.values()) {
-    out.push(`${s.name}（${s.entities.length}体）${s.name === c.startScene ? ' 開始' : ''}${s.desc ? ' ' + (compact ? firstSentence(s.desc) : s.desc) : ''}`);
+    r.scenes.push(`${s.name}（${s.entities.length}体）${s.name === c.startScene ? ' 開始' : ''}${s.desc ? ' ' + (compact ? firstSentence(s.desc) : s.desc) : ''}`);
     const same = new Map<string, number>();
     for (const e of s.entities) {
       const tags = e.tags?.length ? ` tags:${e.tags.join(',')}` : '';
@@ -142,31 +181,115 @@ function buildMap(p: Project, touched: Record<string, TouchMark>, locks: Record<
       const sig = `${e.id}[${Object.keys(e.components).join(' ')}]${tags}`;
       if (compact && !mk && seen.has(sig)) { const from = seen.get(sig)!; same.set(from, (same.get(from) ?? 0) + 1); continue; }
       if (!seen.has(sig)) seen.set(sig, s.name);
-      out.push(compact ? `  #${e.id} [${Object.keys(e.components).join(' ')}]${tags}${mk}` : `  ${s.name}#${e.id} "${e.name}" [${Object.keys(e.components).join(' ')}]${tags}${mk}`);
+      r.scenes.push(compact ? `  #${e.id} [${Object.keys(e.components).join(' ')}]${tags}${mk}` : `  ${s.name}#${e.id} "${e.name}" [${Object.keys(e.components).join(' ')}]${tags}${mk}`);
     }
-    for (const [from, n] of same) out.push(`  ほか${n}体は ${from} と同じ`);
+    for (const [from, n] of same) r.scenes.push(`  ほか${n}体は ${from} と同じ`);
   }
 
   if (p.assets.length > ASSET_LIST_MAX) {
     // 多いときは1つずつ並べず、フォルダごとの数だけ（毎回読む1枚なので。1つずつは ages assets で引く）
-    out.push(`## assets（${p.assets.length}個。フォルダごとの数。1つずつは ages assets <dir> [フォルダ] [--unused]）`);
-    out.push(...summarizeAssets(p, { touched, locks, code }));
+    r.assets.push(`## assets（${p.assets.length}個。フォルダごとの数。1つずつは ages assets <dir> [フォルダ] [--unused]）`);
+    r.assets.push(...summarizeAssets(p, { touched, locks, code }));
   } else if (p.assets.length) {
-    out.push('## assets（画像 幅x高さ・音 秒・シート 格子のコマの大きさ×数か、自由なコマ数と名前。使っている所は ages assets --refs）');
-    out.push(...renderAssets(p, { touched, locks, code }));
+    r.assets.push('## assets（画像 幅x高さ・音 秒・シート 格子のコマの大きさ×数か、自由なコマ数と名前。使っている所は ages assets --refs）');
+    r.assets.push(...renderAssets(p, { touched, locks, code }));
   }
-  if (c.editorWindows?.length) {
-    out.push('## editor extensions（プロジェクト独自のエディタ拡張。作る前にここを見て、近いものがあれば直す。変える値は edits と、見せている欄・部品だけ）');
-    for (const w of windows.length ? windows : c.editorWindows.map((path) => ({ path }) as WindowInfo)) {
-      if (w.error) { out.push(`${w.path} ⚠ ${w.error}`); continue; }
-      const edits = w.edits ? (w.edits.length ? compactPaths(w.edits) : 'なし（見るだけ）') : w.panel ? '⚠ 宣言なし' : '';
-      const parts = [w.panel ? 'パネル' : '', w.fields?.length ? `欄:${w.fields.join(',')}` : '', w.components?.length ? `部品:${w.components.join(',')}` : '', w.menus?.length ? `メニュー:${w.menus.join(',')}` : ''].filter(Boolean).join(' ');
-      out.push(`${w.id ?? '?'}${w.title ? `「${w.title}」` : ''}${w.desc ? ' ' + w.desc : ''}${edits ? ` | 変える: ${edits}` : ''}${parts && parts !== 'パネル' ? ` | ${parts}` : ''} | ${w.path}`);
+  r.extensions.push(...extensionLines(p, windows));
+  return r;
+}
+
+/** エディタ拡張の行（目次の地図でも省かない。作る前に見るため） */
+function extensionLines(p: Project, windows: WindowInfo[]): string[] {
+  const c = p.config;
+  if (!c.editorWindows?.length) return [];
+  const out = ['## editor extensions（プロジェクト独自のエディタ拡張。作る前にここを見て、近いものがあれば直す。変える値は edits と、見せている欄・部品だけ）'];
+  for (const w of windows.length ? windows : c.editorWindows.map((path) => ({ path }) as WindowInfo)) {
+    if (w.error) { out.push(`${w.path} ⚠ ${w.error}`); continue; }
+    const edits = w.edits ? (w.edits.length ? compactPaths(w.edits) : 'なし（見るだけ）') : w.panel ? '⚠ 宣言なし' : '';
+    const parts = [w.panel ? 'パネル' : '', w.fields?.length ? `欄:${w.fields.join(',')}` : '', w.components?.length ? `部品:${w.components.join(',')}` : '', w.menus?.length ? `メニュー:${w.menus.join(',')}` : ''].filter(Boolean).join(' ');
+    out.push(`${w.id ?? '?'}${w.title ? `「${w.title}」` : ''}${w.desc ? ' ' + w.desc : ''}${edits ? ` | 変える: ${edits}` : ''}${parts && parts !== 'パネル' ? ` | ${parts}` : ''} | ${w.path}`);
+  }
+  return out;
+}
+
+function shadersOf(p: Project) {
+  const shaders = [...p.registry.shaders.values()];
+  const used = usedShaders(p);
+  return { own: shaders.filter((d) => !d.path.startsWith('std:')), std: shaders.filter((d) => d.path.startsWith('std:') && used.has(d.path)) };
+}
+
+function tableMarks(ins: Ins, table: string): string {
+  const lk = Object.keys(ins.locks).filter((k) => k.startsWith(`$${table}.`)).length;
+  const tc = Object.keys(ins.touched).filter((k) => k.startsWith(`$${table}.`)).length;
+  return `${lk ? ` 🔒${lk}` : ''}${tc ? ` ★${tc}` : ''}`;
+}
+
+/** プレハブを同じ部品の組ごとに（名前・←派生の元・🔒★） */
+function prefabGroups(p: Project, ins: Ins): Map<string, string[]> {
+  const groups = new Map<string, string[]>();
+  for (const raw of p.docs.prefabs.values()) {
+    const pf = p.registry.findPrefab(raw.name) ?? raw;
+    const key = Object.keys(pf.components).join(' ');
+    const name = `${pf.name}${raw.base ? '←' + raw.base : ''}${marks(ins.touched, ins.locks, `@${pf.name}`)}`;
+    groups.set(key, [...(groups.get(key) ?? []), name]);
+  }
+  return groups;
+}
+
+/** 目次の地図: 節ごとに数と名前だけ。中身は ages map <dir> 節・ages find で引く */
+function indexLines(p: Project, ins: Ins): Record<MapSection, string[]> {
+  const r: Record<MapSection, string[]> = { components: [], shaders: [], systems: [], tables: [], prefabs: [], scenes: [], assets: [], extensions: [] };
+  const own = ownComponents(p);
+  if (own.length) r.components.push(`## components ${own.length}個: ${own.map((d) => d.name).join(' ')}`);
+  const { own: ownShaders, std: stdUsed } = shadersOf(p);
+  if (ownShaders.length || stdUsed.length) r.shaders.push(`## shaders: ${[...ownShaders, ...stdUsed].map((d) => d.path).join(' ')}`);
+  // システムは実行順の名前だけ（標準の続きは1つにまとめる）
+  const names: string[] = [];
+  const systems = p.registry.systems;
+  for (let i = 0; i < systems.length; i++) {
+    if (systems[i].name.startsWith('std.')) {
+      let j = i;
+      while (j + 1 < systems.length && systems[j + 1].name.startsWith('std.')) j++;
+      names.push(`(標準${j - i + 1})`);
+      i = j;
+    } else names.push(systems[i].name);
+  }
+  if (systems.length) r.systems.push(`## systems 実行順: ${names.join(' ')}`);
+  const tables = [...p.registry.tables.values()].filter((d) => (p.docs.tables.get(d.name)?.rows.length ?? 0) || !p.registry.stdTables.has(d.name));
+  if (tables.length) r.tables.push(`## tables（$表.行.列）: ${tables.map((d) => `$${d.name} ${p.docs.tables.get(d.name)?.rows.length ?? 0}行${tableMarks(ins, d.name)}`).join('  ')}`);
+  if (p.docs.prefabs.size) {
+    // 部品の組ごとに、いちばん後ろの部品（ふつう、いちばん特有のもの）で数える。1つだけの組は名前も
+    const kinds = new Map<string, string[]>();
+    for (const [key, list] of prefabGroups(p, ins)) {
+      const label = key.split(' ').filter(Boolean).pop() ?? '部品なし';
+      kinds.set(label, [...(kinds.get(label) ?? []), ...list]);
     }
+    r.prefabs.push(`## prefabs ${p.docs.prefabs.size}個（主な部品ごとの数）: ${[...kinds].map(([k, l]) => (l.length === 1 ? `${k}(${l[0]})` : `${k} ${l.length}`)).join('  ')}`);
   }
-  const nl = Object.keys(locks).length, nt = Object.keys(touched).length;
-  if (nl || nt) out.push(`## 🔒ロック ${nl}件（AIは変更不可。理由があれば人に提案する） / ★人が調整 ${nt}件（変更前に人へ確認）`);
-  return out.join('\n');
+  if (p.docs.scenes.size) r.scenes.push(`## scenes: ${[...p.docs.scenes.values()].map((s) => `${s.name}(${s.entities.length}体${s.name === p.config.startScene ? '・開始' : ''})`).join(' ')}${ins.gotos.size ? `  goto の行き先（コード）: ${[...ins.gotos.keys()].join(' ')}` : ''}`);
+  if (p.assets.length) {
+    const n = { image: 0, sheet: 0, sound: 0, font: 0 };
+    for (const a of p.assets) {
+      if (a.kind === 'image') { n.image++; if (p.registry.sheets.get(a.path)) n.sheet++; } else if (a.kind === 'sound') n.sound++; else n.font++;
+    }
+    r.assets.push(`## assets ${p.assets.length}個: 画像${n.image}（シート${n.sheet}） 音${n.sound}${n.font ? ` フォント${n.font}` : ''}（1つずつは ages assets <dir> [フォルダ]）`);
+  }
+  r.extensions.push(...extensionLines(p, ins.windows));
+  return r;
+}
+
+/** 目次の地図で、🔒★のある所（住所の頭ごとの数） */
+function markRoots(ins: Ins): string[] {
+  const count = (rec: Record<string, unknown>) => {
+    const m = new Map<string, number>();
+    for (const k of Object.keys(rec)) { const root = k.split('.')[0]; m.set(root, (m.get(root) ?? 0) + 1); }
+    return m;
+  };
+  const l = count(ins.locks), t = count(ins.touched);
+  const roots = [...new Set([...l.keys(), ...t.keys()])];
+  if (!roots.length) return [];
+  const shown = roots.slice(0, 20).map((r) => `${r}${l.get(r) ? ` 🔒${l.get(r)}` : ''}${t.get(r) ? ` ★${t.get(r)}` : ''}`);
+  return [`🔒★のある所: ${shown.join('  ')}${roots.length > 20 ? ` ほか${roots.length - 20}か所` : ''}`];
 }
 
 function marks(touched: Record<string, TouchMark>, locks: Record<string, LockMark>, prefix: string): string {

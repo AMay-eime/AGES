@@ -45,6 +45,8 @@ test('MCP: 初期化で使い方の説明を渡し、道具の一覧と呼び出
     { id: 5, method: 'tools/call', params: { name: 'ages_set', arguments: { address: 'main#spawner.Spawner.interval', value: -1 } } },
     { id: 6, method: 'tools/call', params: { name: 'ages_run', arguments: { frames: 120, twice: true } } },
     { id: 7, method: 'nope' },
+    { id: 8, method: 'tools/call', params: { name: 'ages_find', arguments: { words: '体力' } } },
+    { id: 9, method: 'tools/call', params: { name: 'ages_map', arguments: { section: 'tables' } } },
   ]);
   const by = Object.fromEntries(r.map((x) => [x.id, x]));
   assert.match(by[1].result.instructions, /EDITOR-PLAN\.md/);
@@ -56,4 +58,6 @@ test('MCP: 初期化で使い方の説明を渡し、道具の一覧と呼び出
   assert.match(by[5].result.content[0].text, /最小値 1 未満/);
   assert.match(by[6].result.content[0].text, /再現性: OK/);
   assert.equal(by[7].error.code, -32601);
+  assert.match(by[8].result.content[0].text, /^部品 Health — 体力/m);
+  assert.match(by[9].result.content[0].text, /^## tables/);
 });

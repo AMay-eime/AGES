@@ -77,7 +77,7 @@ test('地図: 実行中に変わる値（desc に「自動で変化」）は名�
 });
 
 test('地図: 大きなプロジェクトでは要約の地図（型・説明を省く・プレハブは部品の組ごと・前のシーンと同じ物は繰り返さない）', async () => {
-  const { renderMap } = await import('../src/project/map.ts');
+  const { renderMap, buildMap } = await import('../src/project/map.ts');
   const { Project } = await import('../src/project/project.ts');
   const dir = await mkdtemp(join(tmpdir(), 'ages-'));
   await cp(new URL('../examples/shooter', import.meta.url), dir, { recursive: true });
@@ -85,11 +85,42 @@ test('地図: 大きなプロジェクトでは要約の地図（型・説明を
   await p.apply([{ op: 'addScene', name: 'main2', copy: 'main' }], { who: 'ai', kind: 'ai', win: 'cli' });
   const full = renderMap(p);
   assert.match(full, /^Health 体力。0で倒れる \| hp:int/m, '小さいうちは今までどおり');
-  const small = renderMap(p, {}, {}, new Map(), [], new Map(), 100);
+  const small = buildMap(p, {}, 'compact');
+  assert.equal(renderMap(p, {}, {}, new Map(), [], new Map(), small.length), small, '詳しい地図が上限を超え、要約が収まるなら要約');
   assert.match(small, /要約の地図/);
   assert.match(small, /^Health 体力 \| hp invincibleOnHit \| 自動:invincible$/m);
   assert.match(small, /^\[Sound\] \d+: .*se_shot/m);
   assert.match(small, /^ {2}ほか\d+体は main と同じ$/m);
   assert.ok(small.length < full.length);
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('地図: 要約でも上限を超えるときは目次の地図。中身は ages map <dir> 節 と ages find で引く', async () => {
+  const { renderMap, renderMapSection } = await import('../src/project/map.ts');
+  const { Project } = await import('../src/project/project.ts');
+  const { cmdFind, cmdMap } = await import('../src/cli/ages.ts');
+  const dir = await shooter();
+  const p = await Project.load(dir);
+  const index = renderMap(p, {}, {}, new Map(), [], new Map(), 100);
+  assert.match(index, /目次の地図/);
+  assert.match(index, /^## components \d+個: .*\bHealth\b/m);
+  assert.match(index, /^## systems 実行順: /m);
+  assert.match(index, /^## tables（\$表\.行\.列）: .*\$enemies \d+行/m);
+  assert.match(index, /^## prefabs \d+個（主な部品ごとの数）: .*Sound \d+/m);
+  assert.match(index, /^## scenes: main\(\d+体・開始\)/m);
+  assert.doesNotMatch(index, /hp:int|invincibleOnHit/, '目次にはフィールドを出さない');
+  // 節を1つ: 小さいプロジェクトなので詳しい形
+  assert.match(renderMapSection(p, 'components'), /^Health 体力。0で倒れる \| hp:int/m);
+  assert.match(renderMapSection(p, 'tables', {}, 100), /^\$enemies \d+行 .* \| /m, '大きいプロジェクトでは要約の形');
+  assert.throws(() => renderMapSection(p, 'scene'), /地図の節 scene はありません。もしかして: scenes/);
+  assert.match(await cmdMap(dir, 'prefabs'), /^@se_shot /m);
+  // 名前と説明から探す。語は全部を含むもの。シーンをまたぐ同じ物は1行に
+  const hp = await cmdFind(dir, '体力');
+  assert.match(hp, /^部品 Health — 体力/m);
+  assert.match(hp, /^Health\.hp int 0\.\.999=3 — /m);
+  assert.match(await cmdFind(dir, 'Health hp'), /^Health\.hp /m);
+  assert.doesNotMatch(await cmdFind(dir, 'Health hp'), /^部品 Health/m);
+  assert.match(await cmdFind(dir, 'se_shot'), /^@se_shot /m);
+  assert.match(await cmdFind(dir, 'zzzz'), /見つかりませんでした/);
   await rm(dir, { recursive: true, force: true });
 });
