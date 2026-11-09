@@ -74,7 +74,13 @@ export function inspectorPanel(app: App): Panel {
 
     const nameInput = h('input', {
       type: 'text', value: holder.name ?? '', style: 'flex:1;font-weight:600', disabled: playing,
-      onchange: () => app.patch([{ op: 'rename', target: base, name: nameInput.value }]),
+      // プレハブの名前はファイルの名前（指している所も直す renamePrefab）。シーンの物の名前は見せる名前（rename）
+      onchange: () => {
+        if (sel.kind === 'scene') { app.patch([{ op: 'rename', target: base, name: nameInput.value }]); return; }
+        const to = nameInput.value.trim();
+        if (!to || to === sel.name) { nameInput.value = sel.name; return; }
+        app.patch([{ op: 'renamePrefab', name: sel.name, to }]).then((r) => { if (r) app.select({ kind: 'prefab', name: to }); });
+      },
     });
     const lockedHere = Object.keys(app.state.locks).filter((k) => k.startsWith(base + '.')).length;
     const head = h('div', { class: 'pad', style: 'border-bottom:1px solid var(--line)' },

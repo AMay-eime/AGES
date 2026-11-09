@@ -94,7 +94,7 @@ export const OP_DOCS: Record<Op['op'], string> = {
   removeEntity: '{scene,id} 物を消す',
   addComponent: '{target,component,values?} コンポーネントを付ける（target は main#player か @enemy）',
   removeComponent: '{target,component} コンポーネントを外す',
-  rename: '{target,name} 物の名前を変える',
+  rename: '{target,name} シーンの物の名前を変える（プレハブは renamePrefab）',
   addRow: '{table,row:{id,...},index?} 表に行を足す（省いた列は既定値）',
   removeRow: '{table,id} 表から行を消す',
   moveRow: '{table,id,to} 表の中で行を動かす',
@@ -635,6 +635,8 @@ function applyOne(docs: Docs, reg: Registry, op: Op, changes: Change[], dirty: S
     }
     case 'rename': {
       const a = parseAddress(op.target);
+      // プレハブの名前はファイルの名前で、指している所もある。name を書き換えるだけだと、ファイルと参照がずれる
+      if (a.kind === 'prefab') throw new Error(`プレハブの名前は renamePrefab で変えます（{"op":"renamePrefab","name":"${a.doc}","to":"${op.name}"}。ファイルの名前と、指している所も直る）。rename はシーンの物の名前`);
       const { holder, key } = holderOf(docs, a);
       const from = holder.name;
       holder.name = op.name;

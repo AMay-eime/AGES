@@ -18,7 +18,7 @@ import { agesHome, lockDiff, verifyLocks, type LockIntegrity } from './seal.ts';
 import { scanAssets, type AssetInfo } from './assets.ts';
 import { assetRefs, codePrefabRefs, codeRefs, codeSceneRefs, isUnder } from '../core/assets.ts';
 import { resolveEntity, resolvePrefab } from '../core/variant.ts';
-import { allowedByDrawers, checkWindows, loadWindows, unlistedWindows, withinEdits, type WindowInfo } from './windows.ts';
+import { allowedByDrawers, checkKept, checkWindows, loadWindows, prefabTags, tagCounts, tagEdit, unlistedWindows, windowAllows, windowTargets, type WindowInfo } from './windows.ts';
 import { Journal, inverseFiles, type DocState, type FileMove, type TxRecord } from './journal.ts';
 import { revert as revertValue, same } from '../core/revert.ts';
 import { FIT_MODES } from '../core/camera.ts';
@@ -109,8 +109,8 @@ export class Project {
     return (this.windowCache ??= loadWindows(this.dir, this.config.editorWindows ?? []));
   }
 
-  /** ウインドウの宣言の問題と、登録し忘れたウインドウ */
-  async checkWindows(): Promise<string[]> {
+  /** ウインドウの宣言の問題と、登録し忘れたウインドウ（warns に ⚠: まだプレハブのない @[タグ]） */
+  async checkWindows(warns: string[] = []): Promise<string[]> {
     const listed = this.config.editorWindows ?? [];
     const part = (c: string, f?: string) => {
       const def = this.registry.components.get(c);
@@ -118,7 +118,7 @@ export class Project {
       return f === undefined || def.fields[f] ? null : `${c} に ${f} はありません${suggest(f, Object.keys(def.fields))}`;
     };
     const types = [...new Set([...this.registry.components.values()].flatMap((d) => Object.values(d.fields).map((f) => f.type)).concat(FIELD_TYPES))];
-    const errs = checkWindows(await this.windows(), (a) => this.addressProblem(a), part, types);
+    const errs = checkWindows(await this.windows(), (a) => this.addressProblem(a), part, types, tagCounts(this.docs.prefabs), warns);
     for (const p of await unlistedWindows(this.dir, listed)) errs.push(`${p}: ages.project.json の editorWindows に書いていないので、エディタに出ません`);
     return errs;
   }
@@ -670,6 +670,7 @@ export class Project {
     // 独自のウインドウ（AIが書いたコード）からの変更: ロックされた値は変えられない。edits に書いた値だけを変えられる
     const viaWindow = actor.win?.startsWith('window:') ? actor.win.slice('window:'.length) : null;
     let windowEdits: string[] | undefined;
+    const keepTags: { name: string; tags: string[] }[] = [];
     if (viaWindow) {
       const hits = ops.flatMap((op) => { const t = targetOf(op); return [...(t ? lockedHits(locks, t) : []), ...assetSheets(op).filter((k) => locks[k]), ...sceneKeys(op, locks)]; });
       if (hits.length) throw new Error(`🔒 ロックされた値は、ウインドウ ${viaWindow} からは変えられません: ${hits.join(', ')}。変えるならインスペクタで`);
@@ -679,8 +680,10 @@ export class Project {
       if (windowEdits) {
         const info = (await this.windows()).find((w) => w.id === viaWindow)!;
         const typeAt = (c: string, f: string) => this.registry.components.get(c)?.fields[f]?.type;
-        const outside = ops.map((op) => targetOf(op) ?? (op.op === 'addEntity' ? `${op.scene}#${op.entity.id}` : op.op === 'addComponent' || op.op === 'rename' ? op.target : op.op === 'addRow' || op.op === 'moveRow' ? `$${op.table}.${op.op === 'addRow' ? op.row.id : op.id}` : op.op)).filter((t) => !withinEdits(windowEdits!, t) && !allowedByDrawers(info, t, typeAt));
-        if (outside.length) throw new Error(`ウインドウ ${viaWindow} は、宣言（edits）にない値を変えようとしています: ${outside.join(', ')}。変えるなら ${viaWindow} の edits に足してください（地図に出ます）`);
+        // @[タグ]: 変える前のタグで通し、変えた後もタグを持つかは keepTags で確かめる（下の「タグの外へ出ない」）
+        const tagsBefore = windowEdits.some((e) => tagEdit(e)) ? prefabTags(this.docs.prefabs) : new Map<string, string[]>();
+        const outside = ops.flatMap((op) => windowTargets(op, targetOf)).filter((t) => !allowedByDrawers(info, t, typeAt) && !windowAllows(windowEdits!, t, tagsBefore, keepTags));
+        if (outside.length) throw new Error(`ウインドウ ${viaWindow} は、宣言（edits）にない値を変えようとしています: ${[...new Set(outside)].join(', ')}。変えるなら ${viaWindow} の edits に足してください（地図に出ます）${outside.some((t) => t.startsWith('@')) && windowEdits.some((e) => tagEdit(e)) ? '。@[タグ] で変えられるのは、変える前からそのタグを持つプレハブと、新しく作るプレハブ' : ''}`);
       }
     }
     if (actor.kind === 'ai' && !opts.force) {
@@ -767,6 +770,11 @@ export class Project {
     if (actor.kind === 'ai' || viaWindow) {
       const hits = [...new Set(result.changes.flatMap((c) => lockedHits(locks, sheetRoot(c.path.replace(/\[\d+,\s*\d+\]$/, '')))))];
       if (hits.length) rollback(`🔒 この操作は、ロックされた値も変えてしまいます: ${hits.join(', ')}。この値は人が決めるものです。変えるべき理由があれば、ユーザーに提案してください`);
+    }
+    // タグの外へ出ない: edits の @[タグ] で変えたプレハブは、変えた後もそのタグを持つこと（作ったもの・名前を変えたもの・元を変えたものも）
+    if (keepTags.length) {
+      const gone = checkKept(keepTags, prefabTags(this.docs.prefabs));
+      if (gone.length) rollback(`ウインドウ ${viaWindow} の変更で、edits の @[タグ] の外へ出るプレハブがあります: ${gone.join(', ')}。タグを残すか、作るときに tags を書いてください`);
     }
     const introduced = this.validate().filter((e) => !before.has(e));
     if (introduced.length) rollback(introduced.join(' / '));
