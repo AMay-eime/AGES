@@ -26,6 +26,8 @@ export interface Ctx {
   time: number;
   view: { width: number; height: number };
   spawn(prefab: string, overrides?: Record<string, Record<string, unknown>>): Entity;
+  /** プレハブの中身を読む（派生は元と重ねた形、書いていない値は既定値。ないなら undefined）。読むだけで、書き換えても何も変わらない */
+  prefab(name: string): { name: string; tags: string[]; components: Record<string, Record<string, any>> } | undefined;
   destroy(id: string): void;
   /** 出来事を記録する（例: emit('enemyKilled')）。ages run の要約に回数が載る */
   emit(event: string, data?: unknown): void;
@@ -266,6 +268,15 @@ export class Game {
       get time() { return game.frame * game.dt; },
       view: { width: config.view.width, height: config.view.height },
       spawn: (p, o) => this.world.spawn(p, o),
+      prefab: (name) => {
+        const doc = this.registry.findPrefab(name);
+        if (!doc) return undefined;
+        const components: Record<string, Record<string, any>> = {};
+        for (const [c, data] of Object.entries(doc.components)) {
+          try { components[c] = this.registry.build(c, structuredClone(data)); } catch { components[c] = structuredClone(data); }
+        }
+        return { name: doc.name, tags: [...(doc.tags ?? [])], components };
+      },
       destroy: (id) => this.world.destroy(id),
       shake: (amount, id) => {
         for (const e of this.world.query('Camera')) {
@@ -372,11 +383,16 @@ export class Game {
       for (const e of this.world.entities.values()) add(e.c.Collider);
       return g;
     };
+    // 一度あると分かったグループの名前は調べ直さない（毎回すべてのプレハブ・物を見ると、弾の多いゲームで非常に遅くなる）
+    const verified = new Set<string>();
     const checkGroup = (where: string, group?: string | string[]) => {
       if (group === undefined) return;
+      const todo = (Array.isArray(group) ? group : [group]).filter((n) => !verified.has(n));
+      if (!todo.length) return;
       const names = known();
-      for (const n of Array.isArray(group) ? group : [group]) {
-        if (!names.has(n)) this.warnings.add(`ctx.hit.${where}: グループ "${n}" の Collider がありません${suggest(n, [...names])}（ある名前: ${[...names].join(', ') || 'なし'}）`);
+      for (const n of todo) {
+        if (names.has(n)) verified.add(n);
+        else this.warnings.add(`ctx.hit.${where}: グループ "${n}" の Collider がありません${suggest(n, [...names])}（ある名前: ${[...names].join(', ') || 'なし'}）`);
       }
     };
     const find = (where: string, s: HitShape | null, group: string | string[] | undefined, skip?: string) => {

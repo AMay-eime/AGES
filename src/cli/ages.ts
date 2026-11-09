@@ -37,7 +37,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   table  <dir> <表> [--cols a,b] [--rows id1,id2] [--empty 列]   表を見る（1行1行。--empty はその列が空の行だけ。例 未訳: text --empty en）
                [--export x.csv] [--import x.csv [--force]]   表計算ソフトとの行き来（読み込みは表をまるごと置き換える）
   run    <dir> [--frames 600] [--scene main | --spawn enemy,explosion@40,0（プレハブだけを空のシーンの真ん中に出して試す）] [--seed 1] [--keys "0-120:ArrowLeft+KeyZ;120-200:@move_x=1;30:Mouse0+ptr=240,100"]
-               [--input recordings/x.input.json] [--watch player.Health.hp,...] [--every 60] [--until gameOver | scene:result | click:ボタンのID] [--twice] [--dump]
+               [--input recordings/x.input.json] [--watch player.Health.hp,@enemy.Health.hp,...（@プレハブ名 はいる最初の1つ）] [--every 60] [--until gameOver | scene:result | click:ボタンのID] [--twice] [--dump]
                [--save saves/x.save.json]（この保存データから始める。省くと空） [--save-out saves/y.save.json]（終わりの保存データを書き出す） [--lang en]（言語）
   log    <dir> [--all] [--peek]      前回からの編集の要約（--peek は既読にしない）
   undo   <dir> [--tx id] [--force]   自分（AI）の直前の編集を元に戻す（その後で変えられた所があれば止まる）。redo <dir> でやり直す
@@ -401,12 +401,17 @@ export function actionsOf(p: Project): Map<string, ActionDef> {
 function readWatch(game: Game, addr: string): unknown {
   const s = addr.includes('#') ? addr.slice(addr.indexOf('#') + 1) : addr;
   const [id, comp, field] = s.split('.');
-  const e = game.world.get(id);
+  // @プレハブ名 は、そのプレハブから出した物のうち、いまいる最初の1つ（ID を探さなくてよい）
+  const e = id.startsWith('@')
+    ? [...game.world.entities.values()].find((x) => game.world.isAlive(x.id) && (x.id === id.slice(1) || x.id.startsWith(id.slice(1) + '~')))
+    : game.world.get(id);
   if (!e) return '—';
   if (!comp) return 'alive';
   const c = e.c[comp];
   if (!c) return '—';
-  return field ? c[field] : c;
+  const v = field ? c[field] : c;
+  // リスト・構造体は写す（始めの値が後の値で書き変わらないように）
+  return v !== null && typeof v === 'object' ? structuredClone(v) : v;
 }
 
 export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {

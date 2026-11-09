@@ -75,8 +75,9 @@ export interface SoundApi {
    * 鳴らす。name は Sound の付いたプレハブの名前（例 'se_shot'）か、音のファイルの場所（例 'assets/se/shot.wav'。設定は既定）。
    * 間引き（cooldown）で鳴らさなかったとき・名前が見つからないときは false。
    * with: 鳴っている音（名前か物のID）と曲の中の位置をそろえて鳴らし始める（重ねるBGMの層を後から足すとき）
+   * fadeIn: この回だけのフェードインの秒数（省くとその音の Sound.fadeIn）
    */
-  play(name: string, opts?: { volume?: number; pitch?: number; pan?: number; with?: string }): boolean;
+  play(name: string, opts?: { volume?: number; pitch?: number; pan?: number; with?: string; fadeIn?: number }): boolean;
   /** 止める。target は名前か持ち主の物のID。省くと全部。fade は秒（省くとその音の fadeOut） */
   stop(target?: string, fade?: number): void;
   /** 区分の音を全部止める */
@@ -108,11 +109,11 @@ export interface SoundSettings {
 
 export const DEFAULT_SOUND: SoundSettings = { clip: '', bus: '', volume: 1, pitch: 1, pitchJitter: 0, pan: 0, loop: false, playOnStart: false, fadeIn: 0, fadeOut: 0, maxVoices: 4, cooldown: 0 };
 
-export function playCmd(frame: number, cue: string, s: SoundSettings, opts: { volume?: number; pitch?: number; pan?: number; with?: string } = {}, owner?: string): PlayCmd {
+export function playCmd(frame: number, cue: string, s: SoundSettings, opts: { volume?: number; pitch?: number; pan?: number; with?: string; fadeIn?: number } = {}, owner?: string): PlayCmd {
   const cmd: PlayCmd = {
     t: 'play', frame, cue, clip: s.clip, bus: s.bus,
     volume: s.volume * (opts.volume ?? 1), pitch: s.pitch * (opts.pitch ?? 1), pitchJitter: s.pitchJitter, pan: opts.pan ?? s.pan,
-    loop: s.loop, fadeIn: s.fadeIn, fadeOut: s.fadeOut, maxVoices: s.maxVoices,
+    loop: s.loop, fadeIn: Math.max(0, opts.fadeIn ?? s.fadeIn), fadeOut: s.fadeOut, maxVoices: s.maxVoices,
   };
   if (owner) cmd.owner = owner;
   if (opts.with) cmd.with = opts.with;

@@ -145,3 +145,16 @@ test('派生の検証: ない元・輪・元にない部品を外す', async () 
   assert.match(errs, /@c\.remove: 元 @enemy に部品 Camera はありません/);
   assert.match(errs, /@d の元 @nai がありません/);
 });
+
+test('ctx.prefab: ゲームのコードからプレハブの中身を読む（派生は元と重ねた形・既定値で埋める・読むだけ）', async () => {
+  const dir = await fresh();
+  const p = await Project.load(dir);
+  await p.apply([{ op: 'addPrefab', name: 'enemy_tough', base: 'enemy', components: { Health: { hp: 9 } } }], ai);
+  const g = p.newGame();
+  const v = g.ctx.prefab('enemy_tough')!;
+  assert.deepEqual([v.name, v.tags, v.components.Health.hp, v.components.Velocity.vy, v.components.Velocity.vx], ['enemy_tough', ['enemy'], 9, 2, 0]);
+  v.components.Health.hp = 1;
+  assert.equal(g.ctx.prefab('enemy_tough')!.components.Health.hp, 9, '書き換えても元は変わらない');
+  assert.equal(g.ctx.prefab('nothing'), undefined);
+  await rm(dir, { recursive: true, force: true });
+});
