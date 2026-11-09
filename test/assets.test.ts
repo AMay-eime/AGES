@@ -167,3 +167,17 @@ test('音の長さ: OGG（Vorbis / Opus）・MP3（Xing と固定の速さ）・
   assert.equal(m4aSeconds(Buffer.alloc(10), Buffer.concat([Buffer.alloc(8), mvhd])), 2.5);
   assert.equal(oggSeconds(Buffer.from('nope'), Buffer.alloc(0)), null);
 });
+
+test('地図: アセットが多いと、フォルダごとの数にまとめる（1つずつは ages assets）', async () => {
+  const dir = await fresh();
+  const png = await readFile(join(dir, SHIPS));
+  await mkdir(join(dir, 'assets/many/sub'), { recursive: true });
+  for (let i = 0; i < 45; i++) await writeFile(join(dir, `assets/many/sub/p${i}.png`), png);
+  const map = await cmdMap(dir);
+  assert.match(map, /## assets（\d+個。フォルダごとの数。1つずつは ages assets/);
+  assert.match(map, /^ {2}assets\/many\/sub\/ 画像45 未使用45$/m);
+  assert.match(map, /^ {2}assets\/kenney-pixel-shmup\/ 画像2（シート2）$/m);
+  assert.doesNotMatch(map, /p12\.png/);
+  assert.match(await cmdAssets(dir, 'assets/many', {}), /p12\.png \d+x\d+ 未使用/);
+  await rm(dir, { recursive: true, force: true });
+});
