@@ -168,7 +168,7 @@ export class GameError extends Error {
 /** 音量の区分（AudioBus の付いたプレハブ）の一覧。overrides はゲームの中で変えた音量 */
 export function busesOf(registry: Registry, overrides: Map<string, number> = new Map()): Record<string, BusDef> {
   const out: Record<string, BusDef> = {};
-  for (const p of registry.prefabs.values()) {
+  for (const p of registry.allPrefabs()) {
     if (!p.components.AudioBus) continue;
     const b = registry.build('AudioBus', p.components.AudioBus) as unknown as BusDef;
     out[p.name] = { ...b, volume: overrides.get(p.name) ?? b.volume };
@@ -367,7 +367,7 @@ export class Game {
     const known = () => {
       const g = new Set(this.hits.groups);
       const add = (c?: Record<string, unknown>) => { if (c?.group) g.add(String(c.group)); };
-      for (const p of this.registry.prefabs.values()) add(p.components.Collider);
+      for (const p of this.registry.allPrefabs()) add(p.components.Collider);
       for (const s of this.registry.scenes.values()) for (const e of s.entities) add(e.components.Collider);
       for (const e of this.world.entities.values()) add(e.c.Collider);
       return g;
@@ -437,10 +437,10 @@ export class Game {
 
   /** プレハブ名かファイルの場所から、音の設定を求める */
   soundSettings(name: string): SoundSettings | null {
-    const p = this.registry.prefabs.get(name);
+    const p = this.registry.findPrefab(name);
     if (p?.components.Sound) return this.registry.build('Sound', p.components.Sound) as unknown as SoundSettings;
     if (isSoundPath(name)) return { ...DEFAULT_SOUND, clip: name };
-    const cues = [...this.registry.prefabs.values()].filter((x) => x.components.Sound).map((x) => x.name);
+    const cues = this.registry.allPrefabs().filter((x) => x.components.Sound).map((x) => x.name);
     this.warnings.add(`音 "${name}" がありません（Sound の付いたプレハブの名前か、音のファイルの場所）${suggest(name, cues)}`);
     return null;
   }
@@ -477,8 +477,8 @@ export class Game {
         return true;
       },
       volume: (bus, value) => {
-        if (bus && !this.registry.prefabs.get(bus)?.components.AudioBus) {
-          const names = [...this.registry.prefabs.values()].filter((p) => p.components.AudioBus).map((p) => p.name);
+        if (bus && !this.registry.findPrefab(bus)?.components.AudioBus) {
+          const names = this.registry.allPrefabs().filter((p) => p.components.AudioBus).map((p) => p.name);
           this.warnings.add(`ctx.sound.volume: 音量の区分 "${bus}" がありません（AudioBus の付いたプレハブの名前。全体は ''）${suggest(bus, names)}`);
           return;
         }

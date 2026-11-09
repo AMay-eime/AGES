@@ -73,7 +73,7 @@ export function hierarchyPanel(app: App): Panel {
           return h('div', {
             class: `item ${sel?.kind === 'prefab' && sel.name === p.name ? 'sel' : ''}`,
             onclick: () => app.select({ kind: 'prefab', name: p.name }),
-          }, '@' + p.name, h('span', { class: 'muted' }, p.desc ?? ''), n ? h('span', { style: 'color:var(--lock)' }, '🔒' + n) : null);
+          }, '@' + p.name, h('span', { class: 'muted' }, p.base ? `← @${p.base}${p.desc ? ' ' + p.desc : ''}` : p.desc ?? ''), n ? h('span', { style: 'color:var(--lock)' }, '🔒' + n) : null);
         }),
         app.registry?.tables.size ? h('div', { class: 'folder' }, `表（${app.registry.tables.size}）`) : null,
         [...(app.registry?.tables.values() ?? [])].map((t) => {

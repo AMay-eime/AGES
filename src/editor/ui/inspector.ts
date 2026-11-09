@@ -3,7 +3,8 @@
 import type { App } from '../app.ts';
 import type { Field } from '../../core/schema.ts';
 import { ASSET_LABEL, brief, defaultOf, matrixSize, typeOf, variantDefault, type ListField, type OneOfField, type StructField } from '../../core/schema.ts';
-import { formatSub, getIn, setIn } from '../../core/docs.ts';
+import { formatSub, getIn, setIn, type PrefabDoc } from '../../core/docs.ts';
+import { resolvePrefab } from '../../core/variant.ts';
 import type { Op } from '../../core/patch.ts';
 import { h, clear, time, modal, toast } from './dom.ts';
 import { findFrame, frameLabel, listFrames, type FrameRef, type SheetDef } from '../../core/sheet.ts';
@@ -38,7 +39,14 @@ export function inspectorPanel(app: App): Panel {
       holder = app.state.scenes[sel.scene]?.entities.find((e) => e.id === sel.id);
     } else {
       holder = app.state.prefabs[sel.name];
+      // 派生: 元と重ねた値を見せ、元から変えた所に印と「元に戻す」を付ける
+      if (holder && (holder as PrefabDoc).base) {
+        try { holder = resolvePrefab(new Map(Object.entries(app.state.prefabs)), sel.name); } catch (e) { return clear(el, h('div', { class: 'pad', style: 'color:var(--bad)' }, (e as Error).message)); }
+      }
     }
+    const raw = sel.kind === 'prefab' ? app.state.prefabs[sel.name] : undefined;
+    const variantOf = !playing ? raw?.base : undefined;
+    const own = (c: string, f?: string) => !!raw?.components[c] && (f === undefined || f in raw.components[c]);
     if (!holder) return clear(el, h('div', { class: 'pad muted' }, playing ? `${sel.kind === 'scene' ? sel.id : ''} はもう存在しません` : '見つかりません'));
     const savable = sel.kind === 'prefab' || !!app.state.scenes[sel.scene]?.entities.some((e) => e.id === sel.id);
 
@@ -52,7 +60,8 @@ export function inspectorPanel(app: App): Panel {
         h('label', { class: 'row muted', style: 'gap:4px;white-space:nowrap', title: 'ロックした値を表示しない（人が決め終えた値を画面から外して、残りに集中する）' },
           h('input', { type: 'checkbox', checked: !app.showLocked, onchange: (e: Event) => setHide((e.target as HTMLInputElement).checked) }), `🔒を隠す${lockedHere ? `（${lockedHere}）` : ''}`)),
       h('div', { class: 'muted', style: 'margin-top:4px;font:var(--mono)' }, base, holder.tags?.length ? `  tags:${holder.tags.join(',')}` : '',
-        playing ? '  ▶ 実行中（変更は停止時に保存するか選べます）' : ''));
+        playing ? '  ▶ 実行中（変更は停止時に保存するか選べます）' : ''),
+      sel.kind === 'prefab' && !playing ? prefabBar(app, sel.name, raw!) : null);
 
     let hiddenCount = 0;
     const comps = Object.entries(holder.components).map(([cname, values]) => {
@@ -102,9 +111,12 @@ export function inspectorPanel(app: App): Panel {
           disabled: !savable || (playing && !lock),
           onclick: () => (lock ? app.openLocks(path) : app.lock([path])),
         }, lock ? '🔒' : '🔓');
+        // 派生で元から変えた値は印を付け、元の値に戻せるようにする
+        const over = variantOf && own(cname, fname) && !!app.state.prefabs[variantOf] ? true : false;
+        const revert = over && !lock ? h('button', { class: 'icon tiny', title: `元（@${variantOf}）の値に戻す`, onclick: () => app.patch([{ op: 'revert', path }]) }, '↺') : null;
         const row = h('div', {
-          class: `field ${isNested(f) || f.type === 'params' ? 'wide' : ''} ${has ? '' : 'default'} ${touched ? 'touched' : ''} ${lock ? 'locked' : ''}`,
-        }, h('label', { title: `${fname}: ${brief(f)}${f.desc ? '\n' + f.desc : ''}${touched ? `\n★ ${touched.who} が ${time(touched.t)} に調整` : ''}${has ? '' : '\n（省略中: 既定値）'}` }, fname), w.el, lockBtn);
+          class: `field ${isNested(f) || f.type === 'params' ? 'wide' : ''} ${has ? '' : 'default'} ${touched ? 'touched' : ''} ${lock ? 'locked' : ''} ${over ? 'override' : ''}`,
+        }, h('label', { title: `${fname}: ${brief(f)}${f.desc ? '\n' + f.desc : ''}${touched ? `\n★ ${touched.who} が ${time(touched.t)} に調整` : ''}${variantOf ? (over ? `\n派生で変えた値（元 @${variantOf} から）` : `\n元 @${variantOf} から受け継いだ値`) : has ? '' : '\n（省略中: 既定値）'}` }, revert, fname), w.el, lockBtn);
         live.push({ path, comp: cname, field: fname, set: w.set, el: row });
         return row;
       });
@@ -122,8 +134,10 @@ export function inspectorPanel(app: App): Panel {
         }, marks[i])));
         dock = h('div', { class: 'field wide' }, h('label', { title: '画面（親があれば親）の端・角に付ける。別の UI の隣に付けるなら beside を選ぶ' }, '端に付ける'), h('div', { class: 'ctl', style: 'gap:8px;align-items:center' }, grid, h('span', { class: 'muted' }, '間'), margin));
       }
+      const inheritedComp = variantOf && !!resolvedBase(app, variantOf)?.components[cname];
       return h('div', { class: 'comp' },
-        h('div', { class: 'head' }, cname, h('span', { class: 'desc', title: def.desc }, allLocked ? '（すべて🔒）' : def.desc),
+        h('div', { class: 'head' }, cname, h('span', { class: 'desc', title: def.desc }, allLocked ? '（すべて🔒）' : variantOf && !inheritedComp ? `（派生で足した部品）${def.desc}` : def.desc),
+          inheritedComp && own(cname) && !playing ? h('button', { class: 'icon', title: `${cname} の値をすべて元（@${variantOf}）に戻す`, onclick: () => app.patch([{ op: 'revert', path: `${base}.${cname}` }]) }, '↺') : null,
           cname === 'Sound' ? h('button', { class: 'icon', title: '今の設定で試しに鳴らす', onclick: () => app.previewSound(holder!.components.Sound as never) }, '▶') : null,
           !playing && savable && !entries.every(([fname]) => app.state.locks[`${base}.${cname}.${fname}`]) ? h('button', { class: 'icon', title: `${cname} の値をまとめてロックする（外すのはロックマネージャーで）`, onclick: () => app.lock(entries.map(([fname]) => `${base}.${cname}.${fname}`).filter((p2) => !app.state.locks[p2])) }, '🔓') : null,
           !playing && h('button', { class: 'icon', title: `${cname} を外す`, onclick: () => app.patch([{ op: 'removeComponent', target: base, component: cname }]) }, '×')),
@@ -140,10 +154,14 @@ export function inspectorPanel(app: App): Panel {
       }, h('option', { value: '' }, '＋ コンポーネントを追加…'), missing.map((n) => h('option', { value: n }, `${n} — ${app.registry.components.get(n)!.desc}`))))
       : null;
 
+    // 派生で外した、元の部品（戻せる）
+    const removed = variantOf && raw?.remove?.length
+      ? h('div', { class: 'pad muted' }, '元から外した部品: ', raw.remove.map((c) => h('button', { class: 'tiny', title: `${c} を元（@${variantOf}）から受け継ぐように戻す`, onclick: () => app.patch([{ op: 'revert', path: `${base}.${c}` }]) }, `↺ ${c}`)))
+      : null;
     const note = hiddenCount
       ? h('div', { class: 'pad muted', style: 'font-size:12px;cursor:pointer', onclick: () => setHide(false) }, `🔒 ロック中の ${hiddenCount} 項目を隠しています（クリックで表示）`)
       : null;
-    clear(el, head, note, comps, add);
+    clear(el, head, note, comps, removed, add);
   };
 
   // 実行中は値を画面に流し込む（入力中の欄は触らない）
@@ -164,6 +182,32 @@ export function inspectorPanel(app: App): Panel {
   app.on('settings', render);
   app.on('play', render);
   return { id: 'inspector', title: 'インスペクタ', el, render };
+}
+
+/** 派生の元を、元と重ねた形で（見つからなければ undefined） */
+function resolvedBase(app: App, name: string): PrefabDoc | undefined {
+  try { return resolvePrefab(new Map(Object.entries(app.state.prefabs)), name); } catch { return undefined; }
+}
+
+/** プレハブの帯: 派生の元へ移る・派生を作る・切り離す */
+function prefabBar(app: App, name: string, raw: PrefabDoc): HTMLElement {
+  const derive = () => modal((close) => {
+    const input = h('input', { type: 'text', value: `${name}_variant`, style: 'flex:1' }) as HTMLInputElement;
+    const go = () => { const v = input.value.trim(); close(); if (v) app.patch([{ op: 'addPrefab', name: v, base: name }]).then((r) => { if (r) app.select({ kind: 'prefab', name: v }); }); };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+    setTimeout(() => { input.focus(); input.select(); }, 0);
+    return h('div', {}, h('h3', {}, `@${name} の派生を作る`),
+      h('div', { class: 'row' }, h('span', { class: 'muted' }, '@'), input),
+      h('p', { class: 'muted' }, '元の値を受け継ぎ、変えた値だけを持つプレハブです。元を変えると、変えていない値は一緒に変わります。'),
+      h('div', { class: 'row', style: 'justify-content:flex-end;gap:6px;margin-top:12px' }, h('button', { onclick: close }, 'やめる'), h('button', { class: 'primary', onclick: go }, '作る')));
+  });
+  const kids = Object.values(app.state.prefabs).filter((p) => p.base === name).map((p) => p.name);
+  return h('div', { class: 'row', style: 'margin-top:6px;gap:6px;flex-wrap:wrap' },
+    raw.base ? h('span', { class: 'muted' }, '派生の元: ', h('a', { href: '#', style: 'color:var(--accent)', onclick: (e: Event) => { e.preventDefault(); app.select({ kind: 'prefab', name: raw.base! }); } }, '@' + raw.base)) : null,
+    kids.length ? h('span', { class: 'muted' }, `派生: ${kids.map((k) => '@' + k).join(' ')}`) : null,
+    h('span', { style: 'flex:1' }),
+    h('button', { class: 'tiny', title: 'このプレハブを元にして、一部だけ変えたプレハブを作る', onclick: derive }, '＋派生を作る'),
+    raw.base ? h('button', { class: 'tiny', title: '元から切り離して、今の値をまるごと持つふつうのプレハブにする（値は変わらない）', onclick: () => app.patch([{ op: 'setPrefab', name, base: null }]) }, '切り離す') : null);
 }
 
 export interface Ctx { comp: string; field: string; holder: Record<string, Record<string, unknown>> }

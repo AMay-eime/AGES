@@ -46,6 +46,7 @@
 ## 機能の目次（標準で足りるか先に見る。作り直さない。詳しくは guide:項目）
 
 - 表（武器・敵など同じ形の行）: `defineTable`・`ages table`・CSV → `table`
+- プレハブ・派生（元を受け継いで一部だけ変える）: patch の addPrefab（base）・revert → `prefab`
 - 画像・コマ・動き: Sprite・Animator・`ages sheet` / `ages slice`。画像を開かない → `sprite`
 - カメラ・画面の大きさ: Camera・`ctx.shake`・`view.fit` → `camera`
 - 音: Sound のプレハブと `ctx.sound.play`・AudioBus → `sound`
