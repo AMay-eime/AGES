@@ -55,14 +55,17 @@ export const Animator = defineComponent({
 
 export const Shape = defineComponent({
   name: 'Shape',
-  desc: '単色の図形を描く（標準）。四角・円・線。stroke で枠だけ（レーザー・予告線・ゲージの枠・リングに）',
+  desc: '単色の図形を描く（標準）。四角・円・線。stroke で枠、fill で枠の中の塗り、dash で破線（レーザー・予告線・ゲージの枠・リング・ギズモに）',
   fields: {
     kind: { type: 'enum', options: ['rect', 'circle', 'line'], default: 'rect', desc: '形。line は物の位置から to まで' },
     w: { type: 'number', default: 16, min: 0, max: 4096, desc: '幅(px)。line では使わない' },
     h: { type: 'number', default: 16, min: 0, max: 4096, desc: '高さ(px)。line では使わない' },
-    stroke: { type: 'number', default: 0, min: 0, max: 512, desc: '線の太さ(px)。rect・circle は 0 なら塗りつぶし、1以上なら枠だけ。line は線の太さ（0 なら 1）' },
+    stroke: { type: 'number', default: 0, min: 0, max: 512, desc: '線の太さ(px)。rect・circle は 0 なら color で塗りつぶし、1以上なら color の枠（中は fill）。line は線の太さ（0 なら 1）' },
+    fill: { type: 'color', default: '#00000000', desc: '枠（stroke 1以上）の中を塗る色。既定は透明（枠だけ）。#rrggbbaa の aa で透け具合' },
+    dash: { type: 'vec2', default: [0, 0], desc: '破線の [線の長さ, すきま](px)。line と枠に。[0, 0] なら実線' },
+    dashOffset: { type: 'number', default: 0, desc: '破線の模様をずらす(px)。トゥイーンで動かすと流れる（選んだ範囲の枠など）' },
     to: { type: 'vec2', default: [0, 0], desc: 'line の終わりの点（物の位置からのずれ(px)。回転・倍率がかかる）' },
-    color: { type: 'color', default: '#ffffff', desc: '色' },
+    color: { type: 'color', default: '#ffffff', desc: '色（#rrggbbaa の aa で透け具合）' },
     alpha: { type: 'number', default: 1, min: 0, max: 1, step: 0.01, desc: '不透明度' },
     blend: { type: 'enum', options: ['normal', 'add', 'multiply', 'screen'], default: 'normal', desc: '重ね方。add=光る（加算。レーザー・光の輪）' },
     ...drawOrder,

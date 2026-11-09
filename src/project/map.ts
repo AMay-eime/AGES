@@ -131,7 +131,7 @@ function sectionLines(p: Project, ins: Ins, mode: 'full' | 'compact'): Record<Ma
     if (stdUsed.length) r.shaders.push(`標準: ${stdUsed.map((d) => `${d.path}(${Object.keys(d.uniforms).join(',')})`).join(' ')}`);
   }
 
-  r.systems.push('## systems（実行順。（コードの場所） r=読む w=書く）');
+  r.systems.push('## systems（実行順。（コードの場所） r=読む w=書く 受ける=on で受ける出来事）');
   // 標準のシステムは、続いている所を1行にまとめる（中身は ages schema guide で引く）
   const systems = p.registry.systems;
   for (let i = 0; i < systems.length; i++) {
@@ -145,7 +145,8 @@ function sectionLines(p: Project, ins: Ins, mode: 'full' | 'compact'): Record<Ma
     }
     const rw = [s.reads?.length ? `r:${s.reads.join(',')}` : '', s.writes?.length ? `w:${s.writes.join(',')}` : ''].filter(Boolean).join(' ');
     const at = ins.defs.get(`system:${s.name}`);
-    r.systems.push(`${i + 1} ${s.name}${at ? `（${at}）` : ''} ${compact ? firstSentence(s.desc, 30) : s.desc}${rw ? ' ' + rw : ''}${s.scenes ? ` シーン:${s.scenes.join(',')}だけ` : ''}`);
+    const on = s.on ? Object.keys(s.on) : [];
+    r.systems.push(`${i + 1} ${s.name}${at ? `（${at}）` : ''} ${compact ? firstSentence(s.desc, 30) : s.desc}${rw ? ' ' + rw : ''}${on.length ? ` 受ける:${on.join(',')}` : ''}${s.scenes ? ` シーン:${s.scenes.join(',')}だけ` : ''}`);
   }
 
   if (p.registry.tables.size) {

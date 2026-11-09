@@ -2,6 +2,7 @@
 import { Registry, type GameModule } from '../core/registry.ts';
 import { Game, busesOf } from '../core/game.ts';
 import { InputRecorder, InputPlayback, actionsFromRows, keysToEvents, type InputEvent } from '../core/input.ts';
+import { RUN_DATE, formatDate, parseDate } from '../core/clock.ts';
 import { Devices } from '../input/devices.ts';
 import type { PrefabDoc, ProjectConfig, SceneDoc } from '../core/docs.ts';
 import type { Op, Change } from '../core/patch.ts';
@@ -410,7 +411,7 @@ export class App {
     // 再生中にシーンが切り替わっていたら、始めたシーンに戻る
     if (this.scene !== p.from && this.state.scenes[p.from]) { this.scene = p.from; this.rebuildPreview(); this.emit('change'); }
     this.emit('play');
-    if (p.recorder) await this.saveRecording(p.recorder.events, p.game.frame, p.saveAtStart);
+    if (p.recorder) await this.saveRecording(p.recorder.events, p.game.frame, p.saveAtStart, formatDate(p.game.dateStart));
     this.emit('save');
     if (p.edits.size) await this.askKeepEdits(p.edits);
   }
@@ -430,10 +431,11 @@ export class App {
     return new LocalStore(`ages.save.${this.state.config.name}.`, localStorage);
   }
 
-  private async saveRecording(events: InputEvent[], frames: number, save?: Record<string, unknown>): Promise<void> {
+  private async saveRecording(events: InputEvent[], frames: number, save: Record<string, unknown> | undefined, date: string): Promise<void> {
     const name = `rec-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}`;
     const path = `recordings/${name}.input.json`;
-    const data = { seed: this.state.config.seed, scene: this.scene, frames, ...(save && Object.keys(save).length ? { save } : {}), events };
+    // 始めた日時も残す（ctx.date を使うゲームも、ages run --input で同じ結果になるように）
+    const data = { seed: this.state.config.seed, scene: this.scene, frames, date, ...(save && Object.keys(save).length ? { save } : {}), events };
     await this.api(`/api/file?path=${encodeURIComponent(path)}`, { method: 'PUT', raw: JSON.stringify(data, null, 2) + '\n' });
     toast(`入力を記録しました: ${path}\nAIは ages run --input ${path} で同じ操作を再現できます`);
   }
@@ -465,7 +467,7 @@ export class App {
 
   /** 画面なしでの試し実行（カスタムウインドウ用）。keys は ages run --keys と同じ書き方（"0-600:@fire;100-200:ArrowLeft"） */
   simulate(frames: number, keys = '', seed?: number): { counts: Record<string, number>; frame: number; ms: number } {
-    const game = new Game(this.registry, this.state.config, this.state.scenes[this.scene], seed ?? this.state.config.seed);
+    const game = new Game(this.registry, this.state.config, this.state.scenes[this.scene], seed ?? this.state.config.seed, { date: parseDate(RUN_DATE) });
     const play = new InputPlayback(keysToEvents(keys, actionsFromRows(this.registry.tableView('actions').rows)));
     const t0 = performance.now();
     for (let i = 0; i < frames; i++) game.step(play.at(game.frame));

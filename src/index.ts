@@ -15,5 +15,6 @@ export type { ParticleApi } from './core/particles.ts';
 export type { SaveApi, SaveStore } from './core/save.ts';
 export { MemoryStore, LocalStore } from './core/save.ts';
 export type { HitApi, UiApi } from './core/game.ts';
+export type { GameDate } from './core/clock.ts';
 export { camerasOf, worldToScreen, screenToWorld, visibleCorners, fitView, type CameraView, type FitMode } from './core/camera.ts';
 export type { SheetDef, ClipDef } from './core/sheet.ts';

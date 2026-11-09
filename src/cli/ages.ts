@@ -17,14 +17,15 @@ import { assetRefs, codeSceneRefs, isUnder } from '../core/assets.ts';
 import { parseAddress } from '../core/docs.ts';
 import { cellsToRows, formatDelimited, importOps, parseDelimited, tableToCells } from '../core/csv.ts';
 import type { Row, TableDoc } from '../core/table.ts';
-import { InputPlayback, actionsFromRows, keysToEvents, type ActionDef, type InputEvent } from '../core/input.ts';
+import { actionsFromRows, type ActionDef } from '../core/input.ts';
 import { GameError, type Game } from '../core/game.ts';
 import { baseNameOf, frameCount, listFrames, type SheetDef } from '../core/sheet.ts';
 import { autoRects, carryClips, gridRects, nameFrames, type Pixels, type Rect } from '../core/slice.ts';
 import { decodePng } from '../project/png.ts';
 import { shaderReport } from '../project/shader-status.ts';
 import { layoutUI } from '../core/ui.ts';
-import { frameInput } from '../core/runinput.ts';
+import { RunInput, parseRunKeys, type RunKeys } from '../core/runinput.ts';
+import { RUN_DATE, formatDate, parseDate } from '../core/clock.ts';
 import { captureShots } from './shot.ts';
 import { MemoryStore } from '../core/save.ts';
 import { languagesOf } from '../core/i18n.ts';
@@ -45,7 +46,8 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   run    <dir> [--frames 600] [--scene main | --spawn enemy,explosion@40,0（プレハブだけを空のシーンの真ん中に出して試す）] [--seed 1] [--keys "0-120:ArrowLeft+KeyZ;120-200:@move_x=1;30:Mouse0+ptr=240,100"]
                [--input recordings/x.input.json] [--watch player.Health.hp,@enemy.Health.hp,...（@プレハブ名 はいる最初の1つ）] [--every 60] [--until gameOver | scene:result | click:ボタンのID] [--twice] [--dump]
                [--save saves/x.save.json]（この保存データから始める。省くと空） [--save-out saves/y.save.json]（終わりの保存データを書き出す） [--lang en]（言語）
-               [--params stage=s1,level=2]（始めのシーンに渡す ctx.scene.params。JSON でもよい）
+               [--params stage=s1,level=2]（始めのシーンに渡す ctx.scene.params。JSON でもよい） [--date 2026-12-25T09:00]（ctx.date の始め。省くと決まった日時）
+               --keys の "title+30-32:@ui_confirm" は、シーン title に入るたびに、入ってから 30〜31 フレーム目に押す（click=ボタンのID も書ける）
                [--shot 0,600 [--shot-scale 0.5] [--shot-dir 場所]]（そのフレームの画面を PNG で撮る。既定 .ages/shots。要 Chrome）
   log    <dir> [--all] [--peek]      前回からの編集の要約（--peek は既読にしない）
   undo   <dir> [--tx id] [--force]   自分（AI）の直前の編集を元に戻す（その後で変えられた所があれば止まる）。redo <dir> でやり直す
@@ -443,29 +445,23 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
   const frames = Number(f.frames ?? 600);
   const scene = typeof f.scene === 'string' ? f.scene : p.config.startScene;
   const seed = f.seed !== undefined ? Number(f.seed) : p.config.seed;
-  let events: InputEvent[] = [];
+  let keys: RunKeys = { events: [], clicks: [], scene: [] };
   // 始めるときの保存データ（--save のファイル、なければ記録に入っているもの、なければ空）
   let initialSave: Record<string, unknown> = {};
+  // 日時（--date、なければ記録に入っているもの、なければ決まった日時）
+  let date = parseDate(RUN_DATE);
   if (typeof f.input === 'string') {
     const rec = JSON.parse(await readFile(`${p.dir}/${f.input}`, 'utf8'));
-    events = rec.events;
+    keys.events = rec.events;
     if (rec.save && typeof rec.save === 'object') initialSave = rec.save;
+    if (typeof rec.date === 'string') date = parseDate(rec.date);
   }
   if (typeof f.save === 'string') initialSave = await readSaveFile(p.dir, f.save);
-  // click=ボタンのID は、そのフレームのボタンの真ん中を押す（位置を数えなくてよい）
-  const clicks = new Map<number, string>();
+  if (typeof f.date === 'string') date = parseDate(f.date);
+  // click=ボタンのID は、そのフレームのボタンの真ん中を押す。シーン名+30:… は、そのシーンに入るたびに入ってから数える
   if (typeof f.keys === 'string') {
-    const spec = f.keys.split(';').map((seg) => {
-      const m = seg.trim().match(/^(\d+):(.+)$/);
-      if (!m) return seg;
-      const rest = m[2].split('+').filter((tok) => {
-        const c = tok.trim().match(/^click=([A-Za-z_][\w~-]*)$/);
-        if (c) clicks.set(Number(m[1]), c[1]);
-        return !c;
-      });
-      return rest.length ? `${m[1]}:${rest.join('+')}` : '';
-    }).filter(Boolean).join(';');
-    events = keysToEvents(spec, actionsOf(p));
+    keys = parseRunKeys(f.keys, actionsOf(p));
+    for (const k of keys.scene) if (!p.registry.scenes.has(k.scene) && !p.docs.scenes.has(k.scene)) throw new Error(`--keys の ${k.scene}+${k.a}: シーン ${k.scene} はありません${suggest(k.scene, [...p.docs.scenes.keys()])}`);
   }
   const watch = typeof f.watch === 'string' ? f.watch.split(',').map((s) => s.trim()).filter(Boolean) : [];
   const every = f.every !== undefined ? Number(f.every) : 0;
@@ -487,9 +483,9 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
   if (f.spawn !== undefined && !spawns.length) throw new Error('--spawn にはプレハブの名前が要ります（例 --spawn enemy_fast,explosion@40,0。@ の後は画面の真ん中からのずれ）');
   const once = () => {
     const lang = typeof f.lang === 'string' ? f.lang : undefined;
-    const game = spawns.length ? p.newGame(undefined, seed, new MemoryStore(initialSave), lang, tryoutScene()) : p.newGame(scene, seed, new MemoryStore(initialSave), lang, undefined, params);
+    const game = spawns.length ? p.newGame(undefined, seed, new MemoryStore(initialSave), lang, tryoutScene(), undefined, date) : p.newGame(scene, seed, new MemoryStore(initialSave), lang, undefined, params, date);
     const spawned = spawns.length ? spawnTryout(game, spawns, p.config.view.width, p.config.view.height) : [];
-    const play = new InputPlayback(events);
+    const play = new RunInput(keys);
     const lines: string[] = [];
     const first = watch.map((w) => readWatch(game, w));
     if (shotFrames.includes(0) && !shotHashes.has(0)) { shotHashes.set(0, game.hash()); shotSnaps.set(0, game.snapshot()); }
@@ -500,7 +496,7 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
     const t0 = performance.now();
     try {
       for (let i = 0; i < frames && !stopped; i++) {
-        const { input: inp, warning } = frameInput(game, play, clicks, p.config.view.width, p.config.view.height);
+        const { input: inp, warning } = play.at(game, p.config.view.width, p.config.view.height);
         if (warning) lines.push(`⚠ f${game.frame} click=${warning}: UI の付いた物 ${warning} がありません${suggest(warning, [...game.world.entities.values()].filter((e) => e.c.UI).map((e) => e.id))}`);
         game.step(inp);
         if (shotFrames.includes(game.frame) && !shotHashes.has(game.frame)) { shotHashes.set(game.frame, game.hash()); shotSnaps.set(game.frame, game.snapshot()); }
@@ -527,6 +523,9 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
   const counts = [...g.counts.entries()].map(([k, v]) => `${k}×${v}`).join(' ');
   out.push(`events: ${counts || 'なし'}`);
   if (g.sceneLog.length > 1) out.push(`scenes: ${g.sceneLog.map((x) => `${x.name}@${x.frame}`).join(' → ')}${g.transition ? `（${g.transition.phase === 'out' ? '消えていく途中' : '出てくる途中'}）` : ''}`);
+  if (g.dateUsed) out.push(`date: ${formatDate(date)} から（ctx.date を読んだ。--date 2026-12-25T09:00 で変えられる）`);
+  const unused = keys.scene.filter((k) => !g.sceneLog.some((x) => x.name === k.scene));
+  if (unused.length) out.push(`⚠ --keys の ${unused.map((k) => `${k.scene}+${k.a}`).join(' ')}: そのシーンに入りませんでした`);
   if (g.soundCounts.size) out.push(`sounds: ${[...g.soundCounts.entries()].map(([k, v]) => `♪${k}×${v}`).join(' ')}`);
   if (g.hits.counts.size) out.push(`hits: ${[...g.hits.counts.entries()].map(([k, v]) => `${k}×${v}`).join(' ')}（重なり始めた回数。Collider.with のグループ）`);
   if (g.uiCounts.size) out.push(`ui: 押されたボタン ${[...g.uiCounts.entries()].map(([k, v]) => `${k}×${v}`).join(' ')}`);
@@ -548,7 +547,7 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
     await mkdir(dirname(to), { recursive: true });
     await writeFile(to, JSON.stringify(g.save.all(), null, 2) + '\n');
   }
-  if (shotFrames.length) out.push(...(await shots(p, f, shotFrames, shotHashes, shotSnaps, { scene, seed, events, clicks, params, save: initialSave, spawns })));
+  if (shotFrames.length) out.push(...(await shots(p, f, shotFrames, shotHashes, shotSnaps, { scene, seed, keys, params, save: initialSave, spawns, date: formatDate(date) })));
   return withLockReport(p, out.join('\n'));
 }
 
@@ -578,7 +577,7 @@ export function snapshotDiff(a: unknown, b: unknown): string {
 }
 
 /** --shot: ages run と同じ入力で、そのフレームの画面を撮って .ages/shots（--shot-dir）に PNG で置く */
-async function shots(p: Project, f: Args['flags'], frames: number[], hashes: Map<number, string>, snaps: Map<number, unknown>, o: { scene: string; seed: number; events: InputEvent[]; clicks: Map<number, string>; params?: Record<string, unknown>; save: Record<string, unknown>; spawns: import('../core/tryout.ts').TryoutSpawn[] }): Promise<string[]> {
+async function shots(p: Project, f: Args['flags'], frames: number[], hashes: Map<number, string>, snaps: Map<number, unknown>, o: { scene: string; seed: number; keys: RunKeys; params?: Record<string, unknown>; save: Record<string, unknown>; spawns: import('../core/tryout.ts').TryoutSpawn[]; date: string }): Promise<string[]> {
   const scale = f['shot-scale'] !== undefined ? Number(f['shot-scale']) : 1;
   if (!(scale > 0 && scale <= 2)) throw new Error('--shot-scale は 0 より大きく 2 以下（例 0.5 で半分の大きさ。画像のトークンも減る）');
   const reach = frames.filter((n) => n === 0 || hashes.has(n));
@@ -586,7 +585,7 @@ async function shots(p: Project, f: Args['flags'], frames: number[], hashes: Map
   for (const n of frames.filter((x) => !reach.includes(x))) out.push(`⚠ shot f${n}: そのフレームまで進んでいません（--frames を増やすか、--until で止まる前のフレームに）`);
   if (!reach.length) return out;
   try {
-    const r = await captureShots(p.dir, { scene: o.scene, seed: o.seed, frames: reach, events: o.events, clicks: [...o.clicks], params: o.params, save: o.save, lang: typeof f.lang === 'string' ? f.lang : undefined, spawns: o.spawns, scale, dump: true });
+    const r = await captureShots(p.dir, { scene: o.scene, seed: o.seed, frames: reach, keys: o.keys, date: o.date, params: o.params, save: o.save, lang: typeof f.lang === 'string' ? f.lang : undefined, spawns: o.spawns, scale, dump: true });
     const dir = resolve(p.dir, typeof f['shot-dir'] === 'string' ? f['shot-dir'] : '.ages/shots');
     await mkdir(dir, { recursive: true });
     const name = o.spawns.length ? 'tryout' : o.scene;

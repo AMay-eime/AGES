@@ -334,8 +334,10 @@ export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, 
     case 'color': {
       const c = h('input', { type: 'color', value: String(value).slice(0, 7) }) as HTMLInputElement;
       const t = h('input', { type: 'text', value: String(value), style: 'width:84px;font:var(--mono)' }) as HTMLInputElement;
-      c.addEventListener('input', () => { t.value = c.value; commit(c.value, false); });
-      c.addEventListener('change', () => commit(c.value, true));
+      // 色の選び器は #rrggbb だけなので、透け具合（#rrggbbaa の aa）は今の値から引き継ぐ
+      const pick = () => c.value + (t.value.length === 9 ? t.value.slice(7) : '');
+      c.addEventListener('input', () => { t.value = pick(); commit(t.value, false); });
+      c.addEventListener('change', () => commit(pick(), true));
       t.addEventListener('change', () => commit(t.value, true));
       wrap.append(c, t);
       return { el: wrap, set: (v) => { t.value = String(v); c.value = String(v).slice(0, 7); } };

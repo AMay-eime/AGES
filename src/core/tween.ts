@@ -47,8 +47,9 @@ export interface TweenState {
   emit?: string;
 }
 
-const HEX = /^#([0-9a-fA-F]{6})$/;
-const rgb = (c: string) => { const n = parseInt(c.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+const HEX = /^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+/** 色を [r, g, b, a]（0〜255）に。#rrggbb なら a は 255 */
+const rgb = (c: string) => [1, 3, 5, 7].map((i) => (i === 7 && c.length < 9 ? 255 : parseInt(c.slice(i, i + 2), 16)));
 const hex = (v: number[]) => '#' + v.map((x) => Math.max(0, Math.min(255, Math.round(x))).toString(16).padStart(2, '0')).join('');
 
 /** a から b へ k（0〜1、はみ出してもよい）だけ進めた値 */
@@ -56,7 +57,11 @@ export function lerpValue(a: TweenValue, b: TweenValue, k: number, round = false
   const r = (x: number) => (round ? Math.round(x) : x);
   if (typeof a === 'number' && typeof b === 'number') return r(a + (b - a) * k);
   if (Array.isArray(a) && Array.isArray(b)) return a.map((x, i) => r(x + ((b[i] ?? x) - x) * k));
-  if (typeof a === 'string' && typeof b === 'string') { const x = rgb(a), y = rgb(b); return hex(x.map((v, i) => v + (y[i] - v) * k)); }
+  if (typeof a === 'string' && typeof b === 'string') {
+    const x = rgb(a), y = rgb(b), out = hex(x.map((v, i) => v + (y[i] - v) * k));
+    // 透け具合（#rrggbbaa）は、どちらかに書いてあるときだけ残す
+    return a.length === 9 || b.length === 9 ? out : out.slice(0, 7);
+  }
   return b;
 }
 
@@ -70,7 +75,7 @@ export function targetValue(at: string, f: Field, current: unknown, to: unknown)
   }
   if (f.type === 'color') {
     if (typeof to === 'string' && HEX.test(to) && typeof current === 'string' && HEX.test(current)) return to.toLowerCase();
-    throw new Error(`${at}: 色は '#rrggbb' の形で書きます。受け取った値: ${JSON.stringify(to)}`);
+    throw new Error(`${at}: 色は '#rrggbb'（透けるなら '#rrggbbaa'）の形で書きます。受け取った値: ${JSON.stringify(to)}`);
   }
   if (f.type === 'vec2' || (f.type === 'list' && (f.of.type === 'number' || f.of.type === 'int'))) {
     if (Array.isArray(to) && Array.isArray(current) && to.length === current.length && to.every((x) => typeof x === 'number')) return to;

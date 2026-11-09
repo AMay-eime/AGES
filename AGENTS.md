@@ -40,7 +40,7 @@
 
 ## ゲームコードの決まり（game/*.ts）
 
-- 乱数は `ctx.rng`、時間は `ctx.frame` / `ctx.time`。`Math.random` や `Date` は使わない
+- 乱数は `ctx.rng`、時間は `ctx.frame` / `ctx.time`、日時は `ctx.date`。`Math.random` や `Date` は使わない → `date`
 - システムには `desc` と `reads` / `writes`、フィールドには `desc` と意味のある `min` / `max` を必ず書く（地図・インスペクタ・検証に使われる）。実行中だけ変わる値は desc に「自動で変化」（地図では名前だけになる）
 - 手触りの数字（秒数・速さ・音量）はコードに書かず、コンポーネント・プレハブ・表に置く
 - 1ファイルは1つのシステム・機能に（目安は数百行まで。大きくなったら分ける。巨大なファイルは毎回の読む量を増やす）
@@ -54,6 +54,7 @@
 - 音: Sound のプレハブと `ctx.sound.play`・AudioBus → `sound`
 - 入力・キーコンフィグ: 表 `$actions` と `ctx.input.isDown('fire')`。キーの名前をコードに書かない → `input`
 - シーン: `ctx.scene.goto`・patch の addScene など → `scene`
+- システムどうしの連絡: `ctx.emit` と `on`（出す側に受ける側の呼び出しを書かない） → `event`
 - アセットの一覧・移動・削除: `ages assets`・patch の moveAsset / removeAsset → `assets`
 - 時間で変える演出: `ctx.tween` と表 `$tweens`。自分でフレームを数えない → `tween`
 - 見た目の効果: Effect・PostEffect と `std:flash` などのシェーダー・`.frag` → `shader`
