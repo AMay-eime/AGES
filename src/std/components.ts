@@ -53,11 +53,13 @@ export const Animator = defineComponent({
 
 export const Shape = defineComponent({
   name: 'Shape',
-  desc: '単色の図形を描く（標準。試作や当たり判定の確認に）',
+  desc: '単色の図形を描く（標準）。四角・円・線。stroke で枠だけ（レーザー・予告線・ゲージの枠・リングに）',
   fields: {
-    kind: { type: 'enum', options: ['rect', 'circle'], default: 'rect', desc: '形' },
-    w: { type: 'number', default: 16, min: 0, max: 4096, desc: '幅(px)' },
-    h: { type: 'number', default: 16, min: 0, max: 4096, desc: '高さ(px)' },
+    kind: { type: 'enum', options: ['rect', 'circle', 'line'], default: 'rect', desc: '形。line は物の位置から to まで' },
+    w: { type: 'number', default: 16, min: 0, max: 4096, desc: '幅(px)。line では使わない' },
+    h: { type: 'number', default: 16, min: 0, max: 4096, desc: '高さ(px)。line では使わない' },
+    stroke: { type: 'number', default: 0, min: 0, max: 512, desc: '線の太さ(px)。rect・circle は 0 なら塗りつぶし、1以上なら枠だけ。line は線の太さ（0 なら 1）' },
+    to: { type: 'vec2', default: [0, 0], desc: 'line の終わりの点（物の位置からのずれ(px)。回転・倍率がかかる）' },
     color: { type: 'color', default: '#ffffff', desc: '色' },
     alpha: { type: 'number', default: 1, min: 0, max: 1, step: 0.01, desc: '不透明度' },
     ...drawOrder,
@@ -76,6 +78,9 @@ export const Text = defineComponent({
     font: { type: 'asset', kind: 'font', default: '', desc: 'フォントファイル（空なら標準のフォント）' },
     wrap: { type: 'number', default: 0, min: 0, max: 4096, desc: 'この幅(px)で折り返す（0 なら折り返さない）' },
     lineHeight: { type: 'number', default: 1.25, min: 0.5, max: 4, step: 0.05, desc: '行の高さ（文字の大きさの倍）' },
+    bold: { type: 'bool', default: false, desc: '太字' },
+    outline: { type: 'number', default: 0, min: 0, max: 32, step: 0.5, desc: '縁取りの太さ(px)。0 なら縁取りなし。背景の上で読ませる文字（HUD・ダメージの数字）に。Effect の std:outline より軽い' },
+    outlineColor: { type: 'color', default: '#000000', desc: '縁取りの色' },
     ...drawOrder,
   },
 });
@@ -274,4 +279,14 @@ export const PostEffect = defineComponent({
   },
 });
 
-export const STD_COMPONENTS = [Transform, Sprite, Animator, Shape, Text, Camera, Sound, AudioBus, Particles, Effect, PostEffect, UI, Layout, Button, Gauge, Collider];
+export const Clip = defineComponent({
+  name: 'Clip',
+  desc: '切り抜き（標準）。同じ物の Sprite・Shape・Text・Particles を、決めた四角の中だけに描く（背景の切り替えの境目・巻物の一覧・現れる演出に）',
+  fields: {
+    enabled: { type: 'bool', default: true, desc: '切り抜くか' },
+    min: { type: 'vec2', default: [0, 0], desc: '四角の左上（ワールドの座標(px)。UI の物は画面の座標）' },
+    max: { type: 'vec2', default: [0, 0], desc: '四角の右下（同じ座標）。カメラが回っているときは、回った四角を囲む四角で切る' },
+  },
+});
+
+export const STD_COMPONENTS = [Transform, Sprite, Animator, Shape, Text, Camera, Sound, AudioBus, Particles, Effect, PostEffect, UI, Layout, Button, Gauge, Collider, Clip];

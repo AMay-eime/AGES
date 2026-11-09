@@ -95,7 +95,7 @@ claude mcp add ages -- node /path/to/AGES/src/mcp/server.ts --project /path/to/m
 
 ```
 src/core/     エンジンの核（ブラウザでもNodeでも動く）: 型・住所・差分編集・表・シート・カメラ・音の命令・トゥイーン・シェーダーの宣言・UI の置き方と操作・当たり判定
-src/std/      標準の部品（Transform / Sprite / Animator / Shape / Text / Camera / Sound / AudioBus / Particles / Effect / PostEffect / UI / Layout / Button / Gauge / Collider）と標準の表（$actions / $tweens / $text）
+src/std/      標準の部品（Transform / Sprite / Animator / Shape / Text / Camera / Sound / AudioBus / Particles / Effect / PostEffect / UI / Layout / Button / Gauge / Collider / Clip）と標準の表（$actions / $tweens / $text）
 src/render/   描画（WebGL2）
 src/audio/    音を鳴らす側（Web Audio。ブラウザ専用）
 src/input/    入力の機器（キーボード・マウス・タッチ・ゲームパッド → ボタンの名前と軸の値。ブラウザ専用）

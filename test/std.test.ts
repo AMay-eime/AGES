@@ -93,3 +93,30 @@ test('描く順番は 層 → 順番 → 入った順。選択は見えている
   assert.equal(pointInCorners(0, 9, q), true);
   assert.equal(pointInCorners(9, 0, q), false);
 });
+
+test('図形の線・枠と文字の縁取り・切り抜き（2-16）: 形の計算と標準の部品', async () => {
+  const { lineCorners, strokeBands } = await import('../src/render/geom.ts');
+  // 線: (10,20) から右へ 100、太さ 4 → 上下に 2 ずつ
+  assert.deepEqual(lineCorners({ x: 10, y: 20 }, [100, 0], 4), [10, 22, 110, 22, 110, 18, 10, 18]);
+  // 回転 90 度（y は下向き）: to は回って下へ伸びる
+  const q = lineCorners({ x: 0, y: 0, rot: 90 }, [50, 0], 2).map((v) => Math.round(v * 1000) / 1000 + 0);
+  assert.deepEqual(q, [-1, 0, -1, 50, 1, 50, 1, 0]);
+  // 枠: 4本の帯。太すぎると塗りつぶしと同じ1枚
+  assert.deepEqual(strokeBands(100, 50, 5), [[0, 0, 1, 0.1], [0, 0.9, 1, 1], [0, 0.1, 0.05, 0.9], [0.95, 0.1, 1, 0.9]]);
+  assert.deepEqual(strokeBands(100, 50, 30), [[0, 0, 1, 1]]);
+  // 標準の部品と既定値
+  const dir = await fresh();
+  const p = await Project.load(dir);
+  const s = p.registry.components.get('Shape')!.fields;
+  assert.deepEqual([s.kind.type === 'enum' && s.kind.options, s.stroke.default, s.to.default], [['rect', 'circle', 'line'], 0, [0, 0]]);
+  const t = p.registry.components.get('Text')!.fields;
+  assert.deepEqual([t.bold.default, t.outline.default, t.outlineColor.default], [false, 0, '#000000']);
+  assert.ok(p.registry.std.has('Clip'));
+  const r = await p.apply([
+    { op: 'addEntity', scene: 'main', entity: { id: 'beam', components: { Transform: { x: 10, y: 10 }, Shape: { kind: 'line', to: [0, 300], stroke: 6 }, Clip: { min: [0, 0], max: [100, 200] } } } },
+    { op: 'set', path: 'main#hpLabel.Text.outline', value: 2 },
+  ], ai);
+  assert.equal(r.changes.length, 2);
+  await assert.rejects(p.apply([{ op: 'set', path: 'main#beam.Shape.kind', value: 'ring' }], ai), /rect \| circle \| line/);
+  await rm(dir, { recursive: true, force: true });
+});
