@@ -184,6 +184,24 @@
           }
         }
       }
+    },
+    {
+      "id": "hpGauge",
+      "name": "HP Gauge",
+      "components": {
+        "UI": {
+          "anchor": "topRight",
+          "x": -12,
+          "y": 17,
+          "w": 110,
+          "h": 10
+        },
+        "Gauge": {
+          "value": 3,
+          "max": 3,
+          "layer": 10
+        }
+      }
     }
   ]
 }

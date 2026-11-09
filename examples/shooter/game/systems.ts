@@ -142,14 +142,16 @@ export const combat = defineSystem({
 
 export const hud = defineSystem({
   name: 'hud',
-  desc: '得点と体力を Text に書き出す',
+  desc: '得点と体力を Text と体力のゲージ（hpGauge）に書き出す',
   reads: ['Score', 'Health'],
-  writes: ['Text'],
+  writes: ['Text', 'Gauge'],
   update({ world }) {
     const hp = world.query('Player', 'Health')[0]?.c.Health.hp ?? 0;
     for (const e of world.query('Score', 'Text')) {
       e.c.Text.text = `SCORE ${e.c.Score.value}   HP ${hp}`;
     }
+    const gauge = world.get('hpGauge')?.c.Gauge;
+    if (gauge) gauge.value = hp;
   },
 });
 
@@ -168,15 +170,15 @@ export const toResult = defineSystem({
 
 export const resultScreen = defineSystem({
   name: 'resultScreen',
-  desc: '結果のシーン: 得点を出し、fire でもう一度（main へ）',
+  desc: '結果のシーン: 得点を出し、「もう一度」のボタンか fire でもう一度（main へ）',
   writes: ['Text'],
   scenes: ['result'],
   start({ world, scene }) {
     const t = world.get('score')?.c.Text;
     if (t) t.text = `SCORE ${Number(scene.params.score ?? 0)}`;
   },
-  update({ input, scene }) {
-    // 入ってすぐの押しっぱなしで飛ばないように、少し待つ
-    if (scene.frame > 30 && !scene.transition && input.pressed('fire')) scene.goto('main', { fade: 0.3 });
+  update({ input, scene, ui }) {
+    // 入ってすぐの押しっぱなしで飛ばないように、少し待つ（ボタンの上で押したマウスは fire にならない）
+    if (scene.frame > 30 && !scene.transition && (input.pressed('fire') || ui.clicked('retry'))) scene.goto('main', { fade: 0.3 });
   },
 });

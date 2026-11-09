@@ -173,7 +173,16 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     const drawn = new Set(renderer.shapes.map((s) => s.id));
     const out: { id: string; x: number; y: number; cam: number }[] = [];
     for (const e of w.entities.values()) {
-      if (!e.c.Transform || drawn.has(e.id)) continue;
+      if (drawn.has(e.id)) continue;
+      // UI の物は、画面に固定した四角の中心に
+      if (e.c.UI) {
+        const r = renderer.uiRect(e.id), v = renderer.uiView;
+        if (!r?.visible || !v) continue;
+        const [x, y] = worldToScreen(v, r.x + r.w / 2, r.y + r.h / 2);
+        out.push({ id: e.id, x, y, cam: renderer.cams.indexOf(v) });
+        continue;
+      }
+      if (!e.c.Transform) continue;
       // その位置が映っている最初のカメラで描く
       for (let i = 0; i < renderer.cams.length; i++) {
         const [x, y] = worldToScreen(renderer.cams[i], e.c.Transform.x, e.c.Transform.y);
@@ -215,7 +224,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
 
   // ---------- マウス ----------
   let last: { x: number; y: number; ids: string[]; i: number } | null = null;
-  let drag: { id: string; cam: CameraView; dx: number; dy: number; moved: boolean } | null = null;
+  let drag: { id: string; cam: CameraView; dx: number; dy: number; moved: boolean; ui?: { x: number; y: number; wx: number; wy: number } } | null = null;
   let pan: { x: number; y: number; cx: number; cy: number } | null = null;
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   canvas.addEventListener('mousedown', (e) => {
@@ -235,12 +244,15 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     const hit = w.get(ids[i])!;
     app.select({ kind: 'scene', scene: app.scene, id: hit.id });
     hint = ids.length > 1 ? `重なり ${i + 1}/${ids.length}（同じ場所をもう一度クリックで奥へ）` : '';
-    if (!app.play && hit.c.Transform) {
+    if (!app.play && (hit.c.Transform || hit.c.UI)) {
       // 選んだものを映しているカメラで、画面の動きをワールドの動きにする
       const camIndex = ms.find((m) => m.id === hit.id)?.cam ?? [...renderer.shapes].reverse().find((s) => s.id === hit.id && s.cam !== undefined)?.cam ?? 0;
       const cam = renderer.cams[camIndex];
       const [wx, wy] = screenToWorld(cam, p.x, p.y);
-      drag = { id: hit.id, cam, dx: hit.c.Transform.x - wx, dy: hit.c.Transform.y - wy, moved: false };
+      // UI の物は UI.x・y（合わせる所からのずれ）を動かす。Layout で並べている子は動かさない
+      const parent = hit.c.UI?.parent ? w.get(hit.c.UI.parent) : undefined;
+      if (hit.c.UI && !parent?.c.Layout) drag = { id: hit.id, cam, dx: 0, dy: 0, moved: false, ui: { x: hit.c.UI.x ?? 0, y: hit.c.UI.y ?? 0, wx, wy } };
+      else if (!hit.c.UI && hit.c.Transform) drag = { id: hit.id, cam, dx: hit.c.Transform.x - wx, dy: hit.c.Transform.y - wy, moved: false };
     }
   });
   window.addEventListener('mousemove', (e) => {
@@ -252,10 +264,20 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
       return;
     }
     if (!drag || !app.preview) return;
-    const t = app.preview.world.get(drag.id)?.c.Transform;
-    if (!t) return;
     const p = toCanvas(e);
     const [wx, wy] = screenToWorld(drag.cam, p.x, p.y);
+    if (drag.ui) {
+      const u = app.preview.world.get(drag.id)?.c.UI;
+      if (!u) return;
+      const nx = Math.round(drag.ui.x + wx - drag.ui.wx), ny = Math.round(drag.ui.y + wy - drag.ui.wy);
+      if (!drag.moved && Math.hypot(nx - drag.ui.x, ny - drag.ui.y) < 2) return;
+      u.x = nx;
+      u.y = ny;
+      drag.moved = true;
+      return;
+    }
+    const t = app.preview.world.get(drag.id)?.c.Transform;
+    if (!t) return;
     const nx = Math.round(wx + drag.dx), ny = Math.round(wy + drag.dy);
     if (!drag.moved && Math.hypot(nx - t.x, ny - t.y) < 2) return; // クリックしただけでは動かさない
     t.x = nx;
@@ -267,6 +289,12 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     const d = drag;
     drag = null;
     if (!d?.moved || !app.preview) return;
+    if (d.ui) {
+      const u = app.preview.world.get(d.id)!.c.UI;
+      const base = `${app.scene}#${d.id}.UI`;
+      app.patch([{ op: 'set', path: `${base}.x`, value: u.x }, { op: 'set', path: `${base}.y`, value: u.y }], 'game');
+      return;
+    }
     const t = app.preview.world.get(d.id)!.c.Transform;
     const base = `${app.scene}#${d.id}.Transform`;
     app.patch([{ op: 'set', path: `${base}.x`, value: t.x }, { op: 'set', path: `${base}.y`, value: t.y }], 'game');

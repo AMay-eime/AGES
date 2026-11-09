@@ -19,6 +19,7 @@ import { baseNameOf, frameCount, listFrames, type SheetDef } from '../core/sheet
 import { autoRects, carryClips, gridRects, nameFrames, type Pixels, type Rect } from '../core/slice.ts';
 import { decodePng } from '../project/png.ts';
 import { shaderReport } from '../project/shader-status.ts';
+import { layoutUI } from '../core/ui.ts';
 
 const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [引数]
 
@@ -34,7 +35,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   table  <dir> <表> [--cols a,b] [--rows id1,id2]   表を見る（1行1行）
                [--export x.csv] [--import x.csv [--force]]   表計算ソフトとの行き来（読み込みは表をまるごと置き換える）
   run    <dir> [--frames 600] [--scene main] [--seed 1] [--keys "0-120:ArrowLeft+KeyZ;120-200:@move_x=1;30:Mouse0+ptr=240,100"]
-               [--input recordings/x.input.json] [--watch player.Health.hp,...] [--every 60] [--until gameOver | scene:result] [--twice] [--dump]
+               [--input recordings/x.input.json] [--watch player.Health.hp,...] [--every 60] [--until gameOver | scene:result | click:ボタンのID] [--twice] [--dump]
   log    <dir> [--all] [--peek]      前回からの編集の要約（--peek は既読にしない）
   undo   <dir> [--tx id] [--force]   自分（AI）の直前の編集を元に戻す（その後で変えられた所があれば止まる）。redo <dir> でやり直す
   check  <dir>                       全データの検証とロックの検査
@@ -326,7 +327,21 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
   const seed = f.seed !== undefined ? Number(f.seed) : p.config.seed;
   let events: InputEvent[] = [];
   if (typeof f.input === 'string') events = JSON.parse(await readFile(`${p.dir}/${f.input}`, 'utf8')).events;
-  if (typeof f.keys === 'string') events = keysToEvents(f.keys, actionsOf(p));
+  // click=ボタンのID は、そのフレームのボタンの真ん中を押す（位置を数えなくてよい）
+  const clicks = new Map<number, string>();
+  if (typeof f.keys === 'string') {
+    const spec = f.keys.split(';').map((seg) => {
+      const m = seg.trim().match(/^(\d+):(.+)$/);
+      if (!m) return seg;
+      const rest = m[2].split('+').filter((tok) => {
+        const c = tok.trim().match(/^click=([A-Za-z_][\w~-]*)$/);
+        if (c) clicks.set(Number(m[1]), c[1]);
+        return !c;
+      });
+      return rest.length ? `${m[1]}:${rest.join('+')}` : '';
+    }).filter(Boolean).join(';');
+    events = keysToEvents(spec, actionsOf(p));
+  }
   const watch = typeof f.watch === 'string' ? f.watch.split(',').map((s) => s.trim()).filter(Boolean) : [];
   const every = f.every !== undefined ? Number(f.every) : 0;
   const until = typeof f.until === 'string' ? f.until : '';
@@ -338,11 +353,24 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
     const first = watch.map((w) => readWatch(game, w));
     let stopped = '';
     if (until.startsWith('scene:')) game.sceneListeners.push((_from, to) => { if (to === until.slice(6) && !stopped) stopped = `${until} @f${game.frame}`; });
+    else if (until.startsWith('click:')) game.listeners.push((ev) => { if (ev.name === 'ui.click' && (ev.data as { id?: string })?.id === until.slice(6) && !stopped) stopped = `${until} @f${ev.frame}`; });
     else if (until) game.listeners.push((ev) => { if (ev.name === until && !stopped) stopped = `${until} @f${ev.frame}`; });
     const t0 = performance.now();
     try {
       for (let i = 0; i < frames && !stopped; i++) {
-        game.step(play.at(game.frame));
+        const inp = play.at(game.frame);
+        const target = clicks.get(game.frame) ?? clicks.get(game.frame - 1);
+        if (target) {
+          const r = layoutUI(game.world, p.config.view.width, p.config.view.height).get(target);
+          if (!r) {
+            if (clicks.get(game.frame)) lines.push(`⚠ f${game.frame} click=${target}: UI の付いた物 ${target} がありません${suggest(target, [...game.world.entities.values()].filter((e) => e.c.UI).map((e) => e.id))}`);
+          } else {
+            inp.pointer = { x: r.x + r.w / 2, y: r.y + r.h / 2 };
+            if (clicks.get(game.frame) === target) inp.buttons = [...inp.buttons, 'Mouse0'];
+            else inp.buttons = [...inp.buttons].filter((b) => b !== 'Mouse0');
+          }
+        }
+        game.step(inp);
         if (every && game.frame % every === 0) {
           lines.push(`f${game.frame} ` + watch.map((w) => `${w.split('.').pop()}=${fmt(readWatch(game, w))}`).join(' '));
         }
@@ -366,6 +394,7 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
   out.push(`events: ${counts || 'なし'}`);
   if (g.sceneLog.length > 1) out.push(`scenes: ${g.sceneLog.map((x) => `${x.name}@${x.frame}`).join(' → ')}${g.transition ? `（${g.transition.phase === 'out' ? '消えていく途中' : '出てくる途中'}）` : ''}`);
   if (g.soundCounts.size) out.push(`sounds: ${[...g.soundCounts.entries()].map(([k, v]) => `♪${k}×${v}`).join(' ')}`);
+  if (g.uiCounts.size) out.push(`ui: 押されたボタン ${[...g.uiCounts.entries()].map(([k, v]) => `${k}×${v}`).join(' ')}`);
   if (g.particleCounts.size) out.push(`particles: ${[...g.particleCounts.entries()].map(([k, v]) => `✦${k}×${v}`).join(' ')}`);
   if (g.tweens.length) out.push(`tweens: 動いている ${g.tweens.length}（${[...new Set(g.tweens.map((t) => `${t.comp}.${t.field}${t.sub ? "." + t.sub : ""}`))].join(' ')}）`);
   for (const w of g.warnings) out.push(`⚠ ${w}`);

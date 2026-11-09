@@ -33,6 +33,7 @@ export const Sprite = defineComponent({
     flipX: { type: 'bool', default: false, desc: '左右反転' },
     flipY: { type: 'bool', default: false, desc: '上下反転' },
     blend: { type: 'enum', options: ['normal', 'add', 'multiply', 'screen'], default: 'normal', desc: '重ね方。add=光る（加算）' },
+    slice: { type: 'int', default: 0, min: 0, max: 512, desc: '9つに切って伸ばす（枠・吹き出し・ボタンの画像に）。四隅の大きさ(px)。0 なら切らない' },
     ...drawOrder,
   },
 });
@@ -70,8 +71,71 @@ export const Text = defineComponent({
     text: { type: 'string', default: '', desc: '表示する文字' },
     size: { type: 'number', default: 16, min: 4, max: 256, desc: '文字の大きさ(px)' },
     color: { type: 'color', default: '#ffffff', desc: '色' },
-    align: { type: 'enum', options: ['left', 'center', 'right'], default: 'left', desc: '揃え（位置が左端・中央・右端になる）' },
+    align: { type: 'enum', options: ['left', 'center', 'right'], default: 'left', desc: '揃え（位置が左端・中央・右端になる。UI の物なら四角の中で揃える）' },
     font: { type: 'asset', kind: 'font', default: '', desc: 'フォントファイル（空なら標準のフォント）' },
+    wrap: { type: 'number', default: 0, min: 0, max: 4096, desc: 'この幅(px)で折り返す（0 なら折り返さない）' },
+    lineHeight: { type: 'number', default: 1.25, min: 0.5, max: 4, step: 0.05, desc: '行の高さ（文字の大きさの倍）' },
+    ...drawOrder,
+  },
+});
+
+export const UI = defineComponent({
+  name: 'UI',
+  desc: '画面に固定する（標準）。カメラに関係なく、画面（または親の UI）の決めた所に置き、その四角に合わせて Sprite・Shape・Text・Gauge を描く。位置は設計の大きさで数える',
+  fields: {
+    anchor: { type: 'enum', options: ['topLeft', 'top', 'topRight', 'left', 'center', 'right', 'bottomLeft', 'bottom', 'bottomRight'], default: 'center', desc: '画面（親）のどこに合わせるか。自分の同じ所がそこに来る（topRight なら右上の角どうし）' },
+    x: { type: 'number', default: 0, desc: 'anchor からのずれ(px。右が正)' },
+    y: { type: 'number', default: 0, desc: 'anchor からのずれ(px。下が正)' },
+    w: { type: 'number', default: 120, min: 0, max: 4096, desc: '幅(px)' },
+    h: { type: 'number', default: 40, min: 0, max: 4096, desc: '高さ(px)' },
+    parent: { type: 'ref', default: null, desc: '親の UI（その四角の中に置く。親が隠れると一緒に隠れる）。null なら画面' },
+    visible: { type: 'bool', default: true, desc: '見せるか（隠すと子も隠れ、押せなくなる）' },
+    order: { type: 'int', default: 0, min: -10000, max: 10000, desc: '親の Layout の中の並び順（小さい順）' },
+    modal: { type: 'bool', default: false, desc: '出ている間、この中の物しか押せない（ダイアログ）' },
+    block: { type: 'bool', default: true, desc: 'この上で押したマウス・タッチをゲームに渡さない（ボタンでなくても）' },
+  },
+});
+
+export const Layout = defineComponent({
+  name: 'Layout',
+  desc: '子の UI（parent がこの物）を順に並べる（標準。リスト・メニュー・ボタンの並び）。子の anchor と x・y は使わず、order の順に並べる',
+  fields: {
+    dir: { type: 'enum', options: ['vertical', 'horizontal'], default: 'vertical', desc: '並べる向き' },
+    gap: { type: 'number', default: 8, min: 0, max: 1000, desc: '間(px)' },
+    padding: { type: 'number', default: 0, min: 0, max: 1000, desc: '内側の余白(px)' },
+    align: { type: 'enum', options: ['start', 'center', 'end'], default: 'center', desc: '並べる向きと直角の揃え' },
+    justify: { type: 'enum', options: ['start', 'center', 'end'], default: 'start', desc: '並べる向きの揃え（全体を先頭・中央・末尾に寄せる）' },
+  },
+});
+
+export const Button = defineComponent({
+  name: 'Button',
+  desc: 'ボタン（標準。UI と一緒に）。マウス・タッチで押すか、矢印で合わせて Enter・Pad.A。押されたら ctx.ui.clicked(ID) が true になる',
+  fields: {
+    enabled: { type: 'bool', default: true, desc: '押せるか' },
+    normal: { type: 'color', default: '#d8d8d8', desc: 'ふだんの色（Sprite・Shape・Text の色にかける）' },
+    hover: { type: 'color', default: '#ffffff', desc: 'マウスが上にあるときの色' },
+    pressed: { type: 'color', default: '#a0a0a0', desc: '押しているときの色' },
+    focus: { type: 'color', default: '#fff2b0', desc: '矢印で合わせているときの色' },
+    disabled: { type: 'color', default: '#606060', desc: '押せないときの色' },
+    state: { type: 'enum', options: ['normal', 'hover', 'pressed', 'focus', 'disabled'], default: 'normal', desc: '今の状態（自動で変化）' },
+  },
+});
+
+export const Gauge = defineComponent({
+  name: 'Gauge',
+  desc: 'ゲージ（標準。体力・時間・読み込み）。drag にするとスライダー（音量など）。UI と一緒ならその四角に、なければ Transform の位置に w×h で描く',
+  fields: {
+    value: { type: 'number', default: 1, min: 0, desc: '今の値（0〜max）' },
+    max: { type: 'number', default: 1, min: 0.000001, desc: '最大の値' },
+    dir: { type: 'enum', options: ['leftToRight', 'rightToLeft', 'bottomToTop', 'topToBottom'], default: 'leftToRight', desc: '伸びる向き' },
+    color: { type: 'color', default: '#5fd35f', desc: '中身の色' },
+    back: { type: 'color', default: '#202630', desc: '背景の色' },
+    backAlpha: { type: 'number', default: 1, min: 0, max: 1, step: 0.05, desc: '背景の不透明度（0 で背景なし）' },
+    w: { type: 'number', default: 64, min: 0, max: 4096, desc: '幅(px。UI がないとき)' },
+    h: { type: 'number', default: 8, min: 0, max: 4096, desc: '高さ(px。UI がないとき)' },
+    drag: { type: 'bool', default: false, desc: 'マウス・タッチや左右で値を変えられる（スライダー）。変わったら ctx.ui.changed(ID) が true' },
+    step: { type: 'number', default: 0, min: 0, desc: '値の刻み（0 なら刻まない。左右では max の 1/10 ずつ）' },
     ...drawOrder,
   },
 });
@@ -190,4 +254,4 @@ export const PostEffect = defineComponent({
   },
 });
 
-export const STD_COMPONENTS = [Transform, Sprite, Animator, Shape, Text, Camera, Sound, AudioBus, Particles, Effect, PostEffect];
+export const STD_COMPONENTS = [Transform, Sprite, Animator, Shape, Text, Camera, Sound, AudioBus, Particles, Effect, PostEffect, UI, Layout, Button, Gauge];

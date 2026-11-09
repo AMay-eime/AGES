@@ -134,6 +134,14 @@ export class Input {
   raw(axis: string): number {
     return this.axesNow[axis] ?? 0;
   }
+  /** 操作の名前があるか（表 $actions に行があるか） */
+  has(action: string): boolean {
+    return this.defaults.has(action);
+  }
+  /** このフレームは、このボタンが押されていないことにする（UI が受け取った押し下げをゲームに渡さないため） */
+  mask(names: string[]): void {
+    for (const n of names) this.down.delete(n);
+  }
   /** 押されているボタン（並べ替え済み） */
   keys(): string[] {
     return [...this.down].sort();
@@ -344,6 +352,12 @@ export function keysToEvents(spec: string, actions?: Map<string, ActionDef>): In
         const [x, y] = kv[2].split(',').map(Number);
         if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error(`--keys の ${tok}: ptr=横,縦 の形で書きます（例 ptr=240,100）`);
         at(a).p = [x, y];
+      } else if (kv && kv[1] === 'click') {
+        // その位置でマウスの左を1フレームだけ押す（UI のボタンを押す）
+        const [x, y] = kv[2].split(',').map(Number);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error(`--keys の ${tok}: click=横,縦 の形で書きます（例 click=240,440。ボタンの ID なら ages run で click=retry）`);
+        at(a).p = [x, y];
+        press(a, a + 1, 'Mouse0');
       } else if (kv && kv[1] === 'wheel') at(a).w = Number(kv[2]);
       else if (kv) axis(a, b, kv[1], Number(kv[2]));
       else press(a, b, tok);

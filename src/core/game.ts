@@ -10,6 +10,7 @@ import type { RowOf, TableDef, TableView } from './table.ts';
 import { camerasOf, screenToWorld } from './camera.ts';
 import { checkEase, targetValue, tweenAt, type TweenOptions, type TweenState, type TweenValue } from './tween.ts';
 import type { ParticleApi, ParticleCmd } from './particles.ts';
+import { UiState } from './ui.ts';
 
 export interface Ctx {
   world: World;
@@ -53,6 +54,24 @@ export interface Ctx {
   stopTween(target: string, field?: string): void;
   /** パーティクル（Particles の付いた物から粒を出す） */
   particles: ParticleApi;
+  /** UI（画面に固定する物）の操作 */
+  ui: UiApi;
+}
+
+export interface UiApi {
+  /** このフレームに押されたか（Button の付いた物。マウス・タッチで押して離したか、合わせて Enter・Pad.A） */
+  clicked(id: string): boolean;
+  /** このフレームに値が変わったか（drag の Gauge） */
+  changed(id: string): boolean;
+  /** このフレームに「戻る」（ui_cancel。なければ Esc・Pad.B）が押されたか */
+  cancelled(): boolean;
+  /** 矢印で合わせている物（null で外す） */
+  focus(id: string | null): void;
+  focused(): string | null;
+  /** UI の四角（設計の大きさで数えた画面の座標。左上と幅・高さ） */
+  rect(id: string): { x: number; y: number; w: number; h: number; visible: boolean } | null;
+  /** マウス・タッチが UI の上にある（その押し下げはゲームに渡っていない） */
+  pointerOver(): boolean;
 }
 
 export interface GotoOptions {
@@ -149,6 +168,10 @@ export class Game {
   particleListeners: ((cmd: ParticleCmd) => void)[] = [];
   /** パーティクルを出した回数（物の名前・プレハブ → 回数。ages run の要約に載る） */
   particleCounts = new Map<string, number>();
+  /** UI の操作（フォーカス・押している物）。フレームで数える */
+  readonly ui = new UiState();
+  /** 押されたボタン（ID → 回数。ages run の要約用） */
+  uiCounts = new Map<string, number>();
   /** 実行中に見つかった問題（同じものは1回だけ。ages run の要約に載る） */
   warnings = new Set<string>();
   private lastPlayed = new Map<string, number>();
@@ -226,6 +249,18 @@ export class Game {
         return c ? screenToWorld(c, p.x, p.y) : null;
       },
       scene: this.makeSceneApi(),
+      ui: {
+        clicked: (id) => this.ui.clicked.has(id),
+        changed: (id) => this.ui.changed.has(id),
+        cancelled: () => this.ui.cancelled,
+        focus: (id) => {
+          if (id !== null && !this.world.get(id)?.c.UI) throw new Error(`ctx.ui.focus: ${id} は UI の付いた物ではありません${suggest(id, [...this.world.entities.values()].filter((e) => e.c.UI).map((e) => e.id))}`);
+          this.ui.focus = id;
+        },
+        focused: () => this.ui.focus,
+        rect: (id) => { const r = this.ui.rects.get(id); return r ? { x: r.x, y: r.y, w: r.w, h: r.h, visible: r.visible } : null; },
+        pointerOver: () => this.ui.over,
+      },
       emit: (name, data) => {
         this.counts.set(name, (this.counts.get(name) ?? 0) + 1);
         const ev: GameEvent = { frame: this.frame, name, data };
@@ -424,6 +459,12 @@ export class Game {
   /** 1フレーム進める。input はそのフレームの入力（押されているボタンの並びだけでもよい）。 */
   step(input: Iterable<string> | FrameInput = []): void {
     this.input.setFrame(input);
+    // UI の操作はゲームのシステムより前に（押されたボタンを、そのフレームのうちに読めるように）
+    this.ui.update(this.world, this.input, this.config.view.width, this.config.view.height);
+    for (const id of this.ui.clicked) {
+      this.uiCounts.set(id, (this.uiCounts.get(id) ?? 0) + 1);
+      this.ctx.emit('ui.click', { id });
+    }
     const systems = this.active();
     if (!this.started) {
       this.started = true;
@@ -449,7 +490,7 @@ export class Game {
 
   /** 状態のハッシュ（同じ結果になったかの比較用） */
   hash(): string {
-    const text = JSON.stringify([this.frame, this.rng.state, [...this.world.entities.values()].map((e) => [e.id, e.c]), this.sceneLog.length > 1 ? [this.sceneName, this.sceneFrame] : 0, this.tweens.length ? this.tweens : 0]);
+    const text = JSON.stringify([this.frame, this.rng.state, [...this.world.entities.values()].map((e) => [e.id, e.c]), this.sceneLog.length > 1 ? [this.sceneName, this.sceneFrame] : 0, this.tweens.length ? this.tweens : 0, this.ui.rects.size ? this.ui.snapshot() : 0]);
     let h = 0x811c9dc5;
     for (let i = 0; i < text.length; i++) {
       h ^= text.charCodeAt(i);
@@ -459,6 +500,6 @@ export class Game {
   }
 
   snapshot() {
-    return { frame: this.frame, rng: this.rng.state, world: this.world.snapshot(), counts: Object.fromEntries(this.counts), scene: { name: this.sceneName, frame: this.sceneFrame, params: this.sceneParams }, tweens: structuredClone(this.tweens) };
+    return { frame: this.frame, rng: this.rng.state, world: this.world.snapshot(), counts: Object.fromEntries(this.counts), scene: { name: this.sceneName, frame: this.sceneFrame, params: this.sceneParams }, tweens: structuredClone(this.tweens), ui: this.ui.snapshot() };
   }
 }
