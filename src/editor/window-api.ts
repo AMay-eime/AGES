@@ -7,6 +7,7 @@ import type { PrefabDoc, ProjectConfig, SceneDoc } from '../core/docs.ts';
 import type { GameEvent } from '../core/game.ts';
 import type { Field } from '../core/schema.ts';
 import type { SheetDef } from '../core/sheet.ts';
+import type { TableDoc, TableView } from '../core/table.ts';
 
 export interface EditorApi {
   /** 現在のプロジェクトの内容（読み取り専用として扱う）。プレハブはファイルの中身（派生は元からの差。元と重ねた値は get で読む） */
@@ -14,6 +15,8 @@ export interface EditorApi {
     config: ProjectConfig;
     scenes: Record<string, SceneDoc>;
     prefabs: Record<string, PrefabDoc>;
+    /** 表の中身（ファイルの中身。省いた列は既定値で埋まっていない。埋めた形は table で読む） */
+    tables: Record<string, TableDoc>;
     locks: Record<string, { who: string; t: string; value: unknown; note?: string }>;
     touched: Record<string, { who: string; t: string }>;
   };
@@ -22,10 +25,19 @@ export interface EditorApi {
   readonly playing: boolean;
   /** 値を変える。操作ログには「window:<id>」から人が変更したと記録される。変えられるのは edits と、この拡張が見せている欄・部品だけ */
   patch(ops: Op[]): Promise<Change[] | null>;
-  /** アドレスの値を読む（例: main#spawner.Spawner.interval）。省略されていれば既定値、派生のプレハブなら元から受け継いだ値 */
+  /** アドレスの値を読む（例: main#spawner.Spawner.interval・$enemies.basic.hp）。省略されていれば既定値、派生のプレハブなら元から受け継いだ値 */
   get(path: string): unknown;
+  /** 表を読む（省いた列は既定値で埋めた行。ゲームのコードの ctx.table と同じ。変えるのは patch の set・addRow など） */
+  table(name: string): TableView;
   /** インスペクタで選ぶ（例: main#player / @enemy）。add なら今の選びに足す（シーンの物だけ）。null で選ぶのをやめる */
   select(address: string | null, add?: boolean): void;
+  /**
+   * 再生する（エディタの ▶ と同じ）。scene・params・date で始め方を選べる（省くと今のシーンを、再生の設定で）。再生中なら何もしない。
+   * 例 ステージを試す: api.play({ scene: 'battle', params: { stage: 'stage_0001' } })。止めると始めたシーンに戻る
+   */
+  play(opts?: { scene?: string; params?: Record<string, unknown>; date?: string }): void;
+  /** 再生を止める（実行中の変更を保存するかは人に尋ねる） */
+  stop(): Promise<void>;
   /** 画面なしで試し実行する。keys は ages run --keys と同じ書き方（"0-600:@fire;100-200:ArrowLeft"） */
   simulate(frames: number, keys?: string, seed?: number): { counts: Record<string, number>; frame: number; ms: number };
   /** 画像の切り方（コマ・動き）。切っていなければ undefined */

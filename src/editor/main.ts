@@ -70,7 +70,8 @@ const renderTop = () => {
   const broken = s && !s.error && s.integrity && !s.integrity.ok;
   clear(top,
     h('span', { class: 'title' }, 'AGES', h('small', {}, s?.config?.name ?? '')),
-    h('button', { class: p && !p.paused ? 'on' : '', title: '再生', onclick: () => (p ? app.togglePause() : app.startPlay()) }, p && !p.paused ? '⏸ 一時停止' : '▶ 再生'),
+    h('button', { class: p && !p.paused ? 'on' : '', title: playTitle(), onclick: () => (p ? app.togglePause() : app.startPlay()) }, p && !p.paused ? '⏸ 一時停止' : '▶ 再生'),
+    h('button', { class: playSet() ? 'icon on' : 'icon', title: `再生の設定（始めのシーンに渡す params・日時）${playSet() ? `\n${playSet()}` : ''}`, onclick: openPlaySettings, disabled: !!p }, '…'),
     h('button', { title: '1フレーム進める', onclick: () => app.stepOnce() }, '⏭'),
     h('button', { title: '停止（実行中の変更を保存するか選べます）', onclick: () => app.stopPlay(), disabled: !p }, '⏹ 停止'),
     h('button', { title: '入力を記録しながら再生（停止時に recordings/ に保存）', onclick: () => app.startPlay(true), disabled: !!p }, '● 記録して再生'),
@@ -86,6 +87,37 @@ const renderTop = () => {
 app.on('change', renderTop);
 app.on('play', renderTop);
 app.on('audio', renderTop);
+
+/** 再生の設定の要約（何も決めていなければ ''） */
+function playSet(): string {
+  if (!app.state || app.state.error) return '';
+  const s = app.playSettings;
+  return [s.params.trim() ? `params: ${s.params.trim()}` : '', s.date.trim() ? `日時: ${s.date.trim()}` : ''].filter(Boolean).join(' / ');
+}
+function playTitle(): string {
+  return `再生${playSet() ? `（${playSet()}）` : ''}`;
+}
+
+/** 再生の設定: 始めのシーンに渡す params（ages run --params と同じ書き方）と日時（ctx.date。空なら実際の時計） */
+function openPlaySettings(): void {
+  modal((close) => {
+    const s = app.playSettings;
+    const params = h('input', { type: 'text', value: s.params, placeholder: 'stage=stage_0001,mode=test か JSON', style: 'flex:1' }) as HTMLInputElement;
+    const date = h('input', { type: 'text', value: s.date, placeholder: '空なら実際の時計（例 2026-12-25T09:00）', style: 'flex:1' }) as HTMLInputElement;
+    const save = () => {
+      try { app.playSettings = { params: params.value.trim(), date: date.value.trim() }; close(); renderTop(); } catch (e) { toast((e as Error).message, 'bad'); }
+    };
+    return h('div', { style: 'min-width:420px' },
+      h('h3', {}, '再生の設定'),
+      h('div', { class: 'muted', style: 'margin-bottom:8px' }, '▶ で再生するときに、始めのシーンへ渡すもの（ctx.scene.params）と日時（ctx.date）。このブラウザに覚えます。記録して再生すると、記録にも残ります'),
+      h('div', { class: 'row' }, h('span', { style: 'width:4em' }, 'params'), params),
+      h('div', { class: 'row', style: 'margin-top:6px' }, h('span', { style: 'width:4em' }, '日時'), date),
+      h('div', { class: 'row', style: 'justify-content:flex-end;gap:6px;margin-top:12px' },
+        h('button', { onclick: () => { params.value = ''; date.value = ''; } }, '空にする'),
+        h('button', { onclick: close }, 'やめる'),
+        h('button', { class: 'primary', onclick: save }, 'OK')));
+  });
+}
 
 /** 手元の音量とミュート（このブラウザだけ。ゲームの音量は音量の区分 AudioBus で決める） */
 function audioControls(): HTMLElement {

@@ -27,6 +27,14 @@ export function makeApi(app: App, win: string): EditorApi {
     patch: (ops: Op[]) => app.patch(ops, win),
     get(path: string) {
       const a = parseAddress(path);
+      if (a.kind === 'table') {
+        const view = app.registry.tableView(a.doc);
+        if (!a.entity) return view.rows;
+        const row = view.has(a.entity) ? view.get(a.entity) as Record<string, unknown> : undefined;
+        let v: unknown = a.field ? row?.[a.field] : row;
+        for (const k of a.sub ?? []) v = v == null ? undefined : (v as Record<string | number, unknown>)[k];
+        return v;
+      }
       let holder: { components: Record<string, Record<string, unknown>> } | undefined;
       if (a.kind === 'prefab') {
         try { holder = resolvePrefab(new Map(Object.entries(app.state.prefabs)), a.doc); } catch { holder = undefined; }
@@ -40,6 +48,9 @@ export function makeApi(app: App, win: string): EditorApi {
       const a = parseAddress(address);
       app.select(a.kind === 'prefab' ? { kind: 'prefab', name: a.doc } : { kind: 'scene', scene: a.doc, id: a.entity! }, { add });
     },
+    play: (opts) => app.startPlay({ ...opts }),
+    stop: () => app.stopPlay(),
+    table: (name) => app.registry.tableView(name),
     simulate: (frames, keys, seed) => app.simulate(frames, keys, seed),
     sheet: (image: string) => app.registry.sheets.get(image),
     notify: (text, kind = 'info') => { toast(text, kind === 'info' ? '' : kind, kind === 'bad' ? 8000 : 4000); },

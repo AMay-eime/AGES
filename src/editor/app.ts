@@ -2,7 +2,8 @@
 import { Registry, type GameModule } from '../core/registry.ts';
 import { Game, busesOf } from '../core/game.ts';
 import { InputRecorder, InputPlayback, actionsFromRows, keysToEvents, type InputEvent } from '../core/input.ts';
-import { RUN_DATE, formatDate, parseDate } from '../core/clock.ts';
+import { RUN_DATE, formatDate, parseDate, realDate } from '../core/clock.ts';
+import { parseParams } from '../core/runinput.ts';
 import { Devices } from '../input/devices.ts';
 import type { PrefabDoc, ProjectConfig, SceneDoc } from '../core/docs.ts';
 import type { Op, Change } from '../core/patch.ts';
@@ -57,6 +58,20 @@ export interface PlayState {
   from: string;
   /** 読み込み中（終わるまでフレームを進めない。結果は変わらない） */
   loading?: { done: number; total: number };
+  /** 始めのシーンに渡したもの（記録に残す） */
+  params?: Record<string, unknown>;
+}
+
+/** 再生の始め方（拡張の api.play・再生の設定） */
+export interface PlayOptions {
+  /** 始めるシーン（省くと今のシーン） */
+  scene?: string;
+  /** 始めのシーンに渡す ctx.scene.params */
+  params?: Record<string, unknown>;
+  /** ctx.date の始め（'2026-12-25T09:00'。省くと実際の時計） */
+  date?: string;
+  /** 入力を記録する */
+  record?: boolean;
 }
 
 type Listener = (detail?: unknown) => void;
@@ -320,13 +335,34 @@ export class App {
     if (l.muted) toast('ミュート中です（上のバーの 🔇 で解除）');
   }
 
-  startPlay(record = false): void {
+  /** 再生の設定（このブラウザ・プロジェクトごと。▶ の横の … で決める）。params は --params と同じ書き方、date は空なら実際の時計 */
+  get playSettings(): { params: string; date: string } {
+    try { return { params: '', date: '', ...JSON.parse(localStorage.getItem(`ages.play.${this.state.config.name}`) ?? '{}') }; } catch { return { params: '', date: '' }; }
+  }
+  set playSettings(v: { params: string; date: string }) {
+    if (v.params.trim()) parseParams(v.params, 'params');
+    if (v.date.trim()) parseDate(v.date);
+    try { localStorage.setItem(`ages.play.${this.state.config.name}`, JSON.stringify(v)); } catch { /* 使えなくても止めない */ }
+    this.emit('play');
+  }
+
+  /** 再生を始める。opts を省くと、今のシーンを再生の設定（params・日時）で */
+  startPlay(record: boolean | PlayOptions = false): void {
     if (this.play || !this.registry) return;
+    const opts: PlayOptions = typeof record === 'boolean' ? { record } : record;
+    const from = this.scene;
     try {
+      if (opts.scene !== undefined) {
+        if (!this.state.scenes[opts.scene]) throw new Error(`シーン ${opts.scene} はありません`);
+        this.scene = opts.scene;
+      }
+      const set = this.playSettings;
+      const params = opts.params ?? (set.params.trim() ? parseParams(set.params, 'params') : undefined);
+      const dateText = opts.date ?? set.date.trim();
       // セーブはこのブラウザの localStorage（プロジェクトごと）。止めても残り、次の再生で読める
       const store = this.saveStore();
       const saveAtStart = Object.fromEntries(Object.entries(store.load()).map(([k, v]) => [k, JSON.parse(v)]));
-      const game = new Game(this.registry, this.state.config, this.state.scenes[this.scene], this.state.config.seed, { store, lang: this.previewLang || undefined });
+      const game = new Game(this.registry, this.state.config, this.state.scenes[this.scene], this.state.config.seed, { store, lang: this.previewLang || undefined, params, date: dateText ? parseDate(dateText) : realDate() });
       game.listeners.push((ev) => this.emit('gameEvent', ev));
       // 音: 再生ボタンのクリックの中で準備する（ブラウザの決まり）。画像・音のファイルは hold で先に読み込む
       this.audio.ensure();
@@ -337,7 +373,7 @@ export class App {
       game.audioListeners.push((cmd) => this.audio.handle(cmd));
       // パーティクルを出す命令は、ゲームの画面（描く側）へ
       game.particleListeners.push((cmd) => this.emit('particles', cmd));
-      const play: PlayState = { game, paused: false, edits: new Map(), recorder: record ? new InputRecorder() : undefined, from: this.scene, saveAtStart };
+      const play: PlayState = { game, paused: false, edits: new Map(), recorder: opts.record ? new InputRecorder() : undefined, from, saveAtStart, ...(params ? { params } : {}) };
       this.play = play;
       // シーンが切り替わったら、エディタもそのシーンを見せ、次のシーンの画像・音を読み込む
       game.sceneListeners.push((_from, to) => {
@@ -346,8 +382,10 @@ export class App {
         this.emit('change');
       });
       this.hold(play, this.scene, true);
+      if (this.scene !== from) { this.rebuildPreview(); this.emit('change'); }
       this.emit('play');
     } catch (e) {
+      if (this.scene !== from) this.scene = from;
       toast((e as Error).message, 'bad');
     }
   }
@@ -411,7 +449,7 @@ export class App {
     // 再生中にシーンが切り替わっていたら、始めたシーンに戻る
     if (this.scene !== p.from && this.state.scenes[p.from]) { this.scene = p.from; this.rebuildPreview(); this.emit('change'); }
     this.emit('play');
-    if (p.recorder) await this.saveRecording(p.recorder.events, p.game.frame, p.saveAtStart, formatDate(p.game.dateStart));
+    if (p.recorder) await this.saveRecording(p.recorder.events, p.game.frame, p.saveAtStart, formatDate(p.game.dateStart), p.game.sceneLog[0]?.name ?? p.from, p.params);
     this.emit('save');
     if (p.edits.size) await this.askKeepEdits(p.edits);
   }
@@ -431,11 +469,11 @@ export class App {
     return new LocalStore(`ages.save.${this.state.config.name}.`, localStorage);
   }
 
-  private async saveRecording(events: InputEvent[], frames: number, save: Record<string, unknown> | undefined, date: string): Promise<void> {
+  private async saveRecording(events: InputEvent[], frames: number, save: Record<string, unknown> | undefined, date: string, scene: string, params?: Record<string, unknown>): Promise<void> {
     const name = `rec-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}`;
     const path = `recordings/${name}.input.json`;
     // 始めた日時も残す（ctx.date を使うゲームも、ages run --input で同じ結果になるように）
-    const data = { seed: this.state.config.seed, scene: this.scene, frames, date, ...(save && Object.keys(save).length ? { save } : {}), events };
+    const data = { seed: this.state.config.seed, scene, frames, date, ...(params ? { params } : {}), ...(save && Object.keys(save).length ? { save } : {}), events };
     await this.api(`/api/file?path=${encodeURIComponent(path)}`, { method: 'PUT', raw: JSON.stringify(data, null, 2) + '\n' });
     toast(`入力を記録しました: ${path}\nAIは ages run --input ${path} で同じ操作を再現できます`);
   }
