@@ -96,7 +96,7 @@ export function componentDrawersFor(app: App, component: string): { drawer: Comp
 }
 
 /** 右クリックのメニューの項目（拡張の menus から。when で絞る） */
-export function menuItemsFor(app: App, where: 'entity', targets: string[]): [string, () => void][] {
+export function menuItemsFor(app: App, where: 'entity' | 'prefab', targets: string[]): [string, () => void][] {
   const out: [string, () => void][] = [];
   for (const x of app.extensions) {
     for (const m of x.ext.menus ?? []) {

@@ -631,12 +631,13 @@ export async function cmdLog(dir: string, f: Args['flags']): Promise<string> {
 export async function cmdCheck(dir: string): Promise<string> {
   const p = await Project.load(dir);
   const sh = await shaderReport(p.dir, p.assets);
-  const errs = [...p.validate(), ...(await p.checkCode()), ...(await p.checkWindows()), ...sh.errors];
+  const warns: string[] = [];
+  const errs = [...p.validate(), ...(await p.checkCode()), ...(await p.checkWindows(warns)), ...sh.errors];
   const miss = languagesOf(p.config).length > 1 ? p.missingText() : new Map<string, string[]>();
   const missNote = miss.size ? `\n未訳: ${[...miss].map(([l, ks]) => `${l} ${ks.length}件`).join('・')}（ages table <dir> text --empty 言語。訳がない間は既定の言語で出る）` : '';
   // シェーダーがコンパイルできるかはブラウザでしか分からない。エディタが開いていれば、変わるたびに確かめる
   const note = sh.unchecked.length ? `\nシェーダー ${sh.unchecked.join(' ')} はまだコンパイルを確かめていません（エディタを開いていると、変えるたびに確かめて ages check に出ます）` : '';
-  return withLockReport(p, (errs.length ? errs.map((e) => `error: ${e}`).join('\n') : `ok（シーン${p.docs.scenes.size} プレハブ${p.docs.prefabs.size} コンポーネント${p.registry.components.size} システム${p.registry.systems.length}）`) + note + missNote);
+  return withLockReport(p, (errs.length ? errs.map((e) => `error: ${e}`).join('\n') : `ok（シーン${p.docs.scenes.size} プレハブ${p.docs.prefabs.size} コンポーネント${p.registry.components.size} システム${p.registry.systems.length}）`) + warns.map((w) => `\n⚠ ${w}`).join('') + note + missNote);
 }
 
 function imageOf(p: Project, image: string): { w: number; h: number } {

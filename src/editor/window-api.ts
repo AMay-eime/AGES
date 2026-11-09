@@ -176,7 +176,8 @@ export interface EditorExtension {
   desc?: string;
   /**
    * パネルが変える値の住所（地図に出る）。書いたら、それ以外は変えられない。欄・部品の見せ方は、その欄・部品なら書かなくても変えられる。
-   * 例: 'main#spawner.Spawner.interval'、中をまとめて 'main#spawner.Spawner.*'、'@enemy.*'、'$enemies.*'。ロックされた値は変えられない
+   * 例: 'main#spawner.Spawner.interval'、中をまとめて 'main#spawner.Spawner.*'、'@enemy.*'、'$enemies.*'。ロックされた値は変えられない。
+   * '@[enemy]' はタグ enemy のプレハブすべて（作る・写す・名前・元・消すも。変える前と後の両方でタグを持つこと）、'@[enemy].Enemy.*' はその部品の値だけ
    */
   edits?: string[];
   /** パネル（Unity の EditorWindow） */
@@ -197,8 +198,8 @@ export interface EditorExtension {
 /** 右クリックのメニューの項目 */
 export interface MenuItem {
   label: string;
-  /** どこの右クリックに出すか。'entity': シーンの物（階層・ゲームの画面） */
-  where: 'entity';
+  /** どこの右クリックに出すか。'entity': シーンの物（階層・ゲームの画面）。'prefab': 階層のプレハブ（targets は ['@名前']） */
+  where: 'entity' | 'prefab';
   /** 出すかどうか（targets は選んでいる物の住所） */
   when?(targets: string[], api: EditorApi): boolean;
   run(targets: string[], api: EditorApi): void | Promise<void>;
