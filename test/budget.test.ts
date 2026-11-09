@@ -68,3 +68,10 @@ test('ages schema: ops・guide・guide:項目を引ける。コンポーネン�
   // 見本の外にあるプロジェクトでも、手本の場所は AGES 本体を指す
   assert.doesNotMatch(await cmdSchema(dir, ['guide:window']), /`examples\//);
 });
+
+test('地図: 実行中に変わる値（desc に「自動で変化」）は名前だけを最後にまとめる', async () => {
+  const { cmdMap } = await import('../src/cli/ages.ts');
+  const map = await cmdMap(new URL('../examples/shooter', import.meta.url).pathname);
+  assert.match(map, /^Health 体力。0で倒れる \| hp:int 0\.\.999=3 invincibleOnHit:int 0\.\.600=60 \| 自動:invincible$/m);
+  assert.match(map, /^Score 得点の表示 \| （フィールドなし） \| 自動:value$/m);
+});

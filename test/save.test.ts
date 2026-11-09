@@ -1,7 +1,7 @@
 // 段階2-13: セーブ（進み具合と設定の保存・読み込み）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Registry } from '../src/core/registry.ts';
@@ -123,6 +123,8 @@ test('ages run: --save の保存データから始め、要約の save: に書�
   assert.match(high, /SCORE 150 {3}BEST 5000/);
   assert.doesNotMatch(high, /^save:/m, '最高得点を超えなければ書かない');
   // エディタの記録に入っている、始めたときの保存データも使う
+  // recordings/ は空のフォルダなので Git に入らない（取り込んだばかりの写しにはない）
+  await mkdir(join(dir, 'recordings'), { recursive: true });
   await writeFile(join(dir, 'recordings/r.input.json'), JSON.stringify({ seed: 1, scene: 'result', frames: 5, save: { best: 777 }, events: [] }));
   assert.match(await cmdRun(dir, { scene: 'result', frames: '5', input: 'recordings/r.input.json', watch: 'score.Text.text' }), /BEST 777/);
   assert.match(await cmdMap(dir), /保存データ（ages run --save で、その状態から始める）: saves\/after\.save\.json\(best\) {2}saves\/high-score\.save\.json\(best\)/);
