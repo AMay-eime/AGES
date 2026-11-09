@@ -17,6 +17,8 @@ export interface EditorApi {
     prefabs: Record<string, PrefabDoc>;
     /** 表の中身（ファイルの中身。省いた列は既定値で埋まっていない。埋めた形は table で読む） */
     tables: Record<string, TableDoc>;
+    /** プロジェクトのアセット（画像は w・h、音は sec） */
+    assets: { path: string; kind: string; bytes: number; w?: number; h?: number; sec?: number }[];
     locks: Record<string, { who: string; t: string; value: unknown; note?: string }>;
     touched: Record<string, { who: string; t: string }>;
   };
@@ -40,6 +42,8 @@ export interface EditorApi {
   stop(): Promise<void>;
   /** 画面なしで試し実行する。keys は ages run --keys と同じ書き方（"0-600:@fire;100-200:ArrowLeft"） */
   simulate(frames: number, keys?: string, seed?: number): { counts: Record<string, number>; frame: number; ms: number };
+  /** アセットの URL（img の src・CSS の url() に。ファイルが変わると URL も変わる） */
+  assetUrl(path: string): string;
   /** 画像の切り方（コマ・動き）。切っていなければ undefined */
   sheet(image: string): SheetDef | undefined;
   /** 通知（画面の右下に少しのあいだ出る）。kind: info（既定）・warn・bad */
