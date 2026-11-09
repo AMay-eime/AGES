@@ -547,7 +547,7 @@ export class Renderer {
     // 縁取りの余白を除いた文字の四角で揃える
     const ix = (tex.pad + ax * (tex.w - tex.pad * 2)) / tex.w;
     const q = this.place(e.id, cornersOf(t, tex.w, tex.h, ix, 0.5));
-    if (q) this.quad(tex, 'normal', q, 0, 0, 1, 1, this.stateColor(e, ol ? '#ffffff' : tx.color), 1, this.material(e));
+    if (q) this.quad(tex, 'normal', q, 0, 0, 1, 1, this.stateColor(e, ol ? '#ffffff' : tx.color), tx.alpha ?? 1, this.material(e));
   }
 
   /** 1行を幅で折り返す（英語は単語の切れ目で、日本語は文字ごとに） */

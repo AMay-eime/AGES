@@ -109,3 +109,15 @@ test('サンプル: Collider と ctx.hit で当たりを処理し、ages run に
   const p = await Project.load(dir);
   await assert.rejects(p.apply([{ op: 'set', path: '@bullet.Collider.with', value: ['enemmy'] }], ai), /グループ "enemmy" の Collider がありません。もしかして: enemy/);
 });
+
+test('ctx.hit: グループの名前の確かめは一度だけ（弾の多いゲームで毎回すべてのプレハブを読み直さない）', () => {
+  const g = game([ent('e1', box(60, 50, 10, 10, 0, { group: 'enemy' })), ent('p', box(50, 50, 10, 10, 0, { group: 'player' }))]);
+  let reads = 0;
+  const orig = g.registry.allPrefabs.bind(g.registry);
+  g.registry.allPrefabs = () => { reads++; return orig(); };
+  for (let i = 0; i < 500; i++) g.ctx.hit.circle(50, 50, 30, 'enemy');
+  assert.equal(reads, 1);
+  // ない名前は今までどおり知らせる（あとで出る物で見つかるかもしれないので、そのたびに調べる）
+  g.ctx.hit.circle(50, 50, 30, 'enemmy');
+  assert.ok([...g.warnings].some((w) => /グループ "enemmy" の Collider がありません/.test(w)));
+});

@@ -30,6 +30,10 @@ test('ages run --spawn: プレハブだけを真ん中に出し、消えたら�
   const enemy = await cmdRun(dir, { spawn: 'enemy', frames: '600', watch: 'enemy~1.Transform.y' });
   assert.match(enemy, /停止:出した物がすべて消えた @f\d+/);
   assert.match(enemy, /watch enemy~1\.Transform\.y: 320 → —/);
+  // @プレハブ名 なら ID を探さずに、いる最初の1つを見る。リストの値は始めと今で別々に写す
+  const by = await cmdRun(dir, { spawn: 'enemy', frames: '10', watch: '@enemy.Transform.y,@enemy.Sprite.size' });
+  assert.match(by, /watch @enemy\.Transform\.y: 320 → 3\d\d/);
+  assert.match(by, /watch @enemy\.Sprite\.size: \[0,0\] → \[0,0\]/);
   // 音のプレハブは1回鳴らす
   assert.match(await cmdRun(dir, { spawn: 'se_shot', frames: '30' }), /sounds: ♪se_shot×1/);
   await assert.rejects(cmdRun(dir, { spawn: 'enemmy' }), /プレハブ enemmy はありません。もしかして: enemy/);

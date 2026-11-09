@@ -28,6 +28,7 @@ test('ctx.sound.play: プレハブの設定で鳴らし、回数を数える。�
   assert.equal(g.ctx.sound.play('se_shot', { volume: 0.5, pitch: 2 }), true);
   const c = cmds.find((x) => x.t === 'play' && x.cue === 'se_shot');
   assert.deepEqual(c && c.t === 'play' && [c.clip, c.bus, c.volume, c.pitch, c.maxVoices], ['assets/sounds/shot.wav', 'se', 0.35 * 0.5, 2, 6]);
+  assert.equal(c && c.t === 'play' && c.fadeIn, 0, 'フェードインは既定でその音の Sound.fadeIn');
   // cooldown 0.05秒 = 3フレーム。同じフレームでもう一度は鳴らさない
   assert.equal(g.ctx.sound.play('se_shot'), false);
   g.step(); g.step();
@@ -40,6 +41,17 @@ test('ctx.sound.play: プレハブの設定で鳴らし、回数を数える。�
   // ない名前は鳴らさず、もしかして付きで記録する
   assert.equal(g.ctx.sound.play('se_shoot'), false);
   assert.match([...g.warnings].join(), /se_shoot.*もしかして: se_shot/);
+});
+
+test('ctx.sound.play の fadeIn: この回だけのフェードイン（BGM をステージの指定の秒数で入れる）', async () => {
+  const p = await Project.load(await fresh());
+  const g = p.newGame();
+  const cmds: AudioCmd[] = [];
+  g.audioListeners.push((c) => cmds.push(c));
+  g.step();
+  g.ctx.sound.play('se_hit', { fadeIn: 1.5 });
+  const c = cmds.find((x) => x.t === 'play' && x.cue === 'se_hit');
+  assert.equal(c && c.t === 'play' && c.fadeIn, 1.5);
 });
 
 test('物に付いた音: playOnStart の物が現れたら鳴らし、消えたらその音のフェードで止める（Play On Awake）', async () => {

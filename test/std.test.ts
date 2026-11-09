@@ -110,7 +110,7 @@ test('図形の線・枠と文字の縁取り・切り抜き（2-16）: 形の�
   const s = p.registry.components.get('Shape')!.fields;
   assert.deepEqual([s.kind.type === 'enum' && s.kind.options, s.stroke.default, s.to.default], [['rect', 'circle', 'line'], 0, [0, 0]]);
   const t = p.registry.components.get('Text')!.fields;
-  assert.deepEqual([t.bold.default, t.outline.default, t.outlineColor.default], [false, 0, '#000000']);
+  assert.deepEqual([t.bold.default, t.outline.default, t.outlineColor.default, t.alpha.default], [false, 0, '#000000', 1]);
   assert.ok(p.registry.std.has('Clip'));
   const r = await p.apply([
     { op: 'addEntity', scene: 'main', entity: { id: 'beam', components: { Transform: { x: 10, y: 10 }, Shape: { kind: 'line', to: [0, 300], stroke: 6 }, Clip: { min: [0, 0], max: [100, 200] } } } },
