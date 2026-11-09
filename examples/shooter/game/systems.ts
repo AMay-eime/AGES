@@ -137,10 +137,11 @@ export const hud = defineSystem({
   desc: '得点を Text に、体力を右上のゲージ（hpGauge。隣に hpLabel）に書き出す',
   reads: ['Score', 'Health'],
   writes: ['Text', 'Gauge'],
-  update({ world }) {
+  update({ world, t }) {
     const hp = world.query('Player', 'Health')[0]?.c.Health.hp ?? 0;
+    // 言葉は表 $text（多言語）。{score} に値が入る
     for (const e of world.query('Score', 'Text')) {
-      e.c.Text.text = `SCORE ${e.c.Score.value}`;
+      e.c.Text.text = t('score', { score: e.c.Score.value });
     }
     const gauge = world.get('hpGauge')?.c.Gauge;
     if (gauge) gauge.value = hp;
@@ -165,13 +166,13 @@ export const resultScreen = defineSystem({
   desc: '結果のシーン: 得点と最高得点（セーブの best）を出し、「もう一度」のボタンか fire でもう一度（main へ）',
   writes: ['Text'],
   scenes: ['result'],
-  start({ world, scene, save }) {
+  start({ world, scene, save, t }) {
     const score = Number(scene.params.score ?? 0);
     // 最高得点はセーブに残す（ブラウザなら次に開いたときも残っている）
     const best = Math.max(score, save.get('best', 0));
     if (best !== save.get('best', 0)) save.set('best', best);
-    const t = world.get('score')?.c.Text;
-    if (t) t.text = `SCORE ${score}   BEST ${best}`;
+    const text = world.get('score')?.c.Text;
+    if (text) text.text = t('result', { score, best });
   },
   update({ input, scene, ui }) {
     // 入ってすぐの押しっぱなしで飛ばないように、少し待つ（ボタンの上で押したマウスは fire にならない）

@@ -27,4 +27,18 @@ export const tweens = defineTable({
   },
 });
 
-export const STD_TABLES = [actions, tweens];
+/** 言葉（多言語）。列は config.languages の言語ごとに作る */
+export function textTable(languages: string[]) {
+  return defineTable({
+    name: 'text',
+    desc: '言葉（多言語。標準）。行の名前で引く: ゲームのコードは ctx.t("名前", { 値 })、文字の物は Text.key に名前。{名前} の所に値が入る。列は言語（ages.project.json の languages。最初が既定）',
+    columns: {
+      ...Object.fromEntries(languages.map((l, i) => [l, { type: 'string' as const, default: '', desc: `${l} の言葉${i === 0 ? '（既定の言語。ほかの言語の訳がないときはこれを出す）' : ''}` }])),
+      desc: { type: 'string', default: '', desc: 'どこに出る言葉か（訳す人・AI への説明）' },
+    },
+  });
+}
+
+export const text = textTable(['ja']);
+
+export const STD_TABLES = [actions, tweens, text];

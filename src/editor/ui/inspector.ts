@@ -367,6 +367,19 @@ export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, 
       return { el: wrap, set: (v) => { t.value = String(v); } };
     }
     default: {
+      // 言葉の名前（Text.key）: 表 $text の行から選べる。横に今の言語の言葉を出す
+      if (ctx.comp === 'Text' && ctx.field === 'key') {
+        const rows = app.state.tables.text?.rows ?? [];
+        const id = `keys-${Math.random().toString(36).slice(2)}`;
+        const t = h('input', { type: 'text', value: String(value ?? ''), list: id, placeholder: '表 $text の行（空なら text のまま）' }) as HTMLInputElement;
+        const lang = app.previewLang || (app.state.config.languages ?? ['ja'])[0];
+        const show = h('span', { class: 'muted', style: 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px' });
+        const preview = (k: string) => { const r = rows.find((x) => x.id === k) as Record<string, unknown> | undefined; show.textContent = k ? (r ? String(r[lang] || `（${lang} 未訳）`) : '（ない行）') : ''; };
+        t.addEventListener('change', () => { commit(t.value.trim(), true); preview(t.value.trim()); });
+        preview(String(value ?? ''));
+        wrap.append(t, h('datalist', { id }, rows.map((r) => h('option', { value: r.id }))), show);
+        return { el: wrap, set: (v) => { t.value = String(v ?? ''); preview(String(v ?? '')); } };
+      }
       // UI の親・隣に付ける相手は、同じシーンの UI の物から選ぶ
       if (f.type === 'ref' && ctx.comp === 'UI') {
         const ids = (app.state.scenes[app.scene]?.entities ?? []).filter((e) => e.components.UI && e.components.UI !== ctx.holder.UI).map((e) => e.id);

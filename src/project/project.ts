@@ -25,6 +25,7 @@ import { checkSheet, checkSheetImage, findFrame, frameCount, sheetPathOf, type S
 import { shaderMap } from '../core/shader.ts';
 import { besideLoop } from '../core/ui.ts';
 import type { SaveStore } from '../core/save.ts';
+import { LANG_RE, codeTextRefs, languagesOf, missingText } from '../core/i18n.ts';
 
 // ゲームコードの import ... from 'ages' を、どのフォルダにあるプロジェクトからでもこのエンジンに向ける
 const AGES_INDEX = new URL('../index.ts', import.meta.url).href;
@@ -71,6 +72,7 @@ export class Project {
     const url = pathToFileURL(join(this.dir, this.config.game)).href;
     const mod = (await import(url)) as GameModule;
     this.registry = Registry.from(mod, []);
+    this.registry.setLanguages(languagesOf(this.config));
     this.registry.prefabs = prefabs;
     this.registry.scenes = this.docs.scenes;
     this.assets = scan.assets;
@@ -514,6 +516,19 @@ export class Project {
       if (!e.length && info?.w && info.h) errs.push(...checkSheetImage(sp, sheet, info.w, info.h));
     }
     errs.push(...this.assetIssues);
+    // 多言語: 言語の名前と、Text.key が表 $text の行を指していること
+    {
+      const langs = languagesOf(this.config);
+      for (const l of langs) if (!LANG_RE.test(l)) errs.push(`ages.project.json: languages の "${l}" は言語の名前として使えません（ja・en・zh_Hans・pt_BR の形。表 $text の列の名前になる）`);
+      if (new Set(langs).size !== langs.length) errs.push('ages.project.json: languages に同じ言語が2回あります');
+      const keys = new Set(this.docs.tables.get('text')?.rows.map((r) => String(r.id)) ?? []);
+      const checkKey = (where: string, tx?: Record<string, unknown>) => {
+        const k = tx?.key;
+        if (typeof k === 'string' && k && !keys.has(k)) errs.push(`${where}.Text.key: 表 $text に "${k}" の行がありません${suggest(k, [...keys])}（行を足すなら addRow{table:"text",row:{id:"${k}",${langs[0]}:"…"}}）`);
+      };
+      for (const pf of this.docs.prefabs.values()) checkKey(`@${pf.name}`, pf.components.Text);
+      for (const sc of this.docs.scenes.values()) for (const e of sc.entities) checkKey(`${sc.name}#${e.id}`, e.components.Text);
+    }
     // 保存データのファイル: 形と、物の保存（saveWorld）の中のコンポーネント
     for (const [path, sv] of this.saves) {
       if (sv.error) { errs.push(`${path}: ${sv.error}`); continue; }
@@ -783,11 +798,22 @@ export class Project {
     return codeRefs(await this.codeFiles(), this.assets.map((a) => a.path));
   }
 
+  /** 言語ごとの未訳（訳が空の行） */
+  missingText(): Map<string, string[]> {
+    return missingText(this.registry.tableView('text').rows as never, languagesOf(this.config));
+  }
+
   /** コードの中の goto('名前') が、ないシーンを指していないか */
   async checkCode(): Promise<string[]> {
     const errs: string[] = [];
-    for (const [name, at] of codeSceneRefs(await this.codeFiles())) {
+    const files = await this.codeFiles();
+    for (const [name, at] of codeSceneRefs(files)) {
       if (!this.docs.scenes.has(name)) errs.push(`${at.join(', ')}: goto('${name}') のシーン ${name} はありません${suggest(name, [...this.docs.scenes.keys()])}`);
+    }
+    // t('名前') が表 $text の行を指していること
+    const keys = new Set(this.docs.tables.get('text')?.rows.map((r) => String(r.id)) ?? []);
+    for (const [key, at] of codeTextRefs(files)) {
+      if (!keys.has(key)) errs.push(`${at.join(', ')}: t('${key}') の行が表 $text にありません${suggest(key, [...keys])}`);
     }
     return errs;
   }
@@ -1037,10 +1063,12 @@ export class Project {
     return { changes, lockReport: this.lockReport };
   }
 
-  newGame(scene = this.config.startScene, seed = this.config.seed, store?: SaveStore): Game {
+  newGame(scene = this.config.startScene, seed = this.config.seed, store?: SaveStore, lang?: string): Game {
     const doc = this.docs.scenes.get(scene);
     if (!doc) throw new Error(`シーン ${scene} はありません${suggest(scene, [...this.docs.scenes.keys()])}`);
-    return new Game(this.registry, this.config, doc, seed, { store });
+    const langs = languagesOf(this.config);
+    if (lang && !langs.includes(lang)) throw new Error(`言語 ${lang} はありません${suggest(lang, langs)}（ages.project.json の languages: ${langs.join(', ')}）`);
+    return new Game(this.registry, this.config, doc, seed, { store, lang });
   }
 }
 

@@ -71,6 +71,7 @@ export const Text = defineComponent({
     text: { type: 'string', default: '', desc: '表示する文字' },
     size: { type: 'number', default: 16, min: 4, max: 256, desc: '文字の大きさ(px)' },
     color: { type: 'color', default: '#ffffff', desc: '色' },
+    key: { type: 'string', default: '', desc: '言葉の表 $text の行の名前。書くと、今の言語の言葉を text に入れる（多言語）' },
     align: { type: 'enum', options: ['left', 'center', 'right'], default: 'left', desc: '揃え（位置が左端・中央・右端になる。UI の物なら四角の中で揃える）' },
     font: { type: 'asset', kind: 'font', default: '', desc: 'フォントファイル（空なら標準のフォント）' },
     wrap: { type: 'number', default: 0, min: 0, max: 4096, desc: 'この幅(px)で折り返す（0 なら折り返さない）' },

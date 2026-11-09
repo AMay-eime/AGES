@@ -11,6 +11,7 @@ import { DEFAULT_SOUND, playCmd, type SoundSettings } from '../core/audio.ts';
 import { assetRefs, preloadSet } from '../core/assets.ts';
 import { shaderMap, type ShaderDef } from '../core/shader.ts';
 import { LocalStore } from '../core/save.ts';
+import { languagesOf } from '../core/i18n.ts';
 
 export interface LockMark { who: string; t: string; value: unknown; note?: string }
 export interface TouchMark { who: string; t: string }
@@ -140,6 +141,7 @@ export class App {
       this.registry.tableData = new Map(Object.entries(s.tables ?? {}));
       this.registry.images = new Map(s.assets.filter((a) => a.w && a.h).map((a) => [a.path, { w: a.w!, h: a.h! }]));
       this.registry.shaders = shaderMap(s.assets.flatMap((a) => (a.shader ? [{ ...a.shader, path: a.path }] : [])));
+      this.registry.setLanguages(languagesOf(s.config));
     }
     if (!this.scene || !s.scenes[this.scene]) this.scene = s.config.startScene in s.scenes ? s.config.startScene : Object.keys(s.scenes)[0] ?? '';
     this.rebuildPreview();
@@ -150,7 +152,7 @@ export class App {
     const doc = this.state.scenes[this.scene];
     if (!doc || !this.registry) { this.preview = null; return; }
     try {
-      this.preview = new Game(this.registry, this.state.config, doc);
+      this.preview = new Game(this.registry, this.state.config, doc, this.state.config.seed, { lang: this.previewLang || undefined });
     } catch (e) {
       this.preview = null;
       toast((e as Error).message, 'bad');
@@ -263,7 +265,7 @@ export class App {
       // セーブはこのブラウザの localStorage（プロジェクトごと）。止めても残り、次の再生で読める
       const store = this.saveStore();
       const saveAtStart = Object.fromEntries(Object.entries(store.load()).map(([k, v]) => [k, JSON.parse(v)]));
-      const game = new Game(this.registry, this.state.config, this.state.scenes[this.scene], this.state.config.seed, { store });
+      const game = new Game(this.registry, this.state.config, this.state.scenes[this.scene], this.state.config.seed, { store, lang: this.previewLang || undefined });
       game.listeners.push((ev) => this.emit('gameEvent', ev));
       // 音: 再生ボタンのクリックの中で準備する（ブラウザの決まり）。画像・音のファイルは hold で先に読み込む
       this.audio.ensure();
@@ -351,6 +353,16 @@ export class App {
     if (p.recorder) await this.saveRecording(p.recorder.events, p.game.frame, p.saveAtStart);
     this.emit('save');
     if (p.edits.size) await this.askKeepEdits(p.edits);
+  }
+
+  /** エディタで見る言語（'' なら保存の設定・既定の言語のまま）。止めている画面と再生の両方に効く */
+  get previewLang(): string {
+    try { return localStorage.getItem(`ages.lang.${this.state.config.name}`) ?? ''; } catch { return ''; }
+  }
+  set previewLang(v: string) {
+    try { localStorage.setItem(`ages.lang.${this.state.config.name}`, v); } catch { /* 使えなくても止めない */ }
+    this.rebuildPreview();
+    this.emit('change');
   }
 
   /** このプロジェクトの保存データの置き場所（このブラウザの localStorage） */

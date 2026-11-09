@@ -1,0 +1,10 @@
+{
+  "name": "text",
+  "rows": [
+    {"id":"score","ja":"SCORE {score}","en":"SCORE {score}","desc":"左上の得点（main の hud）"},
+    {"id":"result","ja":"SCORE {score}   BEST {best}","en":"SCORE {score}   BEST {best}","desc":"結果の画面の得点と最高得点"},
+    {"id":"gameOver","ja":"GAME OVER","en":"GAME OVER","desc":"結果の画面の見出し"},
+    {"id":"prompt","ja":"fire でも、もう一度","en":"Press fire to retry","desc":"結果の画面の案内"},
+    {"id":"retry","ja":"もう一度","en":"Retry","desc":"結果の画面のボタン"}
+  ]
+}

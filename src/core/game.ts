@@ -12,6 +12,7 @@ import { checkEase, targetValue, tweenAt, type TweenOptions, type TweenState, ty
 import type { ParticleApi, ParticleCmd } from './particles.ts';
 import { UiState } from './ui.ts';
 import { SaveData, SETTINGS_KEY, type SaveApi, type SaveStore } from './save.ts';
+import { format, languagesOf, lookup } from './i18n.ts';
 import { HitState, contains, inGroup, overlap, rayHit, shapeOf, type HitShape } from './collide.ts';
 
 export interface Ctx {
@@ -62,6 +63,14 @@ export interface Ctx {
   hit: HitApi;
   /** セーブ（進み具合の保存・読み込み。設定は自動） */
   save: SaveApi;
+  /** 今の言語の言葉（表 $text の行）。{名前} に params の値が入る。訳がなければ既定の言語 */
+  t(key: string, params?: Record<string, unknown>): string;
+  /** 今の言語（ages.project.json の languages のどれか） */
+  readonly lang: string;
+  /** 言語を変える（設定として自動で保存される。Text.key の文字もすぐ変わる） */
+  setLang(lang: string): void;
+  /** 使える言語（最初が既定） */
+  readonly languages: readonly string[];
 }
 
 export interface HitApi {
@@ -196,6 +205,9 @@ export class Game {
   /** セーブ（置き場所はブラウザなら localStorage、画面なしならメモリ） */
   readonly save: SaveData;
   private settingsDirty = false;
+  /** 今の言語 */
+  lang: string;
+  readonly languages: string[];
   /** 当たり判定（重なり始めの記録） */
   readonly hits = new HitState();
   /** 押されたボタン（ID → 回数。ages run の要約用） */
@@ -216,7 +228,7 @@ export class Game {
   /** これまでのシーンの移り変わり（ages run の要約に載る） */
   sceneLog: { frame: number; name: string }[] = [];
 
-  constructor(registry: Registry, config: ProjectConfig, scene: SceneDoc, seed = config.seed, opts: { store?: SaveStore } = {}) {
+  constructor(registry: Registry, config: ProjectConfig, scene: SceneDoc, seed = config.seed, opts: { store?: SaveStore; lang?: string } = {}) {
     this.registry = registry;
     this.config = config;
     this.world = new World(registry);
@@ -230,14 +242,20 @@ export class Game {
     if (registry.tables.has('actions')) {
       this.input.setActions(actionsFromRows(registry.tableView('actions').rows));
     }
+    this.languages = languagesOf(config);
+    registry.setLanguages(this.languages);
+    this.lang = this.languages[0];
     this.save = new SaveData(opts.store);
     // 設定（キーの割り当て・音量）を戻し、変わったら自動で保存する
     if (config.save?.settings !== 'manual') {
-      const st = this.save.read(SETTINGS_KEY) as { bindings?: Record<string, never>; volumes?: Record<string, number> } | undefined;
+      const st = this.save.read(SETTINGS_KEY) as { bindings?: Record<string, never>; volumes?: Record<string, number>; lang?: string } | undefined;
       if (st?.bindings) this.input.importBindings(st.bindings);
+      if (st?.lang && this.languages.includes(st.lang)) this.lang = st.lang;
       for (const [bus, v] of Object.entries(st?.volumes ?? {})) if (typeof v === 'number') this.busVolumes.set(bus, Math.max(0, Math.min(1, v)));
       this.input.onBindings = () => { this.settingsDirty = true; };
     }
+    // エディタ・ages run --lang で決めた言語（保存の設定より先）
+    if (opts.lang && this.languages.includes(opts.lang)) this.lang = opts.lang;
     const game = this;
     this.ctx = {
       world: this.world,
@@ -287,6 +305,16 @@ export class Game {
       scene: this.makeSceneApi(),
       hit: this.makeHitApi(),
       save: this.save.api(this.world, this.registry, (m) => this.warnings.add(m)),
+      t: (key, params) => this.translate(key, params),
+      get lang() { return game.lang; },
+      setLang: (lang) => {
+        if (!this.languages.includes(lang)) throw new Error(`ctx.setLang: 言語 ${lang} はありません${suggest(lang, this.languages)}（ages.project.json の languages: ${this.languages.join(', ')}）`);
+        if (lang === this.lang) return;
+        this.lang = lang;
+        this.settingsDirty = true;
+        this.applyText();
+      },
+      languages: this.languages,
       ui: {
         clicked: (id) => this.ui.clicked.has(id),
         changed: (id) => this.ui.changed.has(id),
@@ -307,13 +335,32 @@ export class Game {
         for (const l of this.listeners) l(ev);
       },
     };
+    // Text.key の文字を、始めから今の言語に（エディタの止めている画面にも出る）
+    this.applyText();
+  }
+
+  /** 今の言語の言葉。訳がなければ既定の言語で、⚠ で知らせる */
+  private translate(key: string, params?: Record<string, unknown>): string {
+    const view = this.registry.tables.has('text') ? this.registry.tableView('text') : null;
+    const r = lookup(view, this.languages, this.lang, key);
+    if (r.missing === 'key') this.warnings.add(`ctx.t: 表 $text に "${key}" の行がありません${suggest(key, [...(view?.ids ?? [])])}（行を足すか、名前を直す）`);
+    else if (r.missing === 'lang') this.warnings.add(`ctx.t: $text.${key} に ${this.lang} の訳がありません（${this.languages[0]} で出しています）`);
+    return format(r.text, params);
+  }
+
+  /** Text.key のある物に、今の言語の言葉を入れる */
+  private applyText(): void {
+    for (const e of this.world.entities.values()) {
+      const tx = e.c.Text;
+      if (tx?.key) tx.text = this.translate(tx.key);
+    }
   }
 
   /** 変わった設定を保存する（フレームの終わりに自動で呼ぶ） */
   flushSettings(): void {
     if (!this.settingsDirty || this.config.save?.settings === 'manual') return;
     this.settingsDirty = false;
-    this.save.write(SETTINGS_KEY, { bindings: this.input.exportBindings(), volumes: Object.fromEntries([...this.busVolumes].sort()) });
+    this.save.write(SETTINGS_KEY, { bindings: this.input.exportBindings(), volumes: Object.fromEntries([...this.busVolumes].sort()), lang: this.lang });
   }
 
   private makeHitApi(): HitApi {
@@ -592,6 +639,7 @@ export class Game {
     this.stepTweens();
     // 当たり判定: このフレームの終わりの位置で、重なり始めを求める（このフレームに消した物も数える。次のフレームで ctx.hit.entered に出る）
     this.hits.update(this.world);
+    this.applyText(); // このフレームに出た物・変えた key も、描く前に言葉を入れる
     this.world.flush();
     this.flushSettings();
     this.frame++;

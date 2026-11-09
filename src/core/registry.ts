@@ -6,7 +6,7 @@ import type { PrefabDoc, SceneDoc } from './docs.ts';
 import type { SheetDef } from './sheet.ts';
 import { STD_COMPONENTS } from '../std/components.ts';
 import { STD_SYSTEMS } from '../std/systems.ts';
-import { STD_TABLES } from '../std/tables.ts';
+import { STD_TABLES, textTable } from '../std/tables.ts';
 import type { Ctx } from './game.ts';
 
 export interface SystemDef {
@@ -102,6 +102,14 @@ export class Registry {
     const t = this.tables.get(name);
     if (!t) throw new Error(`表 ${name} はありません${suggest(name, [...this.tables.keys()])}`);
     return t;
+  }
+
+  /** 言葉の表 $text の列（言語）を決める。同じなら何もしない */
+  setLanguages(languages: string[]): void {
+    const cur = Object.keys(this.tables.get('text')?.columns ?? {}).filter((k) => k !== 'desc');
+    if (cur.join(',') === languages.join(',')) return;
+    this.tables.set('text', textTable(languages));
+    this.views = new WeakMap();
   }
 
   /** ゲームのコードから読む表（省いた列は既定値で埋め、変えられないようにしてある） */

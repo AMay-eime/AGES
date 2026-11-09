@@ -94,11 +94,12 @@ const TOOLS: Tool[] = [
         watch: { type: 'array', items: { type: 'string' } }, every: { type: 'number' }, until: { type: 'string' }, twice: { type: 'boolean' },
         save: { type: 'string', description: 'この保存データ（saves/xxx.save.json）から始める。省くと空（初めて遊ぶ状態）' },
         saveOut: { type: 'string', description: '終わりの保存データを書き出すファイル' },
+        lang: { type: 'string', description: '言語（ages.project.json の languages のどれか）' },
       },
     },
     run: (a, dir) => {
       const f: Record<string, string | true> = {};
-      for (const k of ['frames', 'scene', 'seed', 'keys', 'input', 'every', 'until']) if (a[k] !== undefined) f[k] = String(a[k]);
+      for (const k of ['frames', 'scene', 'seed', 'keys', 'input', 'every', 'until', 'lang']) if (a[k] !== undefined) f[k] = String(a[k]);
       if (a.watch?.length) f.watch = a.watch.join(',');
       if (a.twice) f.twice = true;
       if (a.save) f.save = String(a.save);
@@ -121,10 +122,10 @@ const TOOLS: Tool[] = [
   {
     name: 'ages_table',
     description: '表を1行1行で見る（タブ区切り）。cols・rows で絞れる。export で CSV に書き出し、import で CSV・TSV から表をまるごと置き換える',
-    inputSchema: { type: 'object', properties: { ...dirProp, table: { type: 'string', description: '表の名前（例 enemies）' }, cols: { type: 'string', description: '列（, 区切り）' }, rows: { type: 'string', description: '行の id（, 区切り）' }, export: { type: 'string' }, import: { type: 'string' }, force: { type: 'boolean' } }, required: ['table'] },
+    inputSchema: { type: 'object', properties: { ...dirProp, table: { type: 'string', description: '表の名前（例 enemies）' }, cols: { type: 'string', description: '列（, 区切り）' }, rows: { type: 'string', description: '行の id（, 区切り）' }, empty: { type: 'string', description: 'この列が空の行だけ（未訳の言葉: table=text, empty=en）' }, export: { type: 'string' }, import: { type: 'string' }, force: { type: 'boolean' } }, required: ['table'] },
     run: (a, dir) => {
       const flags: Record<string, string | true> = {};
-      for (const k of ['cols', 'rows', 'export', 'import']) if (a[k] !== undefined) flags[k] = String(a[k]);
+      for (const k of ['cols', 'rows', 'empty', 'export', 'import']) if (a[k] !== undefined) flags[k] = String(a[k]);
       if (a.force) flags.force = true;
       return cmdTable(dir, String(a.table).replace(/^\$/, ''), flags);
     },

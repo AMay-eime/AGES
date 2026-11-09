@@ -21,6 +21,7 @@ import { decodePng } from '../project/png.ts';
 import { shaderReport } from '../project/shader-status.ts';
 import { layoutUI } from '../core/ui.ts';
 import { MemoryStore } from '../core/save.ts';
+import { languagesOf } from '../core/i18n.ts';
 
 const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [引数]
 
@@ -34,11 +35,11 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
                例 {"op":"moveAsset","from":"assets/a.png","to":"assets/ships/a.png"}（フォルダも可。使っている値と切り方も一緒に動く）
                シーン: addScene{name,copy?,desc?} / removeScene{name} / renameScene{name,to} / setScene{name,desc?,start?}
                UI: dockUI{target,edge,margin?}（画面・親の端や角に付ける） / attachUI{target,to,side?,gap?,align?}（別の UI の隣に接して置く）
-  table  <dir> <表> [--cols a,b] [--rows id1,id2]   表を見る（1行1行）
+  table  <dir> <表> [--cols a,b] [--rows id1,id2] [--empty 列]   表を見る（1行1行。--empty はその列が空の行だけ。例 未訳: text --empty en）
                [--export x.csv] [--import x.csv [--force]]   表計算ソフトとの行き来（読み込みは表をまるごと置き換える）
   run    <dir> [--frames 600] [--scene main] [--seed 1] [--keys "0-120:ArrowLeft+KeyZ;120-200:@move_x=1;30:Mouse0+ptr=240,100"]
                [--input recordings/x.input.json] [--watch player.Health.hp,...] [--every 60] [--until gameOver | scene:result | click:ボタンのID] [--twice] [--dump]
-               [--save saves/x.save.json]（この保存データから始める。省くと空） [--save-out saves/y.save.json]（終わりの保存データを書き出す）
+               [--save saves/x.save.json]（この保存データから始める。省くと空） [--save-out saves/y.save.json]（終わりの保存データを書き出す） [--lang en]（言語）
   log    <dir> [--all] [--peek]      前回からの編集の要約（--peek は既読にしない）
   undo   <dir> [--tx id] [--force]   自分（AI）の直前の編集を元に戻す（その後で変えられた所があれば止まる）。redo <dir> でやり直す
   check  <dir>                       全データの検証とロックの検査
@@ -250,7 +251,14 @@ export async function cmdTable(dir: string, name: string, flags: Record<string, 
   const cols = list(flags.cols);
   for (const c of cols ?? []) if (!def.columns[c]) throw new Error(`表 ${name} に列 ${c} はありません${suggest(c, Object.keys(def.columns))}`);
   const only = list(flags.rows);
-  const rows = only ? doc.rows.filter((r) => only.includes(r.id)) : doc.rows;
+  let rows = only ? doc.rows.filter((r) => only.includes(r.id)) : doc.rows;
+  // --empty 列: その列が空（省いた・"" ）の行だけ（未訳の言葉を探すなど）
+  if (typeof flags.empty === 'string') {
+    const col = flags.empty;
+    if (!def.columns[col]) throw new Error(`表 ${name} に列 ${col} はありません${suggest(col, Object.keys(def.columns))}`);
+    rows = rows.filter((r) => r[col] === undefined || r[col] === '' || r[col] === null);
+    if (!rows.length) return `$${name}: 列 ${col} が空の行はありません`;
+  }
   if (typeof flags.export === 'string') {
     const path = resolve(flags.export);
     await writeFile(path, formatDelimited(tableToCells(def, rows, cols), path.endsWith('.tsv') ? '\t' : ','));
@@ -408,7 +416,7 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
   const until = typeof f.until === 'string' ? f.until : '';
 
   const once = () => {
-    const game = p.newGame(scene, seed, new MemoryStore(initialSave));
+    const game = p.newGame(scene, seed, new MemoryStore(initialSave), typeof f.lang === 'string' ? f.lang : undefined);
     const play = new InputPlayback(events);
     const lines: string[] = [];
     const first = watch.map((w) => readWatch(game, w));
@@ -501,9 +509,11 @@ export async function cmdCheck(dir: string): Promise<string> {
   const p = await Project.load(dir);
   const sh = await shaderReport(p.dir, p.assets);
   const errs = [...p.validate(), ...(await p.checkCode()), ...(await p.checkWindows()), ...sh.errors];
+  const miss = languagesOf(p.config).length > 1 ? p.missingText() : new Map<string, string[]>();
+  const missNote = miss.size ? `\n未訳: ${[...miss].map(([l, ks]) => `${l} ${ks.length}件`).join('・')}（ages table <dir> text --empty 言語。訳がない間は既定の言語で出る）` : '';
   // シェーダーがコンパイルできるかはブラウザでしか分からない。エディタが開いていれば、変わるたびに確かめる
   const note = sh.unchecked.length ? `\nシェーダー ${sh.unchecked.join(' ')} はまだコンパイルを確かめていません（エディタを開いていると、変えるたびに確かめて ages check に出ます）` : '';
-  return withLockReport(p, (errs.length ? errs.map((e) => `error: ${e}`).join('\n') : `ok（シーン${p.docs.scenes.size} プレハブ${p.docs.prefabs.size} コンポーネント${p.registry.components.size} システム${p.registry.systems.length}）`) + note);
+  return withLockReport(p, (errs.length ? errs.map((e) => `error: ${e}`).join('\n') : `ok（シーン${p.docs.scenes.size} プレハブ${p.docs.prefabs.size} コンポーネント${p.registry.components.size} システム${p.registry.systems.length}）`) + note + missNote);
 }
 
 function imageOf(p: Project, image: string): { w: number; h: number } {
