@@ -98,7 +98,11 @@ export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, l
     }
   }
 
-  if (p.assets.length) {
+  if (p.assets.length > ASSET_LIST_MAX) {
+    // 多いときは1つずつ並べず、フォルダごとの数だけ（毎回読む1枚なので。1つずつは ages assets で引く）
+    out.push(`## assets（${p.assets.length}個。フォルダごとの数。1つずつは ages assets <dir> [フォルダ] [--unused]）`);
+    out.push(...summarizeAssets(p, { touched, locks, code }));
+  } else if (p.assets.length) {
     out.push('## assets（画像 幅x高さ・音 秒・シート 格子のコマの大きさ×数か、自由なコマ数と名前。使っている所は ages assets --refs）');
     out.push(...renderAssets(p, { touched, locks, code }));
   }
@@ -135,6 +139,34 @@ export interface AssetListOptions {
   unused?: boolean;
   /** 使っている所の数を出す */
   counts?: boolean;
+}
+
+/** 地図にアセットを1つずつ並べる上限。これより多いとフォルダごとの数にする */
+export const ASSET_LIST_MAX = 40;
+
+/** アセットをフォルダ（assets の下の2段目まで）ごとに数える: 画像・シート・音・フォント・未使用・🔒★ */
+export function summarizeAssets(p: Project, o: AssetListOptions = {}): string[] {
+  const refs = assetRefs(p.docs, p.registry);
+  const code = o.code ?? new Map<string, string[]>();
+  const locks = o.locks ?? {}, touched = o.touched ?? {};
+  const groups = new Map<string, { image: number; sheet: number; sound: number; font: number; unused: number; lock: number; star: number }>();
+  for (const a of p.assets) {
+    const parts = dirOf(a.path).split('/').filter(Boolean);
+    const key = parts.slice(0, 3).join('/') || '.';
+    const g = groups.get(key) ?? { image: 0, sheet: 0, sound: 0, font: 0, unused: 0, lock: 0, star: 0 };
+    if (a.kind === 'image') { g.image++; if (p.registry.sheets.get(a.path)) g.sheet++; }
+    else if (a.kind === 'sound') g.sound++;
+    else g.font++;
+    if (!((refs.get(a.path)?.length ?? 0) + (code.get(a.path)?.length ?? 0))) g.unused++;
+    if (locks[`sheet:${a.path}`] || locks[`file:${a.path}`]) g.lock++;
+    else if (touched[`sheet:${a.path}`]) g.star++;
+    groups.set(key, g);
+  }
+  return [...groups].map(([k, g]) => {
+    const kinds = [g.image ? `画像${g.image}${g.sheet ? `（シート${g.sheet}）` : ''}` : '', g.sound ? `音${g.sound}` : '', g.font ? `フォント${g.font}` : ''].filter(Boolean).join(' ');
+    const marks = [g.unused ? `未使用${g.unused}` : '', g.lock ? `🔒${g.lock}` : '', g.star ? `★${g.star}` : ''].filter(Boolean).join(' ');
+    return `  ${k}/ ${kinds}${marks ? ' ' + marks : ''}`;
+  });
 }
 
 /** アセットの一覧。フォルダごとにまとめ、名前だけを並べる（同じフォルダの場所を繰り返さない） */
