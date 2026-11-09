@@ -4,7 +4,9 @@
 // 拡張は隔離しない（エディタと同じページで動く）。よく使うことはここに窓口として用意し、足りないときだけ中身を直接触る。
 import type { Op, Change } from '../core/patch.ts';
 import type { PrefabDoc, ProjectConfig, SceneDoc } from '../core/docs.ts';
-import type { GameEvent } from '../core/game.ts';
+import type { Game, GameEvent } from '../core/game.ts';
+import type { ComponentDef } from '../core/schema.ts';
+import type { TableDef } from '../core/table.ts';
 import type { Field } from '../core/schema.ts';
 import type { SheetDef } from '../core/sheet.ts';
 import type { TableDoc, TableView } from '../core/table.ts';
@@ -19,6 +21,8 @@ export interface EditorApi {
     tables: Record<string, TableDoc>;
     /** プロジェクトのアセット（画像は w・h、音は sec） */
     assets: { path: string; kind: string; bytes: number; w?: number; h?: number; sec?: number }[];
+    /** 検証の ⚠（ages check と同じ） */
+    issues: string[];
     locks: Record<string, { who: string; t: string; value: unknown; note?: string }>;
     touched: Record<string, { who: string; t: string }>;
   };
@@ -59,8 +63,32 @@ export interface EditorApi {
    * ゲームと同じ決まりで動く（scenes で絞ったシステムは動かない）。値を変えると、次の回から新しい値で動く。音は鳴らさず、数だけを onCycle で返す
    */
   stage(el: HTMLElement, opts: StageOptions): StageHandle;
+  // ---- 再生中のゲーム・保存データ・形・窓（デバッグの道具など） ----
+  /**
+   * 再生中のゲーム（止めていれば null）。world・ctx・frame・sceneName を読める。ctx.emit で出来事を送れる（on が受ける）。
+   * 値を書くと、その場のゲームに効く（ファイルには保存しない。止めたときの「実行中の変更を保存するか」にも入らない）
+   */
+  readonly game: Game | null;
+  /** 再生の一時停止（true で止める・false で進める。省くと切り替え） */
+  pause(paused?: boolean): void;
+  /** frames だけ進める（止めてから。再生していなければ始めて止める） */
+  step(frames?: number): void;
+  /** 再生の速さ（1 が実時間。0.1〜8） */
+  speed: number;
+  /** 保存データ（再生中ならそのゲームの ctx.save と同じもの。止めていれば、このブラウザの保存データ＝次の再生で読まれるもの） */
+  readonly save: { read(key: string): unknown; write(key: string, value: unknown): void; delete(key: string): void; keys(): string[] };
+  /** 部品の形（'Health'）・表の形（'$enemies'）。フィールドの型・範囲・説明。なければ undefined */
+  schema(name: string): ComponentDef | TableDef | undefined;
+  /** 窓を出す（build が中身を作る。close で閉じる） */
+  modal(build: (close: () => void) => HTMLElement): void;
+  /** 拡張のパネルを前に出し、args を渡す（受け手の拡張は api.on('show', fn) で受ける。拡張どうしの呼び出し。例 射撃パターンのパネルを、その名前で開く） */
+  show(extId: string, args?: unknown): void;
+  /** ドラッグで運ばれてくる物の dataTransfer の型（asset: アセットの場所・prefab: プレハブの名前）。パネルに落とせるようにするとき */
+  readonly dragTypes: { asset: string; prefab: string };
   on(event: 'change' | 'select' | 'play' | 'frame', fn: () => void): () => void;
   on(event: 'gameEvent', fn: (ev: GameEvent) => void): () => void;
+  /** show で呼ばれたとき（この拡張あて） */
+  on(event: 'show', fn: (args: unknown) => void): () => void;
   /** DOMを作る小さなヘルパー: h('div', { class: 'x', onclick }, '中身', ...) */
   h: (tag: string, attrs?: Record<string, unknown>, ...children: unknown[]) => HTMLElement;
 }

@@ -6,7 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { registerHooks } from 'node:module';
 import { formatJson, type PrefabDoc, type ProjectConfig, type SceneDoc } from '../core/docs.ts';
-import { Registry, type GameModule } from '../core/registry.ts';
+import { Registry, type CheckView, type GameModule } from '../core/registry.ts';
 import { applyOps, diffDocs, getValue, setValue, sheetRoot, splitItem, type Change, type Docs, type Op, type PatchResult } from '../core/patch.ts';
 import { parseAddress } from '../core/docs.ts';
 import { Game } from '../core/game.ts';
@@ -307,6 +307,28 @@ export class Project {
   }
 
   /** シーンの物を、プレハブのインスタンスはプレハブと重ねた中身にしたもの（読むだけ。プレハブがない物はそのまま） */
+  /** ゲーム独自の検証（defineCheck）の ⚠。編集は止めない（validate と違い、patch の前後で比べない） */
+  projectChecks(): string[] {
+    if (!this.registry.checks.length) return [];
+    const reg = this.registry;
+    const view: CheckView = {
+      table: (name) => reg.tableView(name),
+      prefab: (name) => reg.findPrefab(name),
+      prefabs: (tag) => reg.allPrefabs().filter((p) => !tag || (p.tags ?? []).includes(tag)),
+      scene: (name) => { const s = this.docs.scenes.get(name); return s ? this.resolvedScene(s) : undefined; },
+      scenes: [...this.docs.scenes.keys()],
+    };
+    const out: string[] = [];
+    for (const c of reg.checks) {
+      try {
+        for (const m of c.run(view) ?? []) out.push(`${c.name}: ${m}`);
+      } catch (e) {
+        out.push(`${c.name}: 確かめの途中でエラー: ${(e as Error).message}`);
+      }
+    }
+    return out;
+  }
+
   resolvedScene(s: SceneDoc): SceneDoc {
     return { ...s, entities: s.entities.map((e) => { try { return resolveEntity(this.docs.prefabs, e); } catch { return e; } }) };
   }

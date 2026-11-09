@@ -58,6 +58,7 @@ app.on('revealAsset', (path) => { layout.show('assets'); assets.reveal(path as s
 app.on('openMatrix', (path) => { matrix.open(path as string); layout.show('matrix'); });
 app.on('openSprite', (image) => { sprite.open(image as string); layout.show('sprite'); sprite.render?.(); });
 app.on('openTable', (t) => { const { name, row } = t as { name: string; row?: string }; table.open(name, row); layout.show('table'); });
+app.on('showPanel', (id) => layout.show(String(id)));
 
 // ---------- 上のバー ----------
 const top = document.getElementById('top')!;
@@ -73,6 +74,7 @@ const renderTop = () => {
     h('button', { class: p && !p.paused ? 'on' : '', title: playTitle(), onclick: () => (p ? app.togglePause() : app.startPlay()) }, p && !p.paused ? '⏸ 一時停止' : '▶ 再生'),
     h('button', { class: playSet() ? 'icon on' : 'icon', title: `再生の設定（始めのシーンに渡す params・日時）${playSet() ? `\n${playSet()}` : ''}`, onclick: openPlaySettings, disabled: !!p }, '…'),
     h('button', { title: '1フレーム進める', onclick: () => app.stepOnce() }, '⏭'),
+    speedSelect(),
     h('button', { title: '停止（実行中の変更を保存するか選べます）', onclick: () => app.stopPlay(), disabled: !p }, '⏹ 停止'),
     h('button', { title: '入力を記録しながら再生（停止時に recordings/ に保存）', onclick: () => app.startPlay(true), disabled: !!p }, '● 記録して再生'),
     h('button', { class: 'icon', title: app.undoInfo.undo ? `元に戻す（Ctrl+Z）: ${app.undoInfo.undo.label}` : '元に戻せる編集はありません', disabled: !app.undoInfo.undo || !!p, onclick: () => app.undo() }, '↶'),
@@ -87,6 +89,14 @@ const renderTop = () => {
 app.on('change', renderTop);
 app.on('play', renderTop);
 app.on('audio', renderTop);
+
+/** 再生の速さ（拡張の api.speed と同じ） */
+function speedSelect(): HTMLElement {
+  const sel = h('select', { title: '再生の速さ', style: 'width:auto' }, [0.25, 0.5, 1, 2, 4].map((v) => h('option', { value: String(v), selected: v === app.playSpeed }, `×${v}`))) as HTMLSelectElement;
+  if (![0.25, 0.5, 1, 2, 4].includes(app.playSpeed)) sel.prepend(h('option', { value: String(app.playSpeed), selected: true }, `×${app.playSpeed}`));
+  sel.addEventListener('change', () => { app.playSpeed = Number(sel.value); });
+  return sel;
+}
 
 /** 再生の設定の要約（何も決めていなければ ''） */
 function playSet(): string {
@@ -153,6 +163,8 @@ function openSettings(): void {
 
 // ---------- キー入力（再生中だけゲームへ。マウス・タッチはゲームの画面がつなぐ） ----------
 const typing = (e: KeyboardEvent) => e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement;
+/** 拡張のパネルの中のキー（パネルが自分で使う。本体のシーンの編集のキーは動かさない） */
+const inExtension = (e: KeyboardEvent) => !!(e.target as HTMLElement)?.closest?.('.ext-panel');
 app.devices.enabled = () => !!app.play;
 app.devices.bindKeyboard(window, typing);
 // 元に戻す・やり直す（文字を入力している欄では、その欄の中の取り消しを優先する）
@@ -164,7 +176,7 @@ window.addEventListener('keydown', (e) => {
 });
 // シーンの編集: 複製（Ctrl+D）・削除（Delete）・すべて選ぶ（Ctrl+A）・選ぶのをやめる（Esc）・矢印で1px（Shift で格子の目か 10px）ずらす
 window.addEventListener('keydown', (e) => {
-  if (typing(e) || (e.target as HTMLElement)?.isContentEditable || app.play || document.querySelector('.modal-bg')) return;
+  if (typing(e) || inExtension(e) || (e.target as HTMLElement)?.isContentEditable || app.play || document.querySelector('.modal-bg')) return;
   const scene = app.state.scenes[app.scene];
   const ids = app.selectedIds();
   const mod = e.ctrlKey || e.metaKey;
@@ -208,7 +220,7 @@ async function mountWindows(): Promise<void> {
     const id = `win:${x.ext.id}`;
     let slot = panels.get(id);
     if (!slot) {
-      slot = { el: h('div', {}) };
+      slot = { el: h('div', { class: 'ext-panel' }) };
       panels.set(id, slot);
       const panel: Panel = { id, title: p.title ?? x.ext.title ?? x.ext.id, el: slot.el, ...(p.area ? { area: p.area } : {}) };
       layout.add(panel);

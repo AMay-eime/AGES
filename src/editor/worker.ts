@@ -27,7 +27,7 @@ async function state() {
     assets: project.assets,
     saves: [...project.saves.keys()],
     codeRefs: Object.fromEntries(await project.codeRefs()),
-    issues: project.validate(),
+    issues: [...project.validate(), ...project.projectChecks().map((m) => `⚠ ${m}`)],
     lockReport: project.lockReport,
     integrity: { ok: project.integrity.ok, reason: project.integrity.reason, diff: project.lockDiff(), hasBackup: !!project.integrity.backup },
   };
