@@ -29,6 +29,7 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
 - 1コマ・1動きの変更は patch の `setFrame` / `setClip`（例 `{"op":"setFrame","image":"assets/x.png","frame":"x_3","name":"hero_idle","pivot":[0.5,1]}`）。`.sheet.json` を直接書き換えない
 - コマを指定するときは名前を使う（切り直してもずれない）。切り方の🔒・★はシーンの値と同じ扱い
 - 図形は Shape。四角・円は `stroke` を1以上にすると枠だけ（リング・ゲージの枠）。線は `kind: "line"` で、物の位置から `to`（ずれ。回転がかかる）まで、太さは `stroke`。レーザー・予告線は線の物を1つ置き、`to` か `Transform.rot` を変える（細い四角を計算しない）
+- 絵を伸ばさずに並べるのは `Sprite.tile`（1枚の大きさ）と `size`。`tileOffset` を毎フレーム変えると流れる（帯のレーザー・背景・床）。光るものは Sprite・Shape の `blend: "add"`
 - 決めた四角の中だけに描くのは Clip（`min`・`max`。背景の切り替えの境目・巻物の一覧）。画面を分けて別のものを映すなら Camera の viewPos・viewSize（guide:camera）
 
 ## camera: カメラと画面の大きさ

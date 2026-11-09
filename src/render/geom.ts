@@ -58,6 +58,20 @@ export function strokeBands(w: number, h: number, stroke: number): [number, numb
   return [[0, 0, 1, fy], [0, 1 - fy, 1, 1], [0, fy, fx, 1 - fy], [1 - fx, fy, 1, 1 - fy]];
 }
 
+/**
+ * 敷き詰め: 長さ len を、1枚の大きさ size の絵で埋める（off だけ絵をずらす）。はみ出す1枚は切る。
+ * 返すのは [置く所の始め, 終わり（len に対する 0〜1）, 絵の中の始め, 終わり（1枚に対する 0〜1）] の並び（多すぎるときは 512 枚まで）
+ */
+export function tileSpans(len: number, size: number, off: number): [number, number, number, number][] {
+  const out: [number, number, number, number][] = [];
+  if (!(len > 0) || !(size > 0)) return out;
+  for (let p = -(((off % size) + size) % size); p < len && out.length < 512; p += size) {
+    const a = Math.max(p, 0), b = Math.min(p + size, len);
+    if (b > a) out.push([a / len, b / len, (a - p) / size, (b - p) / size]);
+  }
+  return out;
+}
+
 /** 点が4つの角の中にあるか（回転していても正しく判定する） */
 export function pointInCorners(px: number, py: number, q: Corners): boolean {
   let sign = 0;

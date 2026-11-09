@@ -34,6 +34,8 @@ export const Sprite = defineComponent({
     flipY: { type: 'bool', default: false, desc: '上下反転' },
     blend: { type: 'enum', options: ['normal', 'add', 'multiply', 'screen'], default: 'normal', desc: '重ね方。add=光る（加算）' },
     slice: { type: 'int', default: 0, min: 0, max: 512, desc: '9つに切って伸ばす（枠・吹き出し・ボタンの画像に）。四隅の大きさ(px)。0 なら切らない' },
+    tile: { type: 'vec2', default: [0, 0], desc: '敷き詰める1枚の大きさ [幅, 高さ](px)。size いっぱいに絵を並べる（伸ばさない。帯のレーザー・流れる背景・床）。0 なら敷き詰めない' },
+    tileOffset: { type: 'vec2', default: [0, 0], desc: '敷き詰めた絵のずれ(px)。毎フレーム変えると絵が流れる（スクロール）' },
     ...drawOrder,
   },
 });
@@ -62,6 +64,7 @@ export const Shape = defineComponent({
     to: { type: 'vec2', default: [0, 0], desc: 'line の終わりの点（物の位置からのずれ(px)。回転・倍率がかかる）' },
     color: { type: 'color', default: '#ffffff', desc: '色' },
     alpha: { type: 'number', default: 1, min: 0, max: 1, step: 0.01, desc: '不透明度' },
+    blend: { type: 'enum', options: ['normal', 'add', 'multiply', 'screen'], default: 'normal', desc: '重ね方。add=光る（加算。レーザー・光の輪）' },
     ...drawOrder,
   },
 });

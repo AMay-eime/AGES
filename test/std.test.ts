@@ -120,3 +120,18 @@ test('図形の線・枠と文字の縁取り・切り抜き（2-16）: 形の�
   await assert.rejects(p.apply([{ op: 'set', path: 'main#beam.Shape.kind', value: 'ring' }], ai), /rect \| circle \| line/);
   await rm(dir, { recursive: true, force: true });
 });
+
+test('敷き詰め（Sprite.tile）: はみ出す1枚は切り、ずれで絵が流れる。Shape の重ね方', async () => {
+  const { tileSpans } = await import('../src/render/geom.ts');
+  // 長さ 100 を 40 ずつ: 40・40・20（最後の1枚は半分だけ）
+  assert.deepEqual(tileSpans(100, 40, 0), [[0, 0.4, 0, 1], [0.4, 0.8, 0, 1], [0.8, 1, 0, 0.5]]);
+  // 10 ずらす: 最初の1枚は絵の 1/4 から
+  assert.deepEqual(tileSpans(100, 40, 10).slice(0, 2), [[0, 0.3, 0.25, 1], [0.3, 0.7, 0, 1]]);
+  assert.deepEqual(tileSpans(100, 40, -30), tileSpans(100, 40, 10), '負のずれも同じ並び');
+  assert.equal(tileSpans(1e6, 1, 0).length, 512, '多すぎるときは打ち切る');
+  const dir = await fresh();
+  const p = await Project.load(dir);
+  const sp = p.registry.components.get('Sprite')!.fields, sh = p.registry.components.get('Shape')!.fields;
+  assert.deepEqual([sp.tile.default, sp.tileOffset.default, sh.blend.default], [[0, 0], [0, 0], 'normal']);
+  await rm(dir, { recursive: true, force: true });
+});
