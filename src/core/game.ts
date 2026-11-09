@@ -15,6 +15,7 @@ import { UiState } from './ui.ts';
 import { SaveData, SETTINGS_KEY, type SaveApi, type SaveStore } from './save.ts';
 import { format, languagesOf, lookup } from './i18n.ts';
 import { HitState, contains, inGroup, overlap, rayHit, shapeOf, type HitShape } from './collide.ts';
+import { dateAt, realDate, type DateStart, type GameDate } from './clock.ts';
 
 export interface Ctx {
   world: World;
@@ -25,12 +26,17 @@ export interface Ctx {
   frame: number;
   /** 経過秒（frame * dt） */
   time: number;
+  /**
+   * 今の日時（遊ぶ人の時計の、始めた時刻＋ゲームの中で進んだ時間）。日付を使う遊び（日替わり・季節）に。
+   * 画面なしの ages run では決まった日時（--date で変える）なので、毎回同じ結果になる
+   */
+  readonly date: GameDate;
   view: { width: number; height: number };
   spawn(prefab: string, overrides?: Record<string, Record<string, unknown>>): Entity;
   /** プレハブの中身を読む（派生は元と重ねた形、書いていない値は既定値。ないなら undefined）。読むだけ（凍らせてあり、書き換えるとエラー）。プレハブが変わるまで同じものを返すので、毎フレーム呼んでも軽い */
   prefab(name: string): { name: string; tags: string[]; components: Record<string, Record<string, any>> } | undefined;
   destroy(id: string): void;
-  /** 出来事を記録する（例: emit('enemyKilled')）。ages run の要約に回数が載る */
+  /** 出来事を出す（例: emit('enemyKilled', { id })）。defineSystem の on で受けたシステムが、その場で呼ばれる。ages run の要約に回数が載る */
   emit(event: string, data?: unknown): void;
   /** カメラを揺らす（強さ 0〜1 を足す。重ねると強くなる）。camera を省くと、使っているカメラすべて */
   shake(amount: number, camera?: string): void;
@@ -231,8 +237,15 @@ export class Game {
   /** これまでのシーンの移り変わり（ages run の要約に載る） */
   sceneLog: { frame: number; name: string }[] = [];
 
-  constructor(registry: Registry, config: ProjectConfig, scene: SceneDoc, seed = config.seed, opts: { store?: SaveStore; lang?: string; params?: Record<string, unknown> } = {}) {
+  /** 始めた日時（ctx.date はここから、ゲームの中の時間で進む） */
+  readonly dateStart: DateStart;
+  /** ゲームのコードが ctx.date を読んだか（ages run の要約に、使った日時を出す） */
+  dateUsed = false;
+  private dateCache: { frame: number; value: GameDate } | null = null;
+
+  constructor(registry: Registry, config: ProjectConfig, scene: SceneDoc, seed = config.seed, opts: { store?: SaveStore; lang?: string; params?: Record<string, unknown>; date?: DateStart } = {}) {
     this.registry = registry;
+    this.dateStart = opts.date ?? realDate();
     this.config = config;
     this.world = new World(registry);
     this.rng = new Rng(seed);
@@ -270,6 +283,11 @@ export class Game {
       dt: this.dt,
       get frame() { return game.frame; },
       get time() { return game.frame * game.dt; },
+      get date() {
+        game.dateUsed = true;
+        if (game.dateCache?.frame !== game.frame) game.dateCache = { frame: game.frame, value: Object.freeze(dateAt(game.dateStart, (game.frame * 1000) / game.config.fps)) };
+        return game.dateCache.value;
+      },
       view: { width: config.view.width, height: config.view.height },
       spawn: (p, o) => this.world.spawn(p, o),
       prefab: (name) => {
@@ -356,6 +374,7 @@ export class Game {
         this.recent.unshift(ev);
         if (this.recent.length > 200) this.recent.pop();
         for (const l of this.listeners) l(ev);
+        this.dispatch(name, data);
       },
     };
     // Text.key の文字を、始めから今の言語に（エディタの止めている画面にも出る）
@@ -582,6 +601,21 @@ export class Game {
     this.tweens = keep;
   }
 
+  /** 出来事の中で出した出来事の深さ（受けた先でまた出す、を数える） */
+  private depth = 0;
+  /** 出来事を、受けるシステム（on）にその場で渡す */
+  private dispatch(name: string, data: unknown): void {
+    const subs = this.active().filter((s) => s.on && Object.hasOwn(s.on, name));
+    if (!subs.length) return;
+    if (this.depth >= 16) throw new Error(`出来事 ${name} の受け渡しが16段を超えました（on の中で出した出来事が、また同じ出来事を出していませんか）`);
+    this.depth++;
+    try {
+      for (const s of subs) {
+        try { s.on![name](this.ctx, data); } catch (err) { throw err instanceof GameError ? err : new GameError(`${s.name}.on.${name}`, this.frame, err); }
+      }
+    } finally { this.depth--; }
+  }
+
   /** このシーンで動くシステム */
   private active() {
     return this.registry.systems.filter((s) => !s.scenes || s.scenes.includes(this.sceneName));
@@ -628,7 +662,7 @@ export class Game {
     const t = this.trans!;
     for (const s of this.active()) {
       if (!s.exit) continue;
-      try { s.exit(this.ctx); } catch (err) { throw new GameError(s.name + '.exit', this.frame, err); }
+      try { s.exit(this.ctx); } catch (err) { throw err instanceof GameError ? err : new GameError(s.name + '.exit', this.frame, err); }
     }
     this.world.flush();
     const keep = new Set(t.keep);
@@ -651,21 +685,23 @@ export class Game {
     this.input.setFrame(input);
     // UI の操作はゲームのシステムより前に（押されたボタンを、そのフレームのうちに読めるように）
     this.ui.update(this.world, this.input, this.config.view.width, this.config.view.height);
-    for (const id of this.ui.clicked) {
-      this.uiCounts.set(id, (this.uiCounts.get(id) ?? 0) + 1);
-      this.ctx.emit('ui.click', { id });
-    }
     const systems = this.active();
     if (!this.started) {
       this.started = true;
       for (const s of systems) {
         if (!s.start) continue;
-        try { s.start(this.ctx); } catch (err) { throw new GameError(s.name + '.start', this.frame, err); }
+        try { s.start(this.ctx); } catch (err) { throw err instanceof GameError ? err : new GameError(s.name + '.start', this.frame, err); }
       }
       this.world.flush();
     }
+    // ボタンの出来事は start の後に（受ける側の準備が済んでから）
+    for (const id of this.ui.clicked) {
+      this.uiCounts.set(id, (this.uiCounts.get(id) ?? 0) + 1);
+      this.ctx.emit('ui.click', { id });
+    }
     for (const s of systems) {
-      try { s.update(this.ctx); } catch (err) { throw new GameError(s.name, this.frame, err); }
+      if (!s.update) continue;
+      try { s.update(this.ctx); } catch (err) { throw err instanceof GameError ? err : new GameError(s.name, this.frame, err); }
     }
     this.stepTweens();
     // 当たり判定: このフレームの終わりの位置で、重なり始めを求める（このフレームに消した物も数える。次のフレームで ctx.hit.entered に出る）

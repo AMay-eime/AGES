@@ -80,7 +80,7 @@ export function makeTools(defaultProject: string): Tool[] {
     },
     {
       name: 'ages_run',
-      description: '画面なしで実行し、要約だけを返す。keys の例 "0-300:@fire;0-120:@move_x=-1;300:click=retry"（開始-終了:入力+入力。@操作 は表 $actions の名前。書き方の全部は ages_schema の guide:input）。watch の例 ["player.Health.hp"]。until はその出来事（scene:名前 でそのシーンに入ったら）で止める。twice=true で再現性を確かめる',
+      description: '画面なしで実行し、要約だけを返す。keys の例 "0-300:@fire;0-120:@move_x=-1;300:click=retry"（開始-終了:入力+入力。title+30:… はシーンに入ってから。@操作 は表 $actions の名前。書き方の全部は guide:input）。watch の例 ["player.Health.hp"]。until はその出来事（scene:名前 でそのシーンに入ったら）で止める。twice=true で再現性を確かめる',
       inputSchema: {
         type: 'object',
         properties: {
@@ -91,14 +91,14 @@ export function makeTools(defaultProject: string): Tool[] {
           watch: { type: 'array', items: { type: 'string' } }, every: { type: 'number' }, until: { type: 'string' }, twice: { type: 'boolean' },
           save: { type: 'string', description: 'この保存データ（saves/x.save.json）から始める。省くと空' },
           saveOut: { type: 'string', description: '終わりの保存データを書き出す' },
-          lang: { type: 'string', description: '言語' },
+          lang: { type: 'string', description: '言語' }, date: { type: 'string', description: 'ctx.date の始め' },
           params: { type: 'object', description: '始めのシーンの scene.params' },
           shot: { type: 'string', description: 'その画面を撮る（例 "0,600"）' }, shotScale: { type: 'number' },
         },
       },
       run: (a, dir) => {
         const f: Record<string, string | true> = {};
-        for (const k of ['frames', 'scene', 'spawn', 'seed', 'keys', 'input', 'every', 'until', 'lang']) if (a[k] !== undefined) f[k] = String(a[k]);
+        for (const k of ['frames', 'scene', 'spawn', 'seed', 'keys', 'input', 'every', 'until', 'lang', 'date']) if (a[k] !== undefined) f[k] = String(a[k]);
         if (a.watch?.length) f.watch = a.watch.join(',');
         if (a.twice) f.twice = true;
         if (a.save) f.save = String(a.save);

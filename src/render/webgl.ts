@@ -6,7 +6,7 @@ import type { World, Entity } from '../core/world.ts';
 import type { SheetDef } from '../core/sheet.ts';
 import { camerasOf, defaultCamera, worldToScreen, type CameraView } from '../core/camera.ts';
 import { layoutUI, type UiRect } from '../core/ui.ts';
-import { collectDrawables, cornersOf, lineCorners, pointInCorners, spriteGeometry, strokeBands, tileSpans, type Corners } from './geom.ts';
+import { collectDrawables, cornersOf, dashSpans, dashedBands, ellipsePerimeter, lineCorners, pointInCorners, ringPiece, spriteGeometry, strokeBands, tileSpans, type Corners } from './geom.ts';
 import { ParticleSim } from './particles.ts';
 import { STD_SHADERS, codeHash, wrapShader, type ShaderDef } from '../core/shader.ts';
 
@@ -363,7 +363,7 @@ export class Renderer {
     const k = b[b.state ?? 'normal'] ?? b.normal ?? '#ffffff';
     const [r1, g1, b1] = this.rgb(color), [r2, g2, b2] = this.rgb(k);
     const hx = (v: number) => Math.round(v * 255).toString(16).padStart(2, '0');
-    return `#${hx(r1 * r2)}${hx(g1 * g2)}${hx(b1 * b2)}`;
+    return `#${hx(r1 * r2)}${hx(g1 * g2)}${hx(b1 * b2)}${color.length === 9 ? color.slice(7) : ''}`;
   }
 
   /** 四角の中の一部（0〜1 で指定）の4つの角。回転・倍率は中心まわり */
@@ -500,23 +500,42 @@ export class Renderer {
     const t = box ? box.t : (e.c.Transform as TransformLike);
     const color = this.stateColor(e, s.color), alpha = s.alpha ?? 1, mat = this.material(e);
     const blend = s.blend ?? 'normal';
+    const [on, off] = (s.dash ?? [0, 0]) as [number, number], dashed = on > 0 && off > 0, offset = s.dashOffset ?? 0;
+    // 一部だけ描く（破線の1本・塗り）。選ぶ範囲には入れない（選ぶのは図形の全体で）
+    const piece = (tex: Tex, c: Corners, col = color) => { const p = this.place(e.id, c, false); if (p) this.quad(tex, blend, p, 0, 0, 1, 1, col, alpha, mat); };
     if (s.kind === 'line') {
-      const q = this.place(e.id, lineCorners(t, s.to ?? [0, 0], s.stroke || 1));
-      if (q) this.quad(this.white, blend, q, 0, 0, 1, 1, color, alpha, mat);
+      const to = (s.to ?? [0, 0]) as [number, number], width = s.stroke || 1;
+      const q = this.place(e.id, lineCorners(t, to, width));
+      if (!q) return;
+      if (!dashed) this.quad(this.white, blend, q, 0, 0, 1, 1, color, alpha, mat);
+      else for (const [a, b] of dashSpans(Math.hypot(to[0], to[1]), on, off, offset)) piece(this.white, lineCorners(t, to, width, a, b));
       return;
     }
     const w = box ? box.w : s.w, h = box ? box.h : s.h;
     const stroke = s.stroke ?? 0;
     const q = this.place(e.id, cornersOf(t, w, h, 0.5, 0.5));
     if (!q) return;
-    if (stroke <= 0) this.quad(s.kind === 'circle' ? this.circle : this.white, blend, q, 0, 0, 1, 1, color, alpha, mat);
-    else if (s.kind === 'circle') this.quad(this.ring(stroke / Math.max(1, Math.min(w, h) / 2)), blend, q, 0, 0, 1, 1, color, alpha, mat);
-    else {
-      for (const [x0, y0, x1, y1] of strokeBands(w, h, stroke)) {
-        const b = this.place(e.id, this.part(t, w, h, x0, y0, x1, y1), false);
-        if (b) this.quad(this.white, blend, b, 0, 0, 1, 1, color, alpha, mat);
-      }
+    if (stroke <= 0) { this.quad(s.kind === 'circle' ? this.circle : this.white, blend, q, 0, 0, 1, 1, color, alpha, mat); return; }
+    // 中の塗り（枠の下に。円は枠の太さの真ん中まで塗って、すき間が出ないように）
+    if (s.fill && this.alphaOf(s.fill) > 0) {
+      const fc = this.stateColor(e, s.fill);
+      if (s.kind === 'circle') piece(this.circle, cornersOf(t, Math.max(0, w - stroke), Math.max(0, h - stroke), 0.5, 0.5), fc);
+      else if (stroke * 2 < Math.min(w, h)) piece(this.white, this.part(t, w, h, stroke / w, stroke / h, 1 - stroke / w, 1 - stroke / h), fc);
     }
+    if (s.kind === 'circle') {
+      if (!dashed) { this.quad(this.ring(stroke / Math.max(1, Math.min(w, h) / 2)), blend, q, 0, 0, 1, 1, color, alpha, mat); return; }
+      // 破線の円: 模様を円周に沿って置き、1本を細かい台形に分けて描く（上から時計回り）
+      const sw = Math.min(stroke, w / 2, h / 2);
+      for (const [a, b] of dashSpans(ellipsePerimeter(w / 2 - sw / 2, h / 2 - sw / 2), on, off, offset)) {
+        const n = Math.max(1, Math.ceil(((b - a) * Math.PI * 2) / 0.15));
+        for (let i = 0; i < n; i++) {
+          const a0 = -Math.PI / 2 + Math.PI * 2 * (a + ((b - a) * i) / n), a1 = -Math.PI / 2 + Math.PI * 2 * (a + ((b - a) * (i + 1)) / n);
+          piece(this.white, ringPiece(t, w, h, sw, a0, a1));
+        }
+      }
+      return;
+    }
+    for (const [x0, y0, x1, y1] of dashed ? dashedBands(w, h, stroke, on, off, offset) : strokeBands(w, h, stroke)) piece(this.white, this.part(t, w, h, x0, y0, x1, y1));
   }
 
   /** 円の枠の絵（太さは半径に対する割合。1/64 刻みで作り置く） */
@@ -606,6 +625,7 @@ export class Renderer {
       this.curSize = [tex.w, tex.h];
     }
     const [r, g, b] = this.rgb(color);
+    if (color.length === 9) alpha *= this.alphaOf(color);
     const o = this.count * 4 * FLOATS;
     const uv = [u0, v0, u1, v0, u1, v1, u0, v1];
     for (let i = 0; i < 4; i++) {
@@ -848,6 +868,11 @@ export class Renderer {
       for (const [k, t] of this.textCache) if (k.includes(fam!)) { this.gl.deleteTexture(t.tex); this.textCache.delete(k); }
     }).catch(() => console.warn(`フォントを読み込めません: ${path}`)));
     return fam;
+  }
+
+  /** 色の透け具合（#rrggbbaa の aa。#rrggbb なら 1） */
+  private alphaOf(hex: string): number {
+    return hex.length === 9 ? parseInt(hex.slice(7), 16) / 255 || 0 : 1;
   }
 
   private rgb(hex: string): [number, number, number] {

@@ -10,6 +10,7 @@ import { Registry, type GameModule } from '../core/registry.ts';
 import { applyOps, diffDocs, getValue, setValue, sheetRoot, splitItem, type Change, type Docs, type Op, type PatchResult } from '../core/patch.ts';
 import { parseAddress } from '../core/docs.ts';
 import { Game } from '../core/game.ts';
+import { RUN_DATE, parseDate, type DateStart } from '../core/clock.ts';
 import { FIELD_TYPES, brief, checkAt, suggest, visit, type Field } from '../core/schema.ts';
 import { ROW_ID, type TableDoc } from '../core/table.ts';
 import { appendLog, localTime, lockedHits, markTouched, movePrefixTouched, moveTouched, readLocks as readLockFile, readLog, readTouched, writeLocks, type Actor, type LockMark } from './oplog.ts';
@@ -1114,12 +1115,13 @@ export class Project {
   }
 
   /** ゲームを作る。doc を渡すと、そのシーン（試しのシーンなど）で始める */
-  newGame(scene = this.config.startScene, seed = this.config.seed, store?: SaveStore, lang?: string, sceneDoc?: SceneDoc, params?: Record<string, unknown>): Game {
+  /** 画面なしで動かすゲーム。日時は date（省くと決まった日時 RUN_DATE。毎回同じ結果になるように） */
+  newGame(scene = this.config.startScene, seed = this.config.seed, store?: SaveStore, lang?: string, sceneDoc?: SceneDoc, params?: Record<string, unknown>, date?: DateStart): Game {
     const doc = sceneDoc ?? this.docs.scenes.get(scene);
     if (!doc) throw new Error(`シーン ${scene} はありません${suggest(scene, [...this.docs.scenes.keys()])}`);
     const langs = languagesOf(this.config);
     if (lang && !langs.includes(lang)) throw new Error(`言語 ${lang} はありません${suggest(lang, langs)}（ages.project.json の languages: ${langs.join(', ')}）`);
-    return new Game(this.registry, this.config, doc, seed, { store, lang, params });
+    return new Game(this.registry, this.config, doc, seed, { store, lang, params, date: date ?? parseDate(RUN_DATE) });
   }
 }
 

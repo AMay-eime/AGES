@@ -2,12 +2,12 @@
 // ages run と同じ入力（core/runinput.ts）で同じフレームまで進め、そのフレームの画面を PNG で返す。音は鳴らさない。
 import { Registry, type GameModule } from '../core/registry.ts';
 import { Game } from '../core/game.ts';
-import { InputPlayback, type InputEvent } from '../core/input.ts';
 import { MemoryStore } from '../core/save.ts';
 import { shaderMap } from '../core/shader.ts';
 import { languagesOf } from '../core/i18n.ts';
 import { spawnTryout, tryoutScene, type TryoutSpawn } from '../core/tryout.ts';
-import { frameInput } from '../core/runinput.ts';
+import { RunInput, type RunKeys } from '../core/runinput.ts';
+import { parseDate } from '../core/clock.ts';
 import { Renderer } from '../render/webgl.ts';
 import type { EditorState } from './app.ts';
 
@@ -16,9 +16,10 @@ export interface ShotConfig {
   seed: number;
   /** 撮るフレーム（そのフレームまで進めた後の画面。0 は最初のフレームを進める前） */
   frames: number[];
-  events: InputEvent[];
-  /** フレーム → 押すボタンの ID（click=） */
-  clicks: [number, string][];
+  /** 入力（--keys・--input をまとめたもの） */
+  keys: RunKeys;
+  /** 始めの日時（ctx.date。ages run と同じ） */
+  date: string;
   params?: Record<string, unknown>;
   save?: Record<string, unknown>;
   lang?: string;
@@ -63,11 +64,10 @@ async function shoot(cfg: ShotConfig): Promise<ShotResult> {
   const store = new MemoryStore(cfg.save ?? {});
   const doc = cfg.spawns?.length ? tryoutScene() : state.scenes[cfg.scene];
   if (!doc) throw new Error(`シーン ${cfg.scene} はありません`);
-  const game = new Game(registry, state.config, doc, cfg.seed, { store, lang: cfg.lang, params: cfg.spawns?.length ? undefined : cfg.params });
+  const game = new Game(registry, state.config, doc, cfg.seed, { store, lang: cfg.lang, params: cfg.spawns?.length ? undefined : cfg.params, date: parseDate(cfg.date) });
   if (cfg.spawns?.length) spawnTryout(game, cfg.spawns, v.width, v.height);
   game.particleListeners.push((cmd) => renderer.particles.burst(game.world, cmd.id, cmd.count));
-  const play = new InputPlayback(cfg.events);
-  const clicks = new Map(cfg.clicks);
+  const play = new RunInput(cfg.keys);
 
   const draw = () => renderer.draw(game.world, { background: v.background, design: { width: canvas.width, height: canvas.height }, overlay: game.overlay(), particles: { dt: 0 }, post: true });
   const capture = async (): Promise<string> => {
@@ -86,7 +86,7 @@ async function shoot(cfg: ShotConfig): Promise<ShotResult> {
   try {
     for (const t of targets) {
       while (game.frame < t) {
-        const { input } = frameInput(game, play, clicks, v.width, v.height);
+        const { input } = play.at(game, v.width, v.height);
         game.step(input);
         renderer.particles.update(game.world, dt);
       }

@@ -20,8 +20,13 @@ export interface SystemDef {
   writes?: string[];
   /** シーンに入ったときに1回（最初のシーンにも、goto で入ったシーンにも） */
   start?(ctx: Ctx): void;
-  /** 毎フレーム */
-  update(ctx: Ctx): void;
+  /** 毎フレーム（出来事を受けるだけのシステムなら省ける） */
+  update?(ctx: Ctx): void;
+  /**
+   * 出来事を受ける。ctx.emit のときに、その場で呼ばれる（このシーンで動くシステムだけ、実行順に）。
+   * 例 on: { enemyKilled(ctx, data) { ... } }。標準の出来事: scene（{ from, to }）、ui.click（{ id }）
+   */
+  on?: Record<string, (ctx: Ctx, data: any) => void>;
   /** シーンを出るときに1回（goto の切り替えの直前。物はまだ残っている） */
   exit?(ctx: Ctx): void;
   /** このシーンでだけ動く（省くと全部のシーンで）。例 ['title'] */
@@ -74,6 +79,11 @@ export class Registry {
     for (const s of mod.systems) {
       if (names.has(s.name)) throw new Error(`システム ${s.name} が2回定義されています`);
       names.add(s.name);
+      if (s.on !== undefined) {
+        if (!s.on || typeof s.on !== 'object') throw new Error(`システム ${s.name}: on は { 出来事の名前: (ctx, data) => { ... } } で書きます`);
+        for (const [ev, fn] of Object.entries(s.on)) if (typeof fn !== 'function') throw new Error(`システム ${s.name}: on.${ev} が関数ではありません（(ctx, data) => { ... } で書きます）`);
+      }
+      if (!s.update && !s.on && !s.start && !s.exit) throw new Error(`システム ${s.name} に update・on・start・exit のどれもありません`);
       for (const c of [...(s.reads ?? []), ...(s.writes ?? [])]) {
         if (!r.components.has(c)) throw new Error(`システム ${s.name} が未定義のコンポーネント ${c} を参照しています${suggest(c, [...r.components.keys()])}`);
       }

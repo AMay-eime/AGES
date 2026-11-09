@@ -58,9 +58,10 @@ export function findInProject(p: Project, query: string, guide: Map<string, Guid
 
   // システム（実行順）
   p.registry.systems.forEach((s, i) => {
-    if (hit(s.name, s.desc)) {
+    const on = s.on ? Object.keys(s.on) : [];
+    if (hit(s.name, s.desc, on.join(' '))) {
       const rw = [s.reads?.length ? `r:${s.reads.join(',')}` : '', s.writes?.length ? `w:${s.writes.join(',')}` : ''].filter(Boolean).join(' ');
-      add(`システム:${s.name}`, `システム ${i + 1} ${s.name}${at(`system:${s.name}`)} — ${cut(s.desc)}${rw ? ' ' + rw : ''}`);
+      add(`システム:${s.name}`, `システム ${i + 1} ${s.name}${at(`system:${s.name}`)} — ${cut(s.desc)}${rw ? ' ' + rw : ''}${on.length ? ` 受ける:${on.join(',')}` : ''}`);
     }
   });
 
