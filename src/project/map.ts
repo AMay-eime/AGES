@@ -17,10 +17,13 @@ export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, l
   // 毎回読む1枚なので、使っていないものの行は出さない（標準の部品・シェーダー・表の説明は ages schema で引く）
   const own = [...p.registry.components.values()].filter((def) => !p.registry.std.has(def.name));
   if (own.length) {
-    out.push('## components（名前 説明 | フィールド:型 範囲=既定値）');
+    out.push('## components（名前 説明 | フィールド:型 範囲=既定値 | 自動:実行中に変わる値）');
     for (const def of own) {
-      const fields = Object.entries(def.fields).map(([k, f]) => `${k}:${brief(f)}`).join(' ');
-      out.push(`${def.name} ${def.desc} | ${fields || '（フィールドなし）'}`);
+      // 実行中に変わる値（desc に「自動で変化」）は人もAIも書かないので、型と範囲を省いて名前だけ（ages schema で引ける）
+      const all = Object.entries(def.fields);
+      const auto = all.filter(([, f]) => isAutoField(f)).map(([k]) => k);
+      const fields = all.filter(([, f]) => !isAutoField(f)).map(([k, f]) => `${k}:${brief(f)}`).join(' ');
+      out.push(`${def.name} ${def.desc} | ${fields || '（フィールドなし）'}${auto.length ? ` | 自動:${auto.join(',')}` : ''}`);
     }
   }
 
@@ -140,6 +143,9 @@ export interface AssetListOptions {
   /** 使っている所の数を出す */
   counts?: boolean;
 }
+
+/** 実行中に変わる値（AGENTS.md の決まり: desc に「自動で変化」） */
+export const isAutoField = (f: { desc?: string }): boolean => /自動で変化/.test(f.desc ?? '');
 
 /** 地図にアセットを1つずつ並べる上限。これより多いとフォルダごとの数にする */
 export const ASSET_LIST_MAX = 40;
