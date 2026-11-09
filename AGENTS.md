@@ -60,7 +60,7 @@
 - 画面の言葉・多言語: 表 `$text` と `ctx.t`・Text.key。言葉をコードに書かない → `text`
 - 保存: `ctx.save`・`saveWorld`。キー割り当て・音量・言語は自動 → `save`
 - 粒（火花・煙）: Particles → `particles`
-- 独自のエディタウインドウ: `defineWindow`。作る前に地図の `## editor windows` を見て、近いものを直す → `window`
+- 独自のエディタ拡張（パネル・インスペクタの欄と部品の見せ方）: `defineExtension`。作る前に地図の `## editor extensions` を見て、近いものを直す → `window`
 
 ## 役割分担
 

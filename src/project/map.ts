@@ -103,11 +103,12 @@ export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, l
     out.push(...renderAssets(p, { touched, locks, code }));
   }
   if (c.editorWindows?.length) {
-    out.push('## editor windows（プロジェクト独自のエディタ。作る前にここを見て、近いものがあれば直す。変える値は edits に書いたものだけ）');
+    out.push('## editor extensions（プロジェクト独自のエディタ拡張。作る前にここを見て、近いものがあれば直す。変える値は edits と、見せている欄・部品だけ）');
     for (const w of windows.length ? windows : c.editorWindows.map((path) => ({ path }) as WindowInfo)) {
       if (w.error) { out.push(`${w.path} ⚠ ${w.error}`); continue; }
-      const edits = w.edits ? (w.edits.length ? compactPaths(w.edits) : 'なし（見るだけ）') : '⚠ 宣言なし';
-      out.push(`${w.id ?? '?'}「${w.title ?? ''}」${w.desc ? ' ' + w.desc : ''} | 変える: ${edits} | ${w.path}`);
+      const edits = w.edits ? (w.edits.length ? compactPaths(w.edits) : 'なし（見るだけ）') : w.panel ? '⚠ 宣言なし' : '';
+      const parts = [w.panel ? 'パネル' : '', w.fields?.length ? `欄:${w.fields.join(',')}` : '', w.components?.length ? `部品:${w.components.join(',')}` : ''].filter(Boolean).join(' ');
+      out.push(`${w.id ?? '?'}${w.title ? `「${w.title}」` : ''}${w.desc ? ' ' + w.desc : ''}${edits ? ` | 変える: ${edits}` : ''}${parts && parts !== 'パネル' ? ` | ${parts}` : ''} | ${w.path}`);
     }
   }
   const nl = Object.keys(locks).length, nt = Object.keys(touched).length;

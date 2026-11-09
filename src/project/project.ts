@@ -10,14 +10,14 @@ import { Registry, type GameModule } from '../core/registry.ts';
 import { applyOps, diffDocs, getValue, setValue, sheetRoot, splitItem, type Change, type Docs, type Op, type PatchResult } from '../core/patch.ts';
 import { parseAddress } from '../core/docs.ts';
 import { Game } from '../core/game.ts';
-import { brief, checkAt, suggest, visit, type Field } from '../core/schema.ts';
+import { FIELD_TYPES, brief, checkAt, suggest, visit, type Field } from '../core/schema.ts';
 import { ROW_ID, type TableDoc } from '../core/table.ts';
 import { appendLog, localTime, lockedHits, markTouched, movePrefixTouched, moveTouched, readLocks as readLockFile, readLog, readTouched, writeLocks, type Actor, type LockMark } from './oplog.ts';
 import { agesHome, lockDiff, verifyLocks, type LockIntegrity } from './seal.ts';
 import { scanAssets, type AssetInfo } from './assets.ts';
 import { assetRefs, codePrefabRefs, codeRefs, codeSceneRefs, isUnder } from '../core/assets.ts';
 import { resolvePrefab } from '../core/variant.ts';
-import { checkWindows, loadWindows, unlistedWindows, withinEdits, type WindowInfo } from './windows.ts';
+import { allowedByDrawers, checkWindows, loadWindows, unlistedWindows, withinEdits, type WindowInfo } from './windows.ts';
 import { Journal, inverseFiles, type DocState, type FileMove, type TxRecord } from './journal.ts';
 import { revert as revertValue, same } from '../core/revert.ts';
 import { FIT_MODES } from '../core/camera.ts';
@@ -111,7 +111,13 @@ export class Project {
   /** ウインドウの宣言の問題と、登録し忘れたウインドウ */
   async checkWindows(): Promise<string[]> {
     const listed = this.config.editorWindows ?? [];
-    const errs = checkWindows(await this.windows(), (a) => this.addressProblem(a));
+    const part = (c: string, f?: string) => {
+      const def = this.registry.components.get(c);
+      if (!def) return `部品 ${c} はありません${suggest(c, [...this.registry.components.keys()])}`;
+      return f === undefined || def.fields[f] ? null : `${c} に ${f} はありません${suggest(f, Object.keys(def.fields))}`;
+    };
+    const types = [...new Set([...this.registry.components.values()].flatMap((d) => Object.values(d.fields).map((f) => f.type)).concat(FIELD_TYPES))];
+    const errs = checkWindows(await this.windows(), (a) => this.addressProblem(a), part, types);
     for (const p of await unlistedWindows(this.dir, listed)) errs.push(`${p}: ages.project.json の editorWindows に書いていないので、エディタに出ません`);
     return errs;
   }
@@ -131,7 +137,7 @@ export class Project {
         return null;
       }
       if (a.field) { getValue(this.docs, this.registry, address); return null; }
-      const holder = a.kind === 'prefab' ? this.docs.prefabs.get(a.doc) : this.docs.scenes.get(a.doc)?.entities.find((e) => e.id === a.entity);
+      const holder = a.kind === 'prefab' ? this.registry.findPrefab(a.doc) : this.docs.scenes.get(a.doc)?.entities.find((e) => e.id === a.entity);
       if (!holder) return a.kind === 'prefab' ? `プレハブ ${a.doc} はありません${suggest(a.doc, [...this.docs.prefabs.keys()])}` : `シーン ${a.doc} に ${a.entity} はありません`;
       if (a.component && !holder.components[a.component]) return `${address.split('.')[0]} に ${a.component} は付いていません${suggest(a.component, Object.keys(holder.components))}`;
       return null;
@@ -630,9 +636,13 @@ export class Project {
     if (viaWindow) {
       const hits = ops.flatMap((op) => { const t = targetOf(op); return [...(t ? lockedHits(locks, t) : []), ...assetSheets(op).filter((k) => locks[k]), ...sceneKeys(op, locks)]; });
       if (hits.length) throw new Error(`🔒 ロックされた値は、ウインドウ ${viaWindow} からは変えられません: ${hits.join(', ')}。変えるならインスペクタで`);
-      windowEdits = (await this.windows()).find((w) => w.id === viaWindow)?.edits;
+      // パネルの edits と、見せている欄・部品（fields・components）だけを変えられる
+      const ext = (await this.windows()).find((w) => w.id === viaWindow);
+      windowEdits = ext ? ext.edits ?? [] : undefined;
       if (windowEdits) {
-        const outside = ops.map((op) => targetOf(op) ?? (op.op === 'addEntity' ? `${op.scene}#${op.entity.id}` : op.op === 'addComponent' || op.op === 'rename' ? op.target : op.op === 'addRow' || op.op === 'moveRow' ? `$${op.table}.${op.op === 'addRow' ? op.row.id : op.id}` : op.op)).filter((t) => !withinEdits(windowEdits!, t));
+        const info = (await this.windows()).find((w) => w.id === viaWindow)!;
+        const typeAt = (c: string, f: string) => this.registry.components.get(c)?.fields[f]?.type;
+        const outside = ops.map((op) => targetOf(op) ?? (op.op === 'addEntity' ? `${op.scene}#${op.entity.id}` : op.op === 'addComponent' || op.op === 'rename' ? op.target : op.op === 'addRow' || op.op === 'moveRow' ? `$${op.table}.${op.op === 'addRow' ? op.row.id : op.id}` : op.op)).filter((t) => !withinEdits(windowEdits!, t) && !allowedByDrawers(info, t, typeAt));
         if (outside.length) throw new Error(`ウインドウ ${viaWindow} は、宣言（edits）にない値を変えようとしています: ${outside.join(', ')}。変えるなら ${viaWindow} の edits に足してください（地図に出ます）`);
       }
     }

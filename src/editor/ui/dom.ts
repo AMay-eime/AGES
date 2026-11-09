@@ -30,7 +30,7 @@ export function clear(el: Element, ...children: Child[]): void {
   append(el, children);
 }
 
-export function toast(text: string, kind: '' | 'bad' | 'lock' = '', ms = 4000): HTMLElement {
+export function toast(text: string, kind: '' | 'warn' | 'bad' | 'lock' = '', ms = 4000): HTMLElement {
   const box = document.getElementById('toasts')!;
   const t = h('div', { class: `toast ${kind}` }, text);
   box.appendChild(t);
