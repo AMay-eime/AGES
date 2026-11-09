@@ -66,6 +66,38 @@ export type Op =
   /** シーンの説明・開始シーンにする */
   | { op: 'setScene'; name: string; desc?: string; start?: boolean };
 
+/**
+ * 操作（op）の書き方の一覧。ages schema <dir> ops で引く（毎回読む MCP の説明には並べない）。
+ * Record にしてあるので、op を足して書き忘れると型の検査で止まる
+ */
+export const OP_DOCS: Record<Op['op'], string> = {
+  set: '{path,value} 値を1つ変える',
+  setCells: '{path,cells:[[行,列,値]]} 行列の一部のセルだけ変える（行列全体を送らない）',
+  insert: '{path,value?,index?} リストに足す（path はリストの住所。index を省くと最後、value を省くと既定値）',
+  removeItem: '{path:"…[2]"} リストから消す',
+  moveItem: '{path:"…[2]",to} リストの中で動かす（to は動かした後の番号）',
+  addEntity: '{scene,entity:{id,name?,tags?,components?}} 物を足す',
+  removeEntity: '{scene,id} 物を消す',
+  addComponent: '{target,component,values?} コンポーネントを付ける（target は main#player か @enemy）',
+  removeComponent: '{target,component} コンポーネントを外す',
+  rename: '{target,name} 物の名前を変える',
+  addRow: '{table,row:{id,...},index?} 表に行を足す（省いた列は既定値）',
+  removeRow: '{table,id} 表から行を消す',
+  moveRow: '{table,id,to} 表の中で行を動かす',
+  renameRow: '{table,id,to} 行の id を変える（その行を指している値も直る）',
+  setSheet: '{image,sheet|null,renames?} 画像の切り方をまるごと決める・消す（ふつうは ages slice）',
+  setFrame: '{image,frame(番号か名前),name?,rect?:[x,y,w,h],pivot?:[x,y]|null,remove?} コマを1つ変える。ない名前に rect で追加。名前を変えると参照も直る',
+  setClip: '{image,clip,frames?,fps?,loop?,remove?} 動きを1つ変える・足す・消す',
+  moveAsset: '{from,to} ファイルかフォルダの場所を変える（使っている値と切り方も直る）',
+  removeAsset: '{path} ファイルかフォルダを消す（使っていないものだけ）',
+  addScene: '{name,copy?,desc?} シーンを作る（copy でそのシーンの写し）',
+  removeScene: '{name} シーンを消す（開始と、使われているものは消せない）',
+  renameScene: '{name,to} シーンの名前を変える（scene 型の値と開始シーンも直る）',
+  setScene: '{name,desc?,start?} シーンの説明・開始シーンにする',
+  dockUI: '{target,edge,margin?} UI を画面（親）の端・角に付ける。edge は topLeft top topRight left center right bottomLeft bottom bottomRight、margin は端からの間(px)。例 {"op":"dockUI","target":"main#hp","edge":"topRight","margin":8}',
+  attachUI: '{target,to,side?,gap?,align?} UI を別の UI の隣に接して置く（重ならず、相手と一緒に動く）。side は right left below above、align は start center end。例 {"op":"attachUI","target":"main#lives","to":"hp","side":"below","gap":4}',
+};
+
 /** シートの値の住所。sheet:<画像>（全体）、sheet:<画像>|<コマ>.rect、sheet:<画像>|clip:<動き>.fps */
 export const sheetAddress = (image: string, rest = '') => `sheet:${image}${rest ? '|' + rest : ''}`;
 /** シートの住所から、シート全体の住所（ロック・★の単位）を取り出す */
@@ -628,7 +660,7 @@ function applyOne(docs: Docs, reg: Registry, op: Op, changes: Change[], dirty: S
       return;
     }
     default:
-      throw new Error(`未知の操作 ${(op as { op: string }).op}。使えるのは set / setCells / insert / removeItem / moveItem / addEntity / removeEntity / addComponent / removeComponent / rename / addRow / removeRow / moveRow / renameRow / setSheet / setFrame / setClip`);
+      throw new Error(`未知の操作 ${(op as { op: string }).op}${suggest(String((op as { op: string }).op), Object.keys(OP_DOCS))}。一覧と書き方は ages schema <dir> ops`);
   }
 }
 
