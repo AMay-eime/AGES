@@ -2,7 +2,7 @@
 // 後で MCP サーバーから同じ関数を呼べるよう、各コマンドは文字列を返す関数にしてある。
 import { readFile, writeFile, readdir, mkdir, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join, resolve, relative, basename, sep } from 'node:path';
+import { join, resolve, relative, basename, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Project } from '../project/project.ts';
 import { renderAssets, renderMap } from '../project/map.ts';
@@ -20,6 +20,7 @@ import { autoRects, carryClips, gridRects, nameFrames, type Pixels, type Rect } 
 import { decodePng } from '../project/png.ts';
 import { shaderReport } from '../project/shader-status.ts';
 import { layoutUI } from '../core/ui.ts';
+import { MemoryStore } from '../core/save.ts';
 
 const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [引数]
 
@@ -37,6 +38,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
                [--export x.csv] [--import x.csv [--force]]   表計算ソフトとの行き来（読み込みは表をまるごと置き換える）
   run    <dir> [--frames 600] [--scene main] [--seed 1] [--keys "0-120:ArrowLeft+KeyZ;120-200:@move_x=1;30:Mouse0+ptr=240,100"]
                [--input recordings/x.input.json] [--watch player.Health.hp,...] [--every 60] [--until gameOver | scene:result | click:ボタンのID] [--twice] [--dump]
+               [--save saves/x.save.json]（この保存データから始める。省くと空） [--save-out saves/y.save.json]（終わりの保存データを書き出す）
   log    <dir> [--all] [--peek]      前回からの編集の要約（--peek は既読にしない）
   undo   <dir> [--tx id] [--force]   自分（AI）の直前の編集を元に戻す（その後で変えられた所があれば止まる）。redo <dir> でやり直す
   check  <dir>                       全データの検証とロックの検査
@@ -378,7 +380,14 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
   const scene = typeof f.scene === 'string' ? f.scene : p.config.startScene;
   const seed = f.seed !== undefined ? Number(f.seed) : p.config.seed;
   let events: InputEvent[] = [];
-  if (typeof f.input === 'string') events = JSON.parse(await readFile(`${p.dir}/${f.input}`, 'utf8')).events;
+  // 始めるときの保存データ（--save のファイル、なければ記録に入っているもの、なければ空）
+  let initialSave: Record<string, unknown> = {};
+  if (typeof f.input === 'string') {
+    const rec = JSON.parse(await readFile(`${p.dir}/${f.input}`, 'utf8'));
+    events = rec.events;
+    if (rec.save && typeof rec.save === 'object') initialSave = rec.save;
+  }
+  if (typeof f.save === 'string') initialSave = await readSaveFile(p.dir, f.save);
   // click=ボタンのID は、そのフレームのボタンの真ん中を押す（位置を数えなくてよい）
   const clicks = new Map<number, string>();
   if (typeof f.keys === 'string') {
@@ -399,7 +408,7 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
   const until = typeof f.until === 'string' ? f.until : '';
 
   const once = () => {
-    const game = p.newGame(scene, seed);
+    const game = p.newGame(scene, seed, new MemoryStore(initialSave));
     const play = new InputPlayback(events);
     const lines: string[] = [];
     const first = watch.map((w) => readWatch(game, w));
@@ -449,6 +458,7 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
   if (g.hits.counts.size) out.push(`hits: ${[...g.hits.counts.entries()].map(([k, v]) => `${k}×${v}`).join(' ')}（重なり始めた回数。Collider.with のグループ）`);
   if (g.uiCounts.size) out.push(`ui: 押されたボタン ${[...g.uiCounts.entries()].map(([k, v]) => `${k}×${v}`).join(' ')}`);
   if (g.particleCounts.size) out.push(`particles: ${[...g.particleCounts.entries()].map(([k, v]) => `✦${k}×${v}`).join(' ')}`);
+  if (g.save.writes.size) out.push(`save: 書いた ${[...g.save.writes.entries()].map(([k, v]) => `${k}×${v}`).join(' ')}（終わりの保存: ${g.save.keys().join(' ') || 'なし'}${typeof f['save-out'] === 'string' ? ` → ${f['save-out']}` : '。中身は --save-out ファイルで書き出せる'}）`);
   if (g.tweens.length) out.push(`tweens: 動いている ${g.tweens.length}（${[...new Set(g.tweens.map((t) => `${t.comp}.${t.field}${t.sub ? "." + t.sub : ""}`))].join(' ')}）`);
   for (const w of g.warnings) out.push(`⚠ ${w}`);
   const byName = new Map<string, number>();
@@ -460,7 +470,20 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
     out.push(r2.game.hash() === g.hash() ? '再現性: OK（2回とも同じ結果）' : `再現性: NG（hash ${g.hash()} と ${r2.game.hash()}）。Math.random や実時間を使っていないか確認してください`);
   }
   if (f.dump) out.push(JSON.stringify(g.snapshot()));
+  if (typeof f['save-out'] === 'string') {
+    const to = resolve(p.dir, f['save-out']);
+    await mkdir(dirname(to), { recursive: true });
+    await writeFile(to, JSON.stringify(g.save.all(), null, 2) + '\n');
+  }
   return withLockReport(p, out.join('\n'));
+}
+
+/** 保存データのファイル（キー → 値の JSON）を読む */
+export async function readSaveFile(dir: string, path: string): Promise<Record<string, unknown>> {
+  const text = await readFile(resolve(dir, path), 'utf8').catch(() => { throw new Error(`保存データのファイル ${path} がありません（saves/ に置いたファイルか、ages run --save-out で書き出したもの）`); });
+  const v = JSON.parse(text);
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error(`${path}: 保存データは { キー: 値 } の形です`);
+  return v;
 }
 
 export async function cmdLog(dir: string, f: Args['flags']): Promise<string> {

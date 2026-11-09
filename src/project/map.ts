@@ -31,6 +31,9 @@ export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, l
   const groups = collisionGroups(p);
   if (groups.size) out.push(`当たり判定のグループ（Collider.group → with。ctx.hit で調べる）: ${[...groups].map(([g, w]) => (w.size ? `${g || '（なし）'}→${[...w].join(',')}` : g || '（なし）')).join('  ')}`);
 
+  // 保存データのファイル（その状態から始めて確かめる）
+  if (p.saves.size) out.push(`保存データ（ages run --save で、その状態から始める）: ${[...p.saves].map(([path, v]) => (v.error ? `${path} ⚠` : `${path}(${Object.keys(v.data ?? {}).join(',')})`)).join('  ')}`);
+
   out.push('## systems（実行順。r=読む w=書く）');
   p.registry.systems.forEach((s, i) => {
     const rw = [s.reads?.length ? `r:${s.reads.join(',')}` : '', s.writes?.length ? `w:${s.writes.join(',')}` : ''].filter(Boolean).join(' ');

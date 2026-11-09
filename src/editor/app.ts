@@ -10,6 +10,7 @@ import { AudioPlayer } from '../audio/player.ts';
 import { DEFAULT_SOUND, playCmd, type SoundSettings } from '../core/audio.ts';
 import { assetRefs, preloadSet } from '../core/assets.ts';
 import { shaderMap, type ShaderDef } from '../core/shader.ts';
+import { LocalStore } from '../core/save.ts';
 
 export interface LockMark { who: string; t: string; value: unknown; note?: string }
 export interface TouchMark { who: string; t: string }
@@ -28,6 +29,8 @@ export interface EditorState {
   sheets: Record<string, import('../core/sheet.ts').SheetDef>;
   tables: Record<string, import('../core/table.ts').TableDoc>;
   assets: { path: string; kind: import('../core/schema.ts').AssetKind; bytes: number; w?: number; h?: number; sec?: number; shader?: ShaderDef }[];
+  /** 保存データのファイル（saves/*.save.json） */
+  saves?: string[];
   /** コードの中でアセットの場所を書いている所（場所 → "game/x.ts:12"） */
   codeRefs: Record<string, string[]>;
   /** フォルダの一覧（空のフォルダも） */
@@ -45,6 +48,8 @@ export interface PlayState {
   /** 実行中にインスペクタで変えた値（停止時に保存するか選ぶ） */
   edits: Map<string, unknown>;
   recorder?: InputRecorder;
+  /** 始めたときの保存データ（記録に入れて、AI が同じ状態から再現できるように） */
+  saveAtStart?: Record<string, unknown>;
   /** 再生を始めたシーン（止めたらここに戻る） */
   from: string;
   /** 読み込み中（終わるまでフレームを進めない。結果は変わらない） */
@@ -255,7 +260,10 @@ export class App {
   startPlay(record = false): void {
     if (this.play || !this.registry) return;
     try {
-      const game = new Game(this.registry, this.state.config, this.state.scenes[this.scene]);
+      // セーブはこのブラウザの localStorage（プロジェクトごと）。止めても残り、次の再生で読める
+      const store = this.saveStore();
+      const saveAtStart = Object.fromEntries(Object.entries(store.load()).map(([k, v]) => [k, JSON.parse(v)]));
+      const game = new Game(this.registry, this.state.config, this.state.scenes[this.scene], this.state.config.seed, { store });
       game.listeners.push((ev) => this.emit('gameEvent', ev));
       // 音: 再生ボタンのクリックの中で準備する（ブラウザの決まり）。画像・音のファイルは hold で先に読み込む
       this.audio.ensure();
@@ -266,7 +274,7 @@ export class App {
       game.audioListeners.push((cmd) => this.audio.handle(cmd));
       // パーティクルを出す命令は、ゲームの画面（描く側）へ
       game.particleListeners.push((cmd) => this.emit('particles', cmd));
-      const play: PlayState = { game, paused: false, edits: new Map(), recorder: record ? new InputRecorder() : undefined, from: this.scene };
+      const play: PlayState = { game, paused: false, edits: new Map(), recorder: record ? new InputRecorder() : undefined, from: this.scene, saveAtStart };
       this.play = play;
       // シーンが切り替わったら、エディタもそのシーンを見せ、次のシーンの画像・音を読み込む
       game.sceneListeners.push((_from, to) => {
@@ -340,14 +348,20 @@ export class App {
     // 再生中にシーンが切り替わっていたら、始めたシーンに戻る
     if (this.scene !== p.from && this.state.scenes[p.from]) { this.scene = p.from; this.rebuildPreview(); this.emit('change'); }
     this.emit('play');
-    if (p.recorder) await this.saveRecording(p.recorder.events, p.game.frame);
+    if (p.recorder) await this.saveRecording(p.recorder.events, p.game.frame, p.saveAtStart);
+    this.emit('save');
     if (p.edits.size) await this.askKeepEdits(p.edits);
   }
 
-  private async saveRecording(events: InputEvent[], frames: number): Promise<void> {
+  /** このプロジェクトの保存データの置き場所（このブラウザの localStorage） */
+  saveStore(): LocalStore {
+    return new LocalStore(`ages.save.${this.state.config.name}.`, localStorage);
+  }
+
+  private async saveRecording(events: InputEvent[], frames: number, save?: Record<string, unknown>): Promise<void> {
     const name = `rec-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}`;
     const path = `recordings/${name}.input.json`;
-    const data = { seed: this.state.config.seed, scene: this.scene, frames, events };
+    const data = { seed: this.state.config.seed, scene: this.scene, frames, ...(save && Object.keys(save).length ? { save } : {}), events };
     await this.api(`/api/file?path=${encodeURIComponent(path)}`, { method: 'PUT', raw: JSON.stringify(data, null, 2) + '\n' });
     toast(`入力を記録しました: ${path}\nAIは ages run --input ${path} で同じ操作を再現できます`);
   }

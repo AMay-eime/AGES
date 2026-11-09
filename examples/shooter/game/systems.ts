@@ -162,12 +162,16 @@ export const toResult = defineSystem({
 
 export const resultScreen = defineSystem({
   name: 'resultScreen',
-  desc: '結果のシーン: 得点を出し、「もう一度」のボタンか fire でもう一度（main へ）',
+  desc: '結果のシーン: 得点と最高得点（セーブの best）を出し、「もう一度」のボタンか fire でもう一度（main へ）',
   writes: ['Text'],
   scenes: ['result'],
-  start({ world, scene }) {
+  start({ world, scene, save }) {
+    const score = Number(scene.params.score ?? 0);
+    // 最高得点はセーブに残す（ブラウザなら次に開いたときも残っている）
+    const best = Math.max(score, save.get('best', 0));
+    if (best !== save.get('best', 0)) save.set('best', best);
     const t = world.get('score')?.c.Text;
-    if (t) t.text = `SCORE ${Number(scene.params.score ?? 0)}`;
+    if (t) t.text = `SCORE ${score}   BEST ${best}`;
   },
   update({ input, scene, ui }) {
     // 入ってすぐの押しっぱなしで飛ばないように、少し待つ（ボタンの上で押したマウスは fire にならない）

@@ -6,7 +6,7 @@
 import type { App } from '../app.ts';
 import { Renderer } from '../../render/webgl.ts';
 import { camerasOf, fitView, screenToWorld, visibleCorners, worldToScreen, FIT_MODES, type CameraView, type FitMode } from '../../core/camera.ts';
-import { h, toast } from './dom.ts';
+import { h, modal, toast } from './dom.ts';
 import type { Panel } from './layout.ts';
 import { ASSET_MIME } from './assets.ts';
 import { baseOf, extOf, kindOf } from '../../core/assets.ts';
@@ -35,7 +35,8 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
   let showHits = localStorage.getItem('ages.showHits') === '1';
   const hitsBox = h('label', { class: 'row muted', style: 'gap:4px;white-space:nowrap', title: '当たり判定（Collider）の形を重ねて見せる。グループごとに色が変わる' },
     h('input', { type: 'checkbox', checked: showHits, onchange: (e: Event) => { showHits = (e.target as HTMLInputElement).checked; localStorage.setItem('ages.showHits', showHits ? '1' : '0'); } }), '当たり判定');
-  const bar = h('div', { class: 'game-hud' }, hud, resetBtn, viewSel, screenSel, fitSel, hitsBox);
+  const saveBtn = h('button', { class: 'icon', title: '保存データ（このブラウザに残る。消す・saves/ に書き出す・saves/ から戻す）', onclick: () => saveDialog(app) }, '💾');
+  const bar = h('div', { class: 'game-hud' }, hud, resetBtn, viewSel, screenSel, fitSel, hitsBox, saveBtn);
   const wrap = h('div', { class: 'game-wrap' }, screen);
   // 状態の表示はゲーム画面の外（上の帯）に出す。画面の左上はゲームの HUD が来やすいので重ねない
   const el = h('div', {}, bar, wrap);
@@ -439,4 +440,55 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
   renderFitSel();
 
   return { id: 'game', title: 'ゲーム', el, fill: true, canvas, render: layoutScreen };
+}
+
+/** 保存データの窓: 中身を見る・消す・saves/ に書き出す・saves/ から戻す */
+function saveDialog(app: App): void {
+  modal((close) => {
+    const store = app.saveStore();
+    const body = h('div', { style: 'display:flex;flex-direction:column;gap:6px;min-width:460px;max-width:640px' });
+    const render = () => {
+      body.replaceChildren();
+      const data = store.load();
+      const keys = Object.keys(data).sort();
+      body.append(h('div', { style: 'font-weight:600' }, `保存データ（このブラウザ・${app.state.config.name}）`),
+        h('div', { class: 'muted' }, 'ゲームの ctx.save で書いた値。設定（キーの割り当て・音量）は $settings に自動で入る。変えると次の再生から効く'));
+      if (!keys.length) body.append(h('div', { class: 'muted', style: 'padding:6px 0' }, '空（初めて遊ぶ状態）'));
+      for (const k of keys) {
+        const text = data[k];
+        body.append(h('div', { class: 'row', style: 'gap:6px;align-items:flex-start' },
+          h('code', { style: 'min-width:120px' }, k),
+          h('code', { class: 'muted', style: 'flex:1;white-space:pre-wrap;word-break:break-all;max-height:5.5em;overflow:auto' }, text.length > 400 ? text.slice(0, 400) + '…' : text),
+          h('button', { class: 'icon', title: `${k} を消す`, onclick: () => { store.write(k, null); render(); } }, '×')));
+      }
+      const name = h('input', { type: 'text', value: 'save1', style: 'width:120px' }) as HTMLInputElement;
+      const pick = h('select', {}, [h('option', { value: '' }, '（saves/ のファイル）'), ...(app.state.saves ?? []).map((p) => h('option', { value: p }, p))]) as HTMLSelectElement;
+      body.append(
+        h('div', { class: 'row', style: 'gap:6px;margin-top:6px' },
+          h('button', { onclick: () => { store.clear(); render(); toast('保存データを消しました（次の再生は初めて遊ぶ状態）'); } }, 'すべて消す'),
+          h('span', { style: 'flex:1' }),
+          'saves/', name, '.save.json',
+          h('button', { title: 'AI が ages run --save で同じ状態から確かめられる', onclick: async () => {
+            const n = name.value.trim().replace(/[^\w.-]/g, '_');
+            if (!n) return;
+            const values = Object.fromEntries(Object.entries(store.load()).map(([k, v]) => [k, JSON.parse(v)]));
+            await fetch(`/api/file?path=${encodeURIComponent(`saves/${n}.save.json`)}`, { method: 'PUT', body: JSON.stringify(values, null, 2) + '\n' });
+            toast(`saves/${n}.save.json に書き出しました\nAIは ages run --save saves/${n}.save.json でこの状態から確かめられます`);
+          } }, '書き出す')),
+        h('div', { class: 'row', style: 'gap:6px' },
+          h('span', { class: 'muted' }, 'この保存データにする:'), pick,
+          h('button', { onclick: async () => {
+            if (!pick.value) return;
+            const r = await (await fetch(`/api/file?path=${encodeURIComponent(pick.value)}`)).json() as { text: string };
+            const values = JSON.parse(r.text) as Record<string, unknown>;
+            store.clear();
+            for (const [k, v] of Object.entries(values)) store.write(k, JSON.stringify(v));
+            render();
+            toast(`${pick.value} の状態にしました（次の再生から）`);
+          } }, '読む')),
+        h('div', { class: 'row', style: 'justify-content:flex-end' }, h('button', { onclick: close }, '閉じる')));
+    };
+    render();
+    return body;
+  });
 }

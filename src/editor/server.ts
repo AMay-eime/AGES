@@ -125,7 +125,7 @@ async function handleChanges(paths: string[]): Promise<void> {
   const code = fresh.some((p) => p.endsWith('.ts') || p === 'ages.project.json');
   // 画像の切り方（.sheet.json）もシーン・プレハブと同じ扱い（外からの編集を記録し、ロックを戻す）
   const docs = fresh.some((p) => /^(scenes|prefabs)\/.+\.json$/.test(p) || /^data\/.+\.table\.json$/.test(p) || p.endsWith('.sheet.json'));
-  const assets = fresh.some((p) => /\.(png|jpe?g|webp|gif|wav|mp3|ogg|m4a|ttf|otf|woff2?|frag|glsl)$/i.test(p));
+  const assets = fresh.some((p) => /\.(png|jpe?g|webp|gif|wav|mp3|ogg|m4a|ttf|otf|woff2?|frag|glsl)$/i.test(p) || /^saves\/.+\.save\.json$/.test(p));
   if (code) {
     version++;
     await startWorker();
@@ -278,7 +278,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
         await startWorker();
         broadcast({ type: 'code', version, paths: [rel] });
       } else {
-        if (/\.(frag|glsl)$/i.test(rel)) await call('recheckLocks'); // シェーダーの宣言を読み直す（エディタがコンパイルして確かめる）
+        if (/\.(frag|glsl)$/i.test(rel) || /^saves\/.+\.save\.json$/.test(rel)) await call('recheckLocks'); // シェーダーの宣言・保存データを読み直す
         broadcast({ type: 'files', paths: [rel] });
       }
       return json(res, { ok: true });

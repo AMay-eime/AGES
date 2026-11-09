@@ -11,6 +11,7 @@ import { camerasOf, screenToWorld } from './camera.ts';
 import { checkEase, targetValue, tweenAt, type TweenOptions, type TweenState, type TweenValue } from './tween.ts';
 import type { ParticleApi, ParticleCmd } from './particles.ts';
 import { UiState } from './ui.ts';
+import { SaveData, SETTINGS_KEY, type SaveApi, type SaveStore } from './save.ts';
 import { HitState, contains, inGroup, overlap, rayHit, shapeOf, type HitShape } from './collide.ts';
 
 export interface Ctx {
@@ -59,6 +60,8 @@ export interface Ctx {
   ui: UiApi;
   /** 当たり判定（Collider の重なり・範囲の検索）。group はグループの名前か、その並び（省くと全部） */
   hit: HitApi;
+  /** セーブ（進み具合の保存・読み込み。設定は自動） */
+  save: SaveApi;
 }
 
 export interface HitApi {
@@ -190,6 +193,9 @@ export class Game {
   particleCounts = new Map<string, number>();
   /** UI の操作（フォーカス・押している物）。フレームで数える */
   readonly ui = new UiState();
+  /** セーブ（置き場所はブラウザなら localStorage、画面なしならメモリ） */
+  readonly save: SaveData;
+  private settingsDirty = false;
   /** 当たり判定（重なり始めの記録） */
   readonly hits = new HitState();
   /** 押されたボタン（ID → 回数。ages run の要約用） */
@@ -210,7 +216,7 @@ export class Game {
   /** これまでのシーンの移り変わり（ages run の要約に載る） */
   sceneLog: { frame: number; name: string }[] = [];
 
-  constructor(registry: Registry, config: ProjectConfig, scene: SceneDoc, seed = config.seed) {
+  constructor(registry: Registry, config: ProjectConfig, scene: SceneDoc, seed = config.seed, opts: { store?: SaveStore } = {}) {
     this.registry = registry;
     this.config = config;
     this.world = new World(registry);
@@ -223,6 +229,14 @@ export class Game {
     // 操作の名前と割り当て（標準の表 $actions）
     if (registry.tables.has('actions')) {
       this.input.setActions(actionsFromRows(registry.tableView('actions').rows));
+    }
+    this.save = new SaveData(opts.store);
+    // 設定（キーの割り当て・音量）を戻し、変わったら自動で保存する
+    if (config.save?.settings !== 'manual') {
+      const st = this.save.read(SETTINGS_KEY) as { bindings?: Record<string, never>; volumes?: Record<string, number> } | undefined;
+      if (st?.bindings) this.input.importBindings(st.bindings);
+      for (const [bus, v] of Object.entries(st?.volumes ?? {})) if (typeof v === 'number') this.busVolumes.set(bus, Math.max(0, Math.min(1, v)));
+      this.input.onBindings = () => { this.settingsDirty = true; };
     }
     const game = this;
     this.ctx = {
@@ -272,6 +286,7 @@ export class Game {
       },
       scene: this.makeSceneApi(),
       hit: this.makeHitApi(),
+      save: this.save.api(this.world, this.registry, (m) => this.warnings.add(m)),
       ui: {
         clicked: (id) => this.ui.clicked.has(id),
         changed: (id) => this.ui.changed.has(id),
@@ -292,6 +307,13 @@ export class Game {
         for (const l of this.listeners) l(ev);
       },
     };
+  }
+
+  /** 変わった設定を保存する（フレームの終わりに自動で呼ぶ） */
+  flushSettings(): void {
+    if (!this.settingsDirty || this.config.save?.settings === 'manual') return;
+    this.settingsDirty = false;
+    this.save.write(SETTINGS_KEY, { bindings: this.input.exportBindings(), volumes: Object.fromEntries([...this.busVolumes].sort()) });
   }
 
   private makeHitApi(): HitApi {
@@ -415,6 +437,7 @@ export class Game {
         }
         const v = Math.max(0, Math.min(1, value));
         this.busVolumes.set(bus, v);
+        this.settingsDirty = true;
         this.sendAudio({ t: 'volume', frame: f(), bus, value: v });
       },
       getVolume: (bus) => this.busVolumes.get(bus) ?? (bus ? this.audioBuses()[bus]?.volume ?? 1 : 1),
@@ -570,6 +593,7 @@ export class Game {
     // 当たり判定: このフレームの終わりの位置で、重なり始めを求める（このフレームに消した物も数える。次のフレームで ctx.hit.entered に出る）
     this.hits.update(this.world);
     this.world.flush();
+    this.flushSettings();
     this.frame++;
     this.sceneFrame++;
     const t = this.trans;
@@ -581,7 +605,7 @@ export class Game {
 
   /** 状態のハッシュ（同じ結果になったかの比較用） */
   hash(): string {
-    const text = JSON.stringify([this.frame, this.rng.state, [...this.world.entities.values()].map((e) => [e.id, e.c]), this.sceneLog.length > 1 ? [this.sceneName, this.sceneFrame] : 0, this.tweens.length ? this.tweens : 0, this.ui.rects.size ? this.ui.snapshot() : 0, this.hits.snapshot().length ? this.hits.snapshot() : 0]);
+    const text = JSON.stringify([this.frame, this.rng.state, [...this.world.entities.values()].map((e) => [e.id, e.c]), this.sceneLog.length > 1 ? [this.sceneName, this.sceneFrame] : 0, this.tweens.length ? this.tweens : 0, this.ui.rects.size ? this.ui.snapshot() : 0, this.hits.snapshot().length ? this.hits.snapshot() : 0, this.save.keys().length ? this.save.all() : 0]);
     let h = 0x811c9dc5;
     for (let i = 0; i < text.length; i++) {
       h ^= text.charCodeAt(i);
@@ -591,6 +615,6 @@ export class Game {
   }
 
   snapshot() {
-    return { frame: this.frame, rng: this.rng.state, world: this.world.snapshot(), counts: Object.fromEntries(this.counts), scene: { name: this.sceneName, frame: this.sceneFrame, params: this.sceneParams }, tweens: structuredClone(this.tweens), ui: this.ui.snapshot(), hits: this.hits.snapshot() };
+    return { frame: this.frame, rng: this.rng.state, world: this.world.snapshot(), counts: Object.fromEntries(this.counts), scene: { name: this.sceneName, frame: this.sceneFrame, params: this.sceneParams }, tweens: structuredClone(this.tweens), ui: this.ui.snapshot(), hits: this.hits.snapshot(), save: this.save.all() };
   }
 }

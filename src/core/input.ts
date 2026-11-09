@@ -163,11 +163,15 @@ export class Input {
   bind(action: string, b: Binding): void {
     if (!this.defaults.has(action)) throw new Error(`操作 ${action} はありません${this.suggestAction(action)}`);
     this.overrides.set(action, { ...this.overrides.get(action), ...structuredClone(b) });
+    this.onBindings?.();
   }
+  /** 割り当てが変わったとき（設定の自動保存に使う） */
+  onBindings?: () => void;
   /** 割り当てを表の通りに戻す（省くと全部） */
   resetBindings(action?: string): void {
     if (action) this.overrides.delete(action);
     else this.overrides.clear();
+    this.onBindings?.();
   }
   /** 変えた割り当て（セーブ用。表の通りのものは入らない） */
   exportBindings(): Record<string, Binding> {
@@ -176,6 +180,7 @@ export class Input {
   /** セーブから割り当てを戻す（ない操作は無視する） */
   importBindings(o: Record<string, Binding>): void {
     for (const [k, v] of Object.entries(o ?? {})) if (this.defaults.has(k)) this.overrides.set(k, structuredClone(v));
+    this.onBindings?.();
   }
   /** このフレームで押された瞬間のボタン（どれか1つ。キーコンフィグで「押したボタンを割り当てる」ときに） */
   lastPressed(): string | null {

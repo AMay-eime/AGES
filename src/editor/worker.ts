@@ -25,6 +25,7 @@ async function state() {
     sheets: Object.fromEntries(project.registry.sheets),
     tables: Object.fromEntries(project.docs.tables),
     assets: project.assets,
+    saves: [...project.saves.keys()],
     codeRefs: Object.fromEntries(await project.codeRefs()),
     issues: project.validate(),
     lockReport: project.lockReport,

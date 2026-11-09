@@ -84,7 +84,7 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'ages_run',
-    description: '画面なしで実行し、要約だけを返す。keys の例 "0-300:@fire;0-120:@move_x=-1;120-200:Pad.LX=0.5;30:ptr=240,100+Mouse0"（@操作 は表 $actions の名前、=-1 は − の向き、=0.5 はアナログ。ボタンの名前 KeyZ も使える）。watch の例 ["player.Health.hp"]。until はその出来事で止める（scene:名前 でそのシーンに入ったら止める）。twice=true で再現性を確かめる',
+    description: '画面なしで実行し、要約だけを返す。keys の例 "0-300:@fire;0-120:@move_x=-1;120-200:Pad.LX=0.5;30:ptr=240,100+Mouse0"（@操作 は表 $actions の名前、=-1 は − の向き、=0.5 はアナログ。ボタンの名前 KeyZ も使える）。watch の例 ["player.Health.hp"]。until はその出来事で止める（scene:名前 でそのシーンに入ったら止める）。twice=true で再現性を確かめる。save で保存データから始め、要約の save: に書いたキーが出る',
     inputSchema: {
       type: 'object',
       properties: {
@@ -92,6 +92,8 @@ const TOOLS: Tool[] = [
         frames: { type: 'number' }, scene: { type: 'string' }, seed: { type: 'number' }, keys: { type: 'string' },
         input: { type: 'string', description: '入力の記録のファイル（recordings/xxx.input.json）' },
         watch: { type: 'array', items: { type: 'string' } }, every: { type: 'number' }, until: { type: 'string' }, twice: { type: 'boolean' },
+        save: { type: 'string', description: 'この保存データ（saves/xxx.save.json）から始める。省くと空（初めて遊ぶ状態）' },
+        saveOut: { type: 'string', description: '終わりの保存データを書き出すファイル' },
       },
     },
     run: (a, dir) => {
@@ -99,6 +101,8 @@ const TOOLS: Tool[] = [
       for (const k of ['frames', 'scene', 'seed', 'keys', 'input', 'every', 'until']) if (a[k] !== undefined) f[k] = String(a[k]);
       if (a.watch?.length) f.watch = a.watch.join(',');
       if (a.twice) f.twice = true;
+      if (a.save) f.save = String(a.save);
+      if (a.saveOut) f['save-out'] = String(a.saveOut);
       return cmdRun(dir, f);
     },
   },
