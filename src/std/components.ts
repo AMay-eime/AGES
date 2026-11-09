@@ -83,12 +83,16 @@ export const UI = defineComponent({
   name: 'UI',
   desc: '画面に固定する（標準）。カメラに関係なく、画面（または親の UI）の決めた所に置き、その四角に合わせて Sprite・Shape・Text・Gauge を描く。位置は設計の大きさで数える',
   fields: {
-    anchor: { type: 'enum', options: ['topLeft', 'top', 'topRight', 'left', 'center', 'right', 'bottomLeft', 'bottom', 'bottomRight'], default: 'center', desc: '画面（親）のどこに合わせるか。自分の同じ所がそこに来る（topRight なら右上の角どうし）' },
-    x: { type: 'number', default: 0, desc: 'anchor からのずれ(px。右が正)' },
-    y: { type: 'number', default: 0, desc: 'anchor からのずれ(px。下が正)' },
+    anchor: { type: 'enum', options: ['topLeft', 'top', 'topRight', 'left', 'center', 'right', 'bottomLeft', 'bottom', 'bottomRight'], default: 'center', desc: '画面（親）のどこに合わせるか。自分の同じ所がそこに来る（topRight なら右上の角どうし）。画面の端に付けるのは patch の dockUI' },
+    x: { type: 'number', default: 0, desc: '置いた所からのずれ(px。右が正)' },
+    y: { type: 'number', default: 0, desc: '置いた所からのずれ(px。下が正)' },
     w: { type: 'number', default: 120, min: 0, max: 4096, desc: '幅(px)' },
     h: { type: 'number', default: 40, min: 0, max: 4096, desc: '高さ(px)' },
     parent: { type: 'ref', default: null, desc: '親の UI（その四角の中に置く。親が隠れると一緒に隠れる）。null なら画面' },
+    beside: { type: 'ref', default: null, desc: 'この UI の隣に接して置く（anchor の代わり。相手が動けば一緒に動き、重ならない）。付けるのは patch の attachUI' },
+    side: { type: 'enum', options: ['right', 'left', 'below', 'above'], default: 'right', desc: 'beside の相手のどちら側に付けるか' },
+    gap: { type: 'number', default: 0, min: -1000, max: 1000, desc: 'beside の相手との間(px。0 で接する)' },
+    align: { type: 'enum', options: ['start', 'center', 'end'], default: 'start', desc: 'beside の相手と、どこを揃えるか（右・左に付けるなら上・中央・下、上・下に付けるなら左・中央・右）' },
     visible: { type: 'bool', default: true, desc: '見せるか（隠すと子も隠れ、押せなくなる）' },
     order: { type: 'int', default: 0, min: -10000, max: 10000, desc: '親の Layout の中の並び順（小さい順）' },
     modal: { type: 'bool', default: false, desc: '出ている間、この中の物しか押せない（ダイアログ）' },
@@ -98,7 +102,7 @@ export const UI = defineComponent({
 
 export const Layout = defineComponent({
   name: 'Layout',
-  desc: '子の UI（parent がこの物）を順に並べる（標準。リスト・メニュー・ボタンの並び）。子の anchor と x・y は使わず、order の順に並べる',
+  desc: '子の UI（parent がこの物）を順に並べる（標準。リスト・メニュー・ボタンの並び）。子の anchor・beside は使わず、order の順に並べる（子の x・y は並べた所からのずれ）',
   fields: {
     dir: { type: 'enum', options: ['vertical', 'horizontal'], default: 'vertical', desc: '並べる向き' },
     gap: { type: 'number', default: 8, min: 0, max: 1000, desc: '間(px)' },

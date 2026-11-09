@@ -14,6 +14,16 @@ export type Op =
   | { op: 'removeEntity'; scene: string; id: string }
   | { op: 'addComponent'; target: string; component: string; values?: Record<string, unknown> }
   | { op: 'removeComponent'; target: string; component: string }
+  /**
+   * UI を画面（親）の端・角に付ける。edge は anchor の名前（topRight など）、margin は端からの間(px。0 で接する)。
+   * 隣に付けていた（beside）なら外す
+   */
+  | { op: 'dockUI'; target: string; edge: string; margin?: number }
+  /**
+   * UI を別の UI の隣に接して置く（重ならない。相手が動けば一緒に動く）。to は同じシーンの UI の ID。
+   * side は right・left・below・above、gap は間(px。既定 0)、align は start・center・end（揃える所）
+   */
+  | { op: 'attachUI'; target: string; to: string; side?: string; gap?: number; align?: string }
   | { op: 'rename'; target: string; name: string }
   /** 行列の一部のセルだけを変える（行列全体を送らずに済む）。cells は [行, 列, 値] の並び */
   | { op: 'setCells'; path: string; cells: [number, number, CellValue][] }
@@ -457,6 +467,52 @@ function applyOne(docs: Docs, reg: Registry, op: Op, changes: Change[], dirty: S
       holder.components[op.component] = structuredClone(op.values ?? {});
       changes.push({ path: `${op.target}.${op.component}`, to: 'added' });
       dirty.add(key);
+      return;
+    }
+    case 'dockUI':
+    case 'attachUI': {
+      const a = parseAddress(op.target);
+      const { holder } = holderOf(docs, a);
+      const u = holder.components.UI;
+      if (!u) throw new Error(`${op.target} に UI が付いていません（画面に固定する物にだけ使えます）`);
+      // Layout で並べている子は、並びで位置が決まる
+      if (a.kind === 'scene' && u.parent) {
+        const p = docs.scenes.get(a.doc)!.entities.find((x) => x.id === u.parent);
+        if (p?.components.Layout) throw new Error(`${op.target} は ${u.parent} の Layout で並べています。位置を変えるなら ${u.parent} を動かすか、UI.order で並び順を変えてください`);
+      }
+      const set = (field: string, value: unknown) => applyOne(docs, reg, { op: 'set', path: `${op.target}.UI.${field}`, value }, changes, dirty);
+      if (op.op === 'dockUI') {
+        const edges = ['topLeft', 'top', 'topRight', 'left', 'center', 'right', 'bottomLeft', 'bottom', 'bottomRight'];
+        if (!edges.includes(op.edge)) throw new Error(`dockUI: edge は ${edges.join(' | ')} のどれかです${suggest(String(op.edge), edges)}`);
+        const m = op.margin ?? 0;
+        const i = edges.indexOf(op.edge);
+        // 端から内側へ margin だけ（左・上の端は +、右・下の端は −、真ん中は 0）
+        const sx = [1, 0, -1][i % 3], sy = [1, 0, -1][Math.floor(i / 3)];
+        set('anchor', op.edge);
+        set('x', sx * m);
+        set('y', sy * m);
+        if (u.beside) set('beside', null);
+        return;
+      }
+      const to = op.to.includes('#') ? op.to.slice(op.to.indexOf('#') + 1) : op.to;
+      if (a.kind === 'scene') {
+        const ents = docs.scenes.get(a.doc)!.entities;
+        const other = ents.find((x) => x.id === to);
+        if (!other) throw new Error(`attachUI: シーン ${a.doc} に ${to} はありません${suggest(to, ents.filter((x) => x.components.UI).map((x) => x.id))}`);
+        if (!other.components.UI) throw new Error(`attachUI: ${to} に UI が付いていません（隣に付けられるのは UI の物だけ）`);
+        if (to === a.entity) throw new Error('attachUI: 自分の隣には付けられません');
+        // 相手をたどって自分に戻るなら輪になる
+        for (let cur: string | null = to, n = 0; cur && n < ents.length; n++) {
+          if (cur === a.entity) throw new Error(`attachUI: ${to} は（たどると）${a.entity} の隣に付いているので、輪になります`);
+          cur = (ents.find((x) => x.id === cur)?.components.UI?.beside as string | null | undefined) ?? null;
+        }
+      }
+      set('beside', to);
+      set('side', op.side ?? 'right');
+      set('gap', op.gap ?? 0);
+      set('align', op.align ?? 'start');
+      set('x', 0);
+      set('y', 0);
       return;
     }
     case 'removeComponent': {

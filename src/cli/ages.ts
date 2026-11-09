@@ -32,6 +32,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
                addRow/removeRow/moveRow/renameRow/setSheet/setFrame/setClip/moveAsset/removeAsset/addScene/removeScene/renameScene/setScene）
                例 {"op":"moveAsset","from":"assets/a.png","to":"assets/ships/a.png"}（フォルダも可。使っている値と切り方も一緒に動く）
                シーン: addScene{name,copy?,desc?} / removeScene{name} / renameScene{name,to} / setScene{name,desc?,start?}
+               UI: dockUI{target,edge,margin?}（画面・親の端や角に付ける） / attachUI{target,to,side?,gap?,align?}（別の UI の隣に接して置く）
   table  <dir> <表> [--cols a,b] [--rows id1,id2]   表を見る（1行1行）
                [--export x.csv] [--import x.csv [--force]]   表計算ソフトとの行き来（読み込みは表をまるごと置き換える）
   run    <dir> [--frames 600] [--scene main] [--seed 1] [--keys "0-120:ArrowLeft+KeyZ;120-200:@move_x=1;30:Mouse0+ptr=240,100"]
@@ -39,6 +40,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   log    <dir> [--all] [--peek]      前回からの編集の要約（--peek は既読にしない）
   undo   <dir> [--tx id] [--force]   自分（AI）の直前の編集を元に戻す（その後で変えられた所があれば止まる）。redo <dir> でやり直す
   check  <dir>                       全データの検証とロックの検査
+  ui     <dir> [シーン]               UI の配置（四角・置き方）と、重なり・はみ出し。直すのは patch の dockUI / attachUI
   assets <dir> [フォルダ] [--kind image|sound|font] [--unused] [--refs 場所]   アセットの一覧（使っている所の数）・使っている所
   sheet  <dir> <画像>                 画像の切り方（コマの名前・位置・基準点・動き）を見る
   slice  <dir> <画像> --grid 32x32 | --count 4x6 | --auto  画像を切る（前と同じ場所のコマは名前を引き継ぐ）
@@ -304,6 +306,56 @@ export async function cmdAssets(dir: string, folder: string | undefined, f: Args
   return [`アセット ${n}件${f.unused ? '（未使用）' : ''}。場所を変える: patch の moveAsset（使っている値も直る）／消す: removeAsset（使っていないものだけ）`, ...lines].join('\n');
 }
 
+const ANCHOR_JA: Record<string, string> = { topLeft: '左上', top: '上', topRight: '右上', left: '左', center: '中央', right: '右', bottomLeft: '左下', bottom: '下', bottomRight: '右下' };
+const SIDE_JA: Record<string, string> = { right: '右', left: '左', below: '下', above: '上' };
+
+/** UI の配置を文字で（位置を数えずに直せるように、置き方と、重なり・はみ出しを出す） */
+export async function cmdUi(dir: string, sceneName?: string): Promise<string> {
+  const p = await Project.load(dir);
+  const scene = sceneName ?? p.config.startScene;
+  if (!p.docs.scenes.has(scene)) throw new Error(`シーン ${scene} はありません${suggest(scene, [...p.docs.scenes.keys()])}`);
+  const g = p.newGame(scene);
+  const { width: W, height: H } = p.config.view;
+  const rects = layoutUI(g.world, W, H);
+  if (!rects.size) return `シーン ${scene} に UI の物はありません（物に UI を付けると画面に固定されます）`;
+  const touched = await readTouched(p.dir);
+  const locks = await p.effectiveLocks();
+  const n = (v: number) => String(Math.round(v * 10) / 10);
+  const out = [`UI（シーン ${scene}・画面 ${W}x${H}。左,上 幅x高さ ← 置き方）`];
+  const ents = [...g.world.entities.values()].filter((e) => rects.has(e.id));
+  const kids = (id: string | null) => ents.filter((e) => (rects.get(e.id)!.parent ?? null) === id);
+  const line = (e: (typeof ents)[number], depth: number) => {
+    const r = rects.get(e.id)!, u = e.c.UI;
+    const parent = u.parent ? g.world.get(u.parent) : undefined;
+    const off = u.x || u.y ? ` ずれ(${n(u.x ?? 0)},${n(u.y ?? 0)})` : '';
+    const how = parent?.c.Layout ? `${u.parent} の並び（order ${u.order ?? 0}）`
+      : u.beside && rects.has(u.beside) ? `${u.beside} の${SIDE_JA[u.side] ?? u.side}に${u.gap ? `間 ${n(u.gap)}` : '接して'}${u.align && u.align !== 'start' ? `・${u.align === 'center' ? '中央' : '端'}揃え` : ''}`
+      : `${u.parent ? u.parent + 'の' : '画面の'}${ANCHOR_JA[u.anchor] ?? u.anchor}`;
+    const what = [e.c.Button ? 'Button' : '', e.c.Gauge ? `Gauge${e.c.Gauge.drag ? '(drag)' : ''}` : '', e.c.Layout ? `Layout(${e.c.Layout.dir === 'horizontal' ? '横' : '縦'})` : '', e.c.Text?.text ? `"${String(e.c.Text.text).slice(0, 16)}"` : ''].filter(Boolean).join(' ');
+    const base = `${scene}#${e.id}.UI`;
+    const mark = Object.keys(locks).some((k) => k.startsWith(base)) ? ' 🔒' : Object.keys(touched).some((k) => k.startsWith(base)) ? ' ★' : '';
+    out.push(`${'  '.repeat(depth)}${e.id} ${n(r.x)},${n(r.y)} ${n(r.w)}x${n(r.h)} ← ${how}${off}${what ? ' ' + what : ''}${r.visible ? '' : ' （隠れている）'}${mark}`);
+    for (const k of kids(e.id)) line(k, depth + 1);
+  };
+  for (const e of kids(null)) line(e, 0);
+  // 重なり（親子でないもの）と、画面からのはみ出し
+  const shown = ents.filter((e) => rects.get(e.id)!.visible);
+  const up = (id: string): string[] => { const out2: string[] = []; for (let c = rects.get(id)?.parent ?? null; c && !out2.includes(c); c = rects.get(c)?.parent ?? null) out2.push(c); return out2; };
+  const warn: string[] = [];
+  for (let i = 0; i < shown.length; i++) {
+    for (let j = i + 1; j < shown.length; j++) {
+      const a = rects.get(shown[i].id)!, b = rects.get(shown[j].id)!;
+      if (up(shown[i].id).includes(shown[j].id) || up(shown[j].id).includes(shown[i].id)) continue;
+      const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x), oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+      if (ox > 0.01 && oy > 0.01) warn.push(`⚠ 重なっている: ${shown[i].id} と ${shown[j].id}（${n(ox)}x${n(oy)}）。接して置くなら attachUI`);
+    }
+    const r = rects.get(shown[i].id)!;
+    if (r.x < -0.01 || r.y < -0.01 || r.x + r.w > W + 0.01 || r.y + r.h > H + 0.01) warn.push(`⚠ 画面からはみ出している: ${shown[i].id}。端に付けるなら dockUI`);
+  }
+  out.push(...warn);
+  return out.join('\n');
+}
+
 /** プロジェクトの操作の名前と割り当て（$actions） */
 export function actionsOf(p: Project): Map<string, ActionDef> {
   return actionsFromRows(p.registry.tableView('actions').rows);
@@ -546,6 +598,7 @@ async function main(argv: string[]): Promise<void> {
     case 'log': out = await cmdLog(dir, a.flags); break;
     case 'check': out = await cmdCheck(dir); break;
     case 'assets': out = await cmdAssets(dir, a.pos[1], a.flags); break;
+    case 'ui': out = await cmdUi(dir, a.pos[1]); break;
     case 'undo': out = await cmdUndo(dir, a.flags); break;
     case 'redo': out = await cmdUndo(dir, { ...a.flags, redo: true }); break;
     case 'sheet': out = await cmdSheet(dir, need(a.pos[1], '画像の場所（例 assets/hero.png）')); break;

@@ -25,7 +25,16 @@ export interface UiRect {
   parent: string | null;
 }
 
-/** UI の付いた物の四角を求める。親は先に、Layout の子は順に並べる */
+/** 隣に付ける向き */
+export const SIDES = ['right', 'left', 'below', 'above'] as const;
+
+/**
+ * UI の付いた物の四角を求める。置き方は3通り:
+ * - 親（parent）に Layout があれば、その並びの中（anchor・beside は使わない）
+ * - beside があれば、その UI の隣に接して（side の向き、gap の間、align で揃える）。相手が動けば一緒に動く
+ * - それ以外は、親（なければ画面）の anchor の所
+ * x・y はどの置き方でも最後に足すずれ
+ */
 export function layoutUI(world: World, viewW: number, viewH: number): Map<string, UiRect> {
   const ui = [...world.entities.values()].filter((e) => e.c.UI);
   const byId = new Map(ui.map((e) => [e.id, e]));
@@ -37,47 +46,84 @@ export function layoutUI(world: World, viewW: number, viewH: number): Map<string
       kids.get(p)!.push(e);
     }
   }
-  const out = new Map<string, UiRect>();
   const screen: UiRect = { x: 0, y: 0, w: viewW, h: viewH, visible: true, parent: null };
-  const place = (e: Entity, parent: UiRect, parentId: string | null, x: number, y: number) => {
-    const u = e.c.UI;
-    const r: UiRect = { x, y, w: Math.max(0, u.w ?? 0), h: Math.max(0, u.h ?? 0), visible: parent.visible && u.visible !== false, parent: parentId };
-    out.set(e.id, r);
-    const list = (kids.get(e.id) ?? []).filter((k) => !out.has(k.id)); // 輪になっていても止まる
-    if (!list.length) return;
-    const lay = e.c.Layout;
-    if (!lay) {
-      for (const k of list) anchored(k, r, e.id);
-      return;
-    }
-    // 並べる: 見えている子だけを、order の順に
+  const out = new Map<string, UiRect>();
+  const busy = new Set<string>();
+  const slots = new Map<string, Map<string, [number, number]>>();
+
+  /** Layout の子の並び（親の左上からの位置） */
+  const slotsOf = (parent: Entity, r: UiRect): Map<string, [number, number]> => {
+    let m = slots.get(parent.id);
+    if (m) return m;
+    m = new Map();
+    const lay = parent.c.Layout;
     const pad = lay.padding ?? 0, gap = lay.gap ?? 0, horiz = lay.dir === 'horizontal';
-    const shown = list.filter((k) => k.c.UI.visible !== false).sort((a, b) => (a.c.UI.order ?? 0) - (b.c.UI.order ?? 0));
+    const shown = (kids.get(parent.id) ?? []).filter((k) => k.c.UI.visible !== false).sort((a, b) => (a.c.UI.order ?? 0) - (b.c.UI.order ?? 0));
     const total = shown.reduce((s, k) => s + (horiz ? k.c.UI.w : k.c.UI.h), 0) + gap * Math.max(0, shown.length - 1);
     const inner = horiz ? r.w - pad * 2 : r.h - pad * 2;
-    const just = lay.justify === 'center' ? (inner - total) / 2 : lay.justify === 'end' ? inner - total : 0;
-    let at = pad + just;
+    let at = pad + (lay.justify === 'center' ? (inner - total) / 2 : lay.justify === 'end' ? inner - total : 0);
     for (const k of shown) {
       const kw = k.c.UI.w ?? 0, kh = k.c.UI.h ?? 0;
       const cross = horiz ? r.h - pad * 2 - kh : r.w - pad * 2 - kw;
       const off = pad + (lay.align === 'start' ? 0 : lay.align === 'end' ? cross : cross / 2);
-      place(k, r, e.id, horiz ? r.x + at : r.x + off, horiz ? r.y + off : r.y + at);
+      m.set(k.id, horiz ? [at, off] : [off, at]);
       at += (horiz ? kw : kh) + gap;
     }
-    for (const k of list) if (!out.has(k.id)) place(k, { ...r, visible: false }, e.id, r.x, r.y); // 隠れている子
+    slots.set(parent.id, m);
+    return m;
   };
-  const anchored = (e: Entity, parent: UiRect, parentId: string | null) => {
+
+  const rectOf = (e: Entity): UiRect => {
+    const done = out.get(e.id);
+    if (done) return done;
     const u = e.c.UI;
-    const [ax, ay] = anchorOf(u.anchor);
     const w = Math.max(0, u.w ?? 0), h = Math.max(0, u.h ?? 0);
-    place(e, parent, parentId, parent.x + ax * parent.w + (u.x ?? 0) - ax * w, parent.y + ay * parent.h + (u.y ?? 0) - ay * h);
+    // 輪になっていたら画面に置く
+    const cyc = busy.has(e.id);
+    busy.add(e.id);
+    const pe = !cyc && u.parent && u.parent !== e.id ? byId.get(u.parent) : undefined;
+    const pr = pe ? rectOf(pe) : screen;
+    let x: number, y: number, visible = pr.visible && u.visible !== false;
+    const be = !cyc && u.beside && u.beside !== e.id ? byId.get(u.beside) : undefined;
+    if (pe?.c.Layout) {
+      const at = slotsOf(pe, pr).get(e.id);
+      if (!at) visible = false; // 隠れている子
+      x = pr.x + (at?.[0] ?? 0);
+      y = pr.y + (at?.[1] ?? 0);
+    } else if (be) {
+      const o = rectOf(be);
+      const gap = u.gap ?? 0;
+      const k = u.align === 'center' ? 0.5 : u.align === 'end' ? 1 : 0;
+      if (u.side === 'left' || u.side === 'right') {
+        x = u.side === 'left' ? o.x - gap - w : o.x + o.w + gap;
+        y = o.y + (o.h - h) * k;
+      } else {
+        y = u.side === 'above' ? o.y - gap - h : o.y + o.h + gap;
+        x = o.x + (o.w - w) * k;
+      }
+    } else {
+      const [ax, ay] = anchorOf(u.anchor);
+      x = pr.x + ax * pr.w - ax * w;
+      y = pr.y + ay * pr.h - ay * h;
+    }
+    const r: UiRect = { x: x + (u.x ?? 0), y: y + (u.y ?? 0), w, h, visible, parent: pe ? pe.id : null };
+    busy.delete(e.id);
+    out.set(e.id, r);
+    return r;
   };
-  for (const e of ui) {
-    const p = e.c.UI.parent;
-    if (!p || !byId.has(p) || p === e.id) anchored(e, screen, null);
-  }
-  for (const e of ui) if (!out.has(e.id)) anchored(e, screen, null); // 親が輪になっているもの
+  for (const e of ui) rectOf(e);
   return out;
+}
+
+/** 隣に付けた相手（beside）をたどると自分に戻るか */
+export function besideLoop(get: (id: string) => Record<string, unknown> | undefined, id: string): boolean {
+  const seen = new Set<string>();
+  for (let cur = get(id)?.beside as string | null | undefined; cur; cur = get(cur)?.beside as string | null | undefined) {
+    if (cur === id) return true;
+    if (seen.has(cur)) return false;
+    seen.add(cur);
+  }
+  return false;
 }
 
 /** 描く順（奥から手前）の比べ方に使う値。層 → 順番 → ワールドに入った順 */
