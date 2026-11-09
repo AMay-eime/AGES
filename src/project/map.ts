@@ -28,10 +28,12 @@ export interface MapInputs {
   gotos?: Map<string, string[]>;
   /** 最近の作業の場所（.ages/recent.json の上位。目次の地図に出す） */
   recent?: { place: string; hits: number }[];
+  /** コードの中の宣言の場所（codeDefs。システムの行に出す） */
+  defs?: Map<string, string>;
 }
 
-export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, locks: Record<string, LockMark> = {}, code = new Map<string, string[]>(), windows: WindowInfo[] = [], gotos = new Map<string, string[]>(), budget = MAP_BUDGET, recent: MapInputs['recent'] = []): string {
-  const ins: MapInputs = { touched, locks, code, windows, gotos, recent };
+export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, locks: Record<string, LockMark> = {}, code = new Map<string, string[]>(), windows: WindowInfo[] = [], gotos = new Map<string, string[]>(), budget = MAP_BUDGET, recent: MapInputs['recent'] = [], defs: MapInputs['defs'] = new Map()): string {
+  const ins: MapInputs = { touched, locks, code, windows, gotos, recent, defs };
   const full = buildMap(p, ins, 'full');
   if (full.length <= budget) return full;
   const compact = buildMap(p, ins, 'compact');
@@ -55,7 +57,7 @@ const firstSentence = (s: string | undefined, max = 40): string => {
 };
 
 type Ins = Required<MapInputs>;
-const withDefaults = (i: MapInputs): Ins => ({ touched: i.touched ?? {}, locks: i.locks ?? {}, code: i.code ?? new Map(), windows: i.windows ?? [], gotos: i.gotos ?? new Map(), recent: i.recent ?? [] });
+const withDefaults = (i: MapInputs): Ins => ({ touched: i.touched ?? {}, locks: i.locks ?? {}, code: i.code ?? new Map(), windows: i.windows ?? [], gotos: i.gotos ?? new Map(), recent: i.recent ?? [], defs: i.defs ?? new Map() });
 
 export function buildMap(p: Project, inputs: MapInputs, mode: MapMode): string {
   const ins = withDefaults(inputs);
@@ -129,7 +131,7 @@ function sectionLines(p: Project, ins: Ins, mode: 'full' | 'compact'): Record<Ma
     if (stdUsed.length) r.shaders.push(`標準: ${stdUsed.map((d) => `${d.path}(${Object.keys(d.uniforms).join(',')})`).join(' ')}`);
   }
 
-  r.systems.push('## systems（実行順。r=読む w=書く）');
+  r.systems.push('## systems（実行順。（コードの場所） r=読む w=書く）');
   // 標準のシステムは、続いている所を1行にまとめる（中身は ages schema guide で引く）
   const systems = p.registry.systems;
   for (let i = 0; i < systems.length; i++) {
@@ -142,7 +144,8 @@ function sectionLines(p: Project, ins: Ins, mode: 'full' | 'compact'): Record<Ma
       continue;
     }
     const rw = [s.reads?.length ? `r:${s.reads.join(',')}` : '', s.writes?.length ? `w:${s.writes.join(',')}` : ''].filter(Boolean).join(' ');
-    r.systems.push(`${i + 1} ${s.name} ${compact ? firstSentence(s.desc, 30) : s.desc}${rw ? ' ' + rw : ''}${s.scenes ? ` シーン:${s.scenes.join(',')}だけ` : ''}`);
+    const at = ins.defs.get(`system:${s.name}`);
+    r.systems.push(`${i + 1} ${s.name}${at ? `（${at}）` : ''} ${compact ? firstSentence(s.desc, 30) : s.desc}${rw ? ' ' + rw : ''}${s.scenes ? ` シーン:${s.scenes.join(',')}だけ` : ''}`);
   }
 
   if (p.registry.tables.size) {

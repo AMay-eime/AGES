@@ -26,7 +26,9 @@ export interface FindResult {
   top: string[];
 }
 
-export function findInProject(p: Project, query: string, guide: Map<string, GuideTopic> = new Map(), recent?: RecentStore): FindResult {
+export function findInProject(p: Project, query: string, guide: Map<string, GuideTopic> = new Map(), recent?: RecentStore, defs = new Map<string, string>()): FindResult {
+  // コードの中の宣言の場所（あれば名前の後ろに）
+  const at = (key: string) => { const d = defs.get(key); return d ? `（${d}）` : ''; };
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (!words.length) throw new Error('探す語を書いてください（例 ages find <dir> 移動速度 / ages find <dir> shot_gordon）');
   const hit = (...texts: (string | undefined)[]) => { const h = texts.filter(Boolean).join(' ').toLowerCase(); return words.every((w) => h.includes(w)); };
@@ -39,14 +41,14 @@ export function findInProject(p: Project, query: string, guide: Map<string, Guid
   const std = comps.filter((d) => p.registry.std.has(d.name));
   for (const [defs, label] of [[own, '部品'], [std, '標準の部品']] as const) {
     for (const d of defs) {
-      if (hit(d.name, d.desc)) add(d.name, `${label} ${d.name} — ${cut(d.desc)}`);
+      if (hit(d.name, d.desc)) add(d.name, `${label} ${d.name}${at(`component:${d.name}`)} — ${cut(d.desc)}`);
       for (const [k, f] of Object.entries(d.fields)) if (hit(`${d.name}.${k}`, f.desc)) add(`${d.name}.${k}`, `${d.name}.${k} ${type(f)} — ${cut(f.desc)}`);
     }
   }
 
   // 表・列・行（行は id と、文字の値）
   for (const t of p.registry.tables.values()) {
-    if (hit(`$${t.name}`, t.desc)) add(`$${t.name}`, `表 $${t.name} — ${cut(t.desc)}`);
+    if (hit(`$${t.name}`, t.desc)) add(`$${t.name}`, `表 $${t.name}${at(`table:${t.name}`)} — ${cut(t.desc)}`);
     for (const [k, f] of Object.entries(t.columns)) if (hit(`$${t.name} ${k}`, f.desc)) add(`$${t.name}.${k}`, `$${t.name} の列 ${k} ${type(f)} — ${cut(f.desc)}`);
     for (const row of p.docs.tables.get(t.name)?.rows ?? []) {
       if (hit(`$${t.name}.${row.id}`)) { add(`$${t.name}`, `$${t.name}.${row.id}（行）`); continue; }
@@ -58,7 +60,7 @@ export function findInProject(p: Project, query: string, guide: Map<string, Guid
   p.registry.systems.forEach((s, i) => {
     if (hit(s.name, s.desc)) {
       const rw = [s.reads?.length ? `r:${s.reads.join(',')}` : '', s.writes?.length ? `w:${s.writes.join(',')}` : ''].filter(Boolean).join(' ');
-      add(`システム:${s.name}`, `システム ${i + 1} ${s.name} — ${cut(s.desc)}${rw ? ' ' + rw : ''}`);
+      add(`システム:${s.name}`, `システム ${i + 1} ${s.name}${at(`system:${s.name}`)} — ${cut(s.desc)}${rw ? ' ' + rw : ''}`);
     }
   });
 

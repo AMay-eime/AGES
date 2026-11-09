@@ -116,7 +116,7 @@ test('地図: 要約でも上限を超えるときは目次の地図。中身は
   assert.match(await cmdMap(dir, 'prefabs'), /^@se_shot /m);
   // 名前と説明から探す。語は全部を含むもの。シーンをまたぐ同じ物は1行に
   const hp = await cmdFind(dir, '体力');
-  assert.match(hp, /^部品 Health — 体力/m);
+  assert.match(hp, /^部品 Health（game\/components\.ts:\d+） — 体力/m);
   assert.match(hp, /^Health\.hp int 0\.\.999=3 — /m);
   assert.match(await cmdFind(dir, 'Health hp'), /^Health\.hp /m);
   assert.doesNotMatch(await cmdFind(dir, 'Health hp'), /^部品 Health/m);
@@ -153,5 +153,14 @@ test('最近の作業の場所: 見る・変えるで覚え、目次の地図に
   // 操作の回数で古いものを忘れる
   for (let i = 0; i < RECENT_WINDOW; i++) await noteRecent(dir, i === RECENT_WINDOW - 1 ? ['x'] : []);
   assert.deepEqual(Object.keys((await readRecent(dir)).places), ['x']);
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('地図の systems の行と ages find に、コードの宣言の場所（ファイル:行）を出す', async () => {
+  const { cmdFind, cmdMap } = await import('../src/cli/ages.ts');
+  const dir = await shooter();
+  assert.match(await cmdMap(dir), /^1 playerControl（game\/systems\.ts:\d+） /m);
+  assert.match(await cmdFind(dir, 'Health'), /^部品 Health（game\/components\.ts:\d+） — /m);
+  assert.match(await cmdFind(dir, 'spawner'), /^システム \d+ spawner（game\/systems\.ts:\d+） — /m);
   await rm(dir, { recursive: true, force: true });
 });

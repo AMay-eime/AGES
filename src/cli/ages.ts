@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { Project } from '../project/project.ts';
 import { renderAssets, renderMap, renderMapSection } from '../project/map.ts';
 import { findInProject } from '../project/find.ts';
+import { codeDefs } from '../project/codedefs.ts';
 import { noteRecent, placeOf, readRecent, topRecent } from '../project/recent.ts';
 import { readCursor, readLog, readTouched, summarize, writeCursor, type Actor } from '../project/oplog.ts';
 import { OP_DOCS, getValue, parseLiteral, splitCell, type Op } from '../core/patch.ts';
@@ -92,17 +93,18 @@ function compact(obj: Record<string, unknown>): string {
 
 export async function cmdMap(dir: string, section?: string): Promise<string> {
   const p = await Project.load(dir);
-  const ins = { touched: await readTouched(p.dir), locks: await p.effectiveLocks(), code: await p.codeRefs(), windows: await p.windows(), gotos: codeSceneRefs(await p.codeFiles()), recent: topRecent(await readRecent(p.dir)) };
+  const files = await p.codeFiles();
+  const ins = { touched: await readTouched(p.dir), locks: await p.effectiveLocks(), code: await p.codeRefs(), windows: await p.windows(), gotos: codeSceneRefs(files), recent: topRecent(await readRecent(p.dir)), defs: codeDefs(files) };
   // 節を1つだけ引く（目次の地図から）
   if (section) return withLockReport(p, renderMapSection(p, section, ins));
   const plan = await planWarning(p.dir);
-  return withLockReport(p, (plan ? plan + '\n' : '') + renderMap(p, ins.touched, ins.locks, ins.code, ins.windows, ins.gotos, undefined, ins.recent));
+  return withLockReport(p, (plan ? plan + '\n' : '') + renderMap(p, ins.touched, ins.locks, ins.code, ins.windows, ins.gotos, undefined, ins.recent, ins.defs));
 }
 
 /** 名前・説明から探す（目次の地図の中身を引く） */
 export async function cmdFind(dir: string, query: string): Promise<string> {
   const p = await Project.load(dir);
-  const r = findInProject(p, query, await readGuide(), await readRecent(p.dir));
+  const r = findInProject(p, query, await readGuide(), await readRecent(p.dir), codeDefs(await p.codeFiles()));
   await noteRecent(p.dir, []);
   return r.text;
 }

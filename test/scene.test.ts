@@ -144,7 +144,7 @@ test('コードの goto で使っているシーンは消せない。地図に�
   assert.match(map, /goto の行き先（コード）: result main/);
   assert.match(map, /^main（\d+体） 開始$/m);
   assert.match(map, /^result（4体） ゲームオーバーの後の結果/m);
-  assert.match(map, /toResult .* シーン:mainだけ/);
+  assert.match(map, /toResult（game\/[a-z]+\.ts:\d+） .* シーン:mainだけ/);
 });
 
 test('事前読み込み: 最初はプレハブ・表・コードが使うものとそのシーンの物、切り替えではそのシーンの物だけ', () => {
