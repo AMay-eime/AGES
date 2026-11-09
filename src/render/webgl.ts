@@ -189,7 +189,11 @@ export class Renderer {
    * 描く。カメラ（Camera）があればカメラごとに、その範囲・層だけを描く。なければ画面全体をそのまま映す。
    * 第2引数に色だけを渡す古い書き方も使える
    */
+  /** 前の draw の数（描く命令の回数・四角の数）。エディタの api.perf に出る */
+  stats = { draws: 0, quads: 0 };
+
   draw(world: World, opts: DrawOptions | string): void {
+    this.stats = { draws: 0, quads: 0 };
     const o: DrawOptions = typeof opts === 'string' ? { background: opts } : opts;
     const gl = this.gl;
     const W = this.canvas.width, H = this.canvas.height;
@@ -636,6 +640,8 @@ export class Renderer {
 
   private flush(): void {
     if (!this.count || !this.curTex) { this.count = 0; return; }
+    this.stats.draws++;
+    this.stats.quads += this.count;
     const gl = this.gl;
     switch (this.curBlend) {
       case 'none': gl.blendFunc(gl.ONE, gl.ZERO); break;
