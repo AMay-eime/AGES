@@ -14,10 +14,6 @@
       "frame": 18,
       "flipY": true
     },
-    "Hitbox": {
-      "w": 26,
-      "h": 24
-    },
     "Velocity": {
       "vy": 2
     },
@@ -29,6 +25,11 @@
     },
     "Effect": {
       "shader": "std:flash"
+    },
+    "Collider": {
+      "w": 20.8,
+      "h": 19.2,
+      "group": "enemy"
     }
   }
 }

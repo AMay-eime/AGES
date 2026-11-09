@@ -77,6 +77,7 @@ AGESに足りない機能（画像・音・物理など。docs/PLAN.md の段階
 - 画面に固定するもの（HUD・メニュー・ボタン・ゲージ・ダイアログ）は、物に UI を付けてシーンに置く。コードで画面を組み立てない（人がエディタで配置を直せるように）。置き方は `UI.anchor`（画面の9か所）と x・y・w・h、並べるのは親に Layout。ボタンは Button を付け、コードは `ctx.ui.clicked('ID')` を読むだけ。体力などは Gauge（drag ならスライダー）
 - UI の配置を直すよう頼まれたら、座標を計算せずに patch の `dockUI`（画面の端・角に付ける。`{"op":"dockUI","target":"main#hp","edge":"topRight","margin":8}`）か `attachUI`（別の UI の隣に接して置く。`{"op":"attachUI","target":"main#lives","to":"hp","side":"below","gap":4}`）を使う。直した後は `ages ui <dir> <シーン>` で、重なり・はみ出しの ⚠ がないことを確かめる
 - UI を確かめるのは `ages run --keys "300:click=ボタンのID"` と要約の `ui:`（画面を見なくてよい）
+- 当たり判定は標準の Collider（円・矩形、グループ名）を付け、`ctx.hit.overlaps(id, 'enemy')` などで調べる。距離の計算を自分で書かない。当たったかは `ages run` の `hits:` で確かめる（`with` に相手のグループを書く）。押し返し・跳ね返りが要るゲームは、プロジェクトの中で作る
 - 粒（火花・煙）は標準の Particles を物（プレハブ）に付ける（`ages schema <dir> Particles`）。現れたときに出すのは `burst`、出し続けるのは `rate`。後から出すのは `ctx.particles.burst(id)`。粒の動きは描く側で動かし、ゲームの結果には入らない。出したかどうかは `ages run` の `particles:` で確かめる
 
 ## エディタウインドウ

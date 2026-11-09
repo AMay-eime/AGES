@@ -11,10 +11,6 @@
       "frame": 0,
       "layer": 1
     },
-    "Hitbox": {
-      "w": 4,
-      "h": 12
-    },
     "Velocity": {
       "vy": -10
     },
@@ -24,6 +20,14 @@
     "Bullet": {
       "team": "player",
       "damage": 1
+    },
+    "Collider": {
+      "w": 4,
+      "h": 12,
+      "group": "bullet",
+      "with": [
+        "enemy"
+      ]
     }
   }
 }

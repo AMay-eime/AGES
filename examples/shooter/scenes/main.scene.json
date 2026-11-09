@@ -19,16 +19,20 @@
           "frame": 0,
           "layer": 2
         },
-        "Hitbox": {
-          "w": 20,
-          "h": 20
-        },
         "Player": {
           "speed": 4.5,
           "fireInterval": 8
         },
         "Health": {
           "hp": 3
+        },
+        "Collider": {
+          "w": 13.34,
+          "h": 13.34,
+          "group": "player",
+          "with": [
+            "enemy"
+          ]
         }
       }
     },

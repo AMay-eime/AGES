@@ -1,15 +1,6 @@
 import { defineComponent } from 'ages';
 
-// Transform・Sprite・Animator・Shape・Text は AGES の標準なので、ここでは定義しない
-
-export const Hitbox = defineComponent({
-  name: 'Hitbox',
-  desc: '当たり判定の大きさ（Transform の位置が中心の矩形）',
-  fields: {
-    w: { type: 'number', default: 16, min: 0, max: 512, desc: '幅(px)' },
-    h: { type: 'number', default: 16, min: 0, max: 512, desc: '高さ(px)' },
-  },
-});
+// Transform・Sprite・Animator・Shape・Text・Collider（当たり判定）などは AGES の標準なので、ここでは定義しない
 
 export const Velocity = defineComponent({
   name: 'Velocity',

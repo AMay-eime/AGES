@@ -509,6 +509,19 @@ export class Project {
       if (!e.length && info?.w && info.h) errs.push(...checkSheetImage(sp, sheet, info.w, info.h));
     }
     errs.push(...this.assetIssues);
+    // 当たり判定: with に書いたグループの Collider があること（名前の書き間違い）
+    {
+      const groups = new Set<string>();
+      const withs: [string, string][] = [];
+      const scan = (where: string, c?: Record<string, unknown>) => {
+        if (!c) return;
+        if (c.group) groups.add(String(c.group));
+        for (const w of (c.with as string[] | undefined) ?? []) withs.push([where, w]);
+      };
+      for (const pf of this.docs.prefabs.values()) scan(`@${pf.name}`, pf.components.Collider);
+      for (const sc of this.docs.scenes.values()) for (const e of sc.entities) scan(`${sc.name}#${e.id}`, e.components.Collider);
+      for (const [where, w] of withs) if (!groups.has(w)) errs.push(`${where}.Collider.with: グループ "${w}" の Collider がありません${suggest(w, [...groups])}（ある名前: ${[...groups].join(', ') || 'なし'}）`);
+    }
     for (const a of this.assets) {
       if (!a.shader) continue;
       errs.push(...a.shader.errors);

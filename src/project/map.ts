@@ -27,6 +27,10 @@ export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, l
   for (const d of own) out.push(`${d.path} ${d.desc} | ${Object.entries(d.uniforms).map(([k, f]) => `${k}:${brief(f)}`).join(' ') || '（値なし）'}${d.errors.length ? ` ⚠ ${d.errors.length}件の問題（ages check）` : ''}`);
   out.push(`標準: ${shaders.filter((d) => d.path.startsWith('std:')).map((d) => `${d.path}(${Object.keys(d.uniforms).join(',')})`).join(' ')}`);
 
+  // 当たり判定のグループ（Collider.group と、重なり始めを記録する相手 with）
+  const groups = collisionGroups(p);
+  if (groups.size) out.push(`当たり判定のグループ（Collider.group → with。ctx.hit で調べる）: ${[...groups].map(([g, w]) => (w.size ? `${g || '（なし）'}→${[...w].join(',')}` : g || '（なし）')).join('  ')}`);
+
   out.push('## systems（実行順。r=読む w=書く）');
   p.registry.systems.forEach((s, i) => {
     const rw = [s.reads?.length ? `r:${s.reads.join(',')}` : '', s.writes?.length ? `w:${s.writes.join(',')}` : ''].filter(Boolean).join(' ');
@@ -146,4 +150,18 @@ export function compactPaths(paths: string[]): string {
     groups.set(head, [...(groups.get(head) ?? []), leaf]);
   }
   return [...groups].map(([head, leaves]) => leaves.length === 1 ? (leaves[0] ? `${head}.${leaves[0]}` : head) : `${head}.{${leaves.filter(Boolean).join(',')}}`).join(' ');
+}
+
+/** シーン・プレハブの Collider のグループと、それぞれの with */
+export function collisionGroups(p: Project): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  const add = (c?: Record<string, unknown>) => {
+    if (!c) return;
+    const g = String(c.group ?? '');
+    if (!out.has(g)) out.set(g, new Set());
+    for (const w of (c.with as string[] | undefined) ?? []) out.get(g)!.add(w);
+  };
+  for (const pf of p.docs.prefabs.values()) add(pf.components.Collider);
+  for (const s of p.docs.scenes.values()) for (const e of s.entities) add(e.components.Collider);
+  return out;
 }

@@ -1,11 +1,6 @@
 import { enemies } from './tables.ts';
 import { defineSystem, type Entity } from 'ages';
 
-const overlap = (a: Entity, b: Entity) => {
-  const at = a.c.Transform, ah = a.c.Hitbox, bt = b.c.Transform, bh = b.c.Hitbox;
-  return Math.abs(at.x - bt.x) * 2 < ah.w + bh.w && Math.abs(at.y - bt.y) * 2 < ah.h + bh.h;
-};
-
 export const playerControl = defineSystem({
   name: 'playerControl',
   desc: '操作 move_x・move_y で自機を動かし、fire で弾を撃つ（割り当ては $actions）',
@@ -89,53 +84,50 @@ export const lifetime = defineSystem({
 export const combat = defineSystem({
   name: 'combat',
   desc: '弾と敵、敵と自機の当たりを処理する',
-  reads: ['Bullet', 'Enemy', 'Player', 'Hitbox'],
+  reads: ['Bullet', 'Enemy', 'Player', 'Collider'],
   writes: ['Health', 'Score', 'Camera'],
-  update({ world, destroy, emit, spawn, shake, sound, tween }) {
+  update({ world, destroy, emit, spawn, shake, sound, tween, hit }) {
     const isAlive = (id: string) => world.isAlive(id);
+    // 当たり判定は標準の Collider（グループ player・enemy・bullet）。重なっている相手を ctx.hit で調べる
+    const firstEnemy = (id: string) => hit.overlaps(id, 'enemy').map((o) => world.get(o)!).find((e) => e.c.Health && e.c.Enemy);
     // 爆発のプレハブには Particles が付いていて、出たときに火花を出す（標準の std.particles）
     const boom = (e: Entity) => spawn('explosion', { Transform: { x: e.c.Transform.x, y: e.c.Transform.y } });
-    const enemies = world.query('Enemy', 'Health', 'Transform', 'Hitbox');
     const scorer = world.query('Score')[0];
     const score = scorer?.c.Score;
-    for (const b of world.query('Bullet', 'Transform', 'Hitbox')) {
-      if (b.c.Bullet.team !== 'player') continue;
-      for (const en of enemies) {
-        if (!isAlive(en.id) || !overlap(b, en)) continue;
-        destroy(b.id);
-        en.c.Health.hp -= b.c.Bullet.damage;
-        // 手触りは表 $tweens の行（hitFlash・scorePop）で決める
-        // 敵のプレハブの Effect（std:flash）で白く光らせて戻す
-        if (en.c.Health.hp > 0) tween(en.id, { 'Effect.params.amount': 0 }, { preset: 'hitFlash', from: { 'Effect.params.amount': 1 } });
-        if (en.c.Health.hp <= 0) {
-          destroy(en.id);
-          boom(en);
-          if (score) {
-            score.value += en.c.Enemy.score;
-            tween(scorer.id, { 'Transform.sx': 1, 'Transform.sy': 1 }, { preset: 'scorePop', from: { 'Transform.sx': 1.4, 'Transform.sy': 1.4 } });
-          }
-          emit('enemyKilled');
-          sound.play('se_explosion');
+    for (const b of world.query('Bullet', 'Transform', 'Collider')) {
+      if (b.c.Bullet.team !== 'player' || !isAlive(b.id)) continue;
+      const en = firstEnemy(b.id);
+      if (!en) continue;
+      destroy(b.id);
+      en.c.Health.hp -= b.c.Bullet.damage;
+      // 手触りは表 $tweens の行（hitFlash・scorePop）で決める
+      // 敵のプレハブの Effect（std:flash）で白く光らせて戻す
+      if (en.c.Health.hp > 0) tween(en.id, { 'Effect.params.amount': 0 }, { preset: 'hitFlash', from: { 'Effect.params.amount': 1 } });
+      if (en.c.Health.hp <= 0) {
+        destroy(en.id);
+        boom(en);
+        if (score) {
+          score.value += en.c.Enemy.score;
+          tween(scorer.id, { 'Transform.sx': 1, 'Transform.sy': 1 }, { preset: 'scorePop', from: { 'Transform.sx': 1.4, 'Transform.sy': 1.4 } });
         }
-        break;
+        emit('enemyKilled');
+        sound.play('se_explosion');
       }
     }
-    for (const pl of world.query('Player', 'Health', 'Transform', 'Hitbox')) {
+    for (const pl of world.query('Player', 'Health', 'Transform', 'Collider')) {
       const h = pl.c.Health;
       if (h.invincible > 0) { h.invincible--; continue; }
       if (h.hp <= 0) continue;
-      for (const en of enemies) {
-        if (!isAlive(en.id) || !overlap(pl, en)) continue;
-        destroy(en.id);
-        boom(en);
-        h.hp--;
-        h.invincible = h.invincibleOnHit;
-        emit('playerHit', { hp: h.hp });
-        shake(0.6); // 被弾したら画面を揺らす（標準の Camera）
-        sound.play('se_hit');
-        if (h.hp <= 0) emit('gameOver');
-        break;
-      }
+      const en = firstEnemy(pl.id);
+      if (!en) continue;
+      destroy(en.id);
+      boom(en);
+      h.hp--;
+      h.invincible = h.invincibleOnHit;
+      emit('playerHit', { hp: h.hp });
+      shake(0.6); // 被弾したら画面を揺らす（標準の Camera）
+      sound.play('se_hit');
+      if (h.hp <= 0) emit('gameOver');
     }
   },
 });
