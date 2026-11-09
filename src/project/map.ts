@@ -8,6 +8,7 @@ import { languagesOf } from '../core/i18n.ts';
 import { overridesOf } from '../core/variant.ts';
 import type { WindowInfo } from './windows.ts';
 import type { LockMark, TouchMark } from './oplog.ts';
+import { RECENT_WINDOW } from './recent.ts';
 
 
 /** 地図の大きさの上限（文字）。超えるプロジェクトでは細かいところを省いた要約の地図、それでも超えるなら目次の地図にする（中身は節ごと・名前で引く） */
@@ -25,10 +26,12 @@ export interface MapInputs {
   code?: Map<string, string[]>;
   windows?: WindowInfo[];
   gotos?: Map<string, string[]>;
+  /** 最近の作業の場所（.ages/recent.json の上位。目次の地図に出す） */
+  recent?: { place: string; hits: number }[];
 }
 
-export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, locks: Record<string, LockMark> = {}, code = new Map<string, string[]>(), windows: WindowInfo[] = [], gotos = new Map<string, string[]>(), budget = MAP_BUDGET): string {
-  const ins: MapInputs = { touched, locks, code, windows, gotos };
+export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, locks: Record<string, LockMark> = {}, code = new Map<string, string[]>(), windows: WindowInfo[] = [], gotos = new Map<string, string[]>(), budget = MAP_BUDGET, recent: MapInputs['recent'] = []): string {
+  const ins: MapInputs = { touched, locks, code, windows, gotos, recent };
   const full = buildMap(p, ins, 'full');
   if (full.length <= budget) return full;
   const compact = buildMap(p, ins, 'compact');
@@ -52,7 +55,7 @@ const firstSentence = (s: string | undefined, max = 40): string => {
 };
 
 type Ins = Required<MapInputs>;
-const withDefaults = (i: MapInputs): Ins => ({ touched: i.touched ?? {}, locks: i.locks ?? {}, code: i.code ?? new Map(), windows: i.windows ?? [], gotos: i.gotos ?? new Map() });
+const withDefaults = (i: MapInputs): Ins => ({ touched: i.touched ?? {}, locks: i.locks ?? {}, code: i.code ?? new Map(), windows: i.windows ?? [], gotos: i.gotos ?? new Map(), recent: i.recent ?? [] });
 
 export function buildMap(p: Project, inputs: MapInputs, mode: MapMode): string {
   const ins = withDefaults(inputs);
@@ -64,6 +67,8 @@ export function buildMap(p: Project, inputs: MapInputs, mode: MapMode): string {
   const sec = mode === 'index' ? indexLines(p, ins) : sectionLines(p, ins, mode);
   out.push(...sec.components, ...sec.shaders, ...notes(p), ...sec.systems, ...sec.tables, ...sec.prefabs, ...sec.scenes, ...sec.assets, ...sec.extensions);
   if (mode === 'index') out.push(...markRoots(ins));
+  // 最近の作業の場所（目次の地図だけ。続けて同じ辺りを触るなら探さずに済む）
+  if (mode === 'index' && ins.recent.length) out.push(`最近の作業の場所（直近${RECENT_WINDOW}回の探す・見る・変えるで使った所。多い順）: ${ins.recent.map((r) => (r.hits > 1 ? `${r.place}(${r.hits})` : r.place)).join('  ')}`);
   const nl = Object.keys(ins.locks).length, nt = Object.keys(ins.touched).length;
   if (nl || nt) out.push(`## 🔒ロック ${nl}件（AIは変更不可。理由があれば人に提案する） / ★人が調整 ${nt}件（変更前に人へ確認）`);
   return out.join('\n');

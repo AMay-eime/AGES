@@ -1,4 +1,5 @@
-# AIごとの既読位置（共有しない）
+# AIごとの既読位置と最近の作業の場所（共有しない）
 .ages/ai-cursor
+.ages/recent.json
 # 端末ごとのロックの封印（共有しない）
 .ages/locks.seal

@@ -124,3 +124,34 @@ test('地図: 要約でも上限を超えるときは目次の地図。中身は
   assert.match(await cmdFind(dir, 'zzzz'), /見つかりませんでした/);
   await rm(dir, { recursive: true, force: true });
 });
+
+test('最近の作業の場所: 見る・変えるで覚え、目次の地図に上位を出し、ages find の並びに使う。操作の回数で古いものを忘れる', async () => {
+  const { cmdFind, cmdGet, cmdMap, cmdPatch } = await import('../src/cli/ages.ts');
+  const { readRecent, placeOf, RECENT_WINDOW, noteRecent } = await import('../src/project/recent.ts');
+  const { renderMap } = await import('../src/project/map.ts');
+  const { Project } = await import('../src/project/project.ts');
+  const dir = await shooter();
+  assert.equal(placeOf('$enemies.basic.hp'), '$enemies.hp');
+  assert.equal(placeOf('main#spawner.Spawner.waves[2].count'), 'main#spawner.Spawner');
+  assert.equal(placeOf('prefab:enemy'), '@enemy');
+  // 探すだけでは場所を覚えない（回数だけ数える）
+  await cmdFind(dir, 'hp');
+  assert.deepEqual((await readRecent(dir)).places, {});
+  await cmdGet(dir, ['@enemy.Health.hp']);
+  await cmdPatch(dir, [{ op: 'set', path: '@enemy.Health.hp', value: 5 }], false);
+  const s = await readRecent(dir);
+  assert.equal(s.n, 3);
+  assert.deepEqual(s.places['@enemy.Health'], { hits: 2, last: 3 });
+  // 目次の地図だけに出す（小さいプロジェクトの地図は今までどおり）
+  assert.doesNotMatch(await cmdMap(dir), /最近の作業の場所/);
+  const p = await Project.load(dir);
+  assert.match(renderMap(p, {}, {}, new Map(), [], new Map(), 100, [{ place: '@enemy.Health', hits: 2 }]), /^最近の作業の場所（直近\d+回.*）: @enemy\.Health\(2\)$/m);
+  // ages find は最近の場所に近いものを上に
+  const found = await cmdFind(dir, 'Health');
+  assert.match(found, /最近の作業の場所に近いものから/);
+  assert.match(found.split('\n')[1], /^Health\.hp |^部品 Health/);
+  // 操作の回数で古いものを忘れる
+  for (let i = 0; i < RECENT_WINDOW; i++) await noteRecent(dir, i === RECENT_WINDOW - 1 ? ['x'] : []);
+  assert.deepEqual(Object.keys((await readRecent(dir)).places), ['x']);
+  await rm(dir, { recursive: true, force: true });
+});
