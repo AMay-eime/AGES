@@ -4,10 +4,21 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-/** この回数の操作のあいだ一度も出てこなかった場所は忘れる */
+/** この回数の操作のあいだ一度も出てこなかった場所は、地図と ages find では使わない（入れ子の深い目次では長くする: recentFor） */
 export const RECENT_WINDOW = 50;
-/** 目次の地図に出す数 */
+/** 目次の地図に出す数（入れ子の深い目次では増やす: recentFor） */
 export const RECENT_SHOW = 10;
+/** 覚えておく長さ（操作の回数）。これより古いものは忘れる */
+export const RECENT_KEEP = 200;
+
+/**
+ * 目次の入れ子の深さに合わせた、見せる数と長さ。深いほど1回引く手間が増えるので、最近の場所を多く・長く見せて引く回数を減らす。
+ * 深さ1までは今までどおり（10か所・50回）、1段深いごとに +5か所・+50回（上限 30か所・RECENT_KEEP）
+ */
+export function recentFor(depth: number): { show: number; window: number } {
+  const extra = Math.max(0, depth - 1);
+  return { show: Math.min(30, RECENT_SHOW + 5 * extra), window: Math.min(RECENT_KEEP, RECENT_WINDOW * (1 + extra)) };
+}
 
 export interface RecentStore {
   /** これまでの操作の回数（探す・見る・変えるで1回ずつ） */
@@ -41,7 +52,7 @@ export async function noteRecent(root: string, places: string[]): Promise<void> 
     e.last = s.n;
     s.places[p] = e;
   }
-  for (const [k, e] of Object.entries(s.places)) if (s.n - e.last >= RECENT_WINDOW) delete s.places[k];
+  for (const [k, e] of Object.entries(s.places)) if (s.n - e.last >= RECENT_KEEP) delete s.places[k];
   await mkdir(join(root, '.ages'), { recursive: true });
   // 書きかけを読まれないよう、別の名前に書いてから置きかえる
   const tmp = `${fileOf(root)}.${process.pid}.tmp`;
@@ -49,9 +60,10 @@ export async function noteRecent(root: string, places: string[]): Promise<void> 
   await rename(tmp, fileOf(root));
 }
 
-/** よく使った順（同じ回数なら新しい順） */
-export function topRecent(s: RecentStore, max = RECENT_SHOW): { place: string; hits: number }[] {
+/** よく使った順（同じ回数なら新しい順）。window 回より前に最後に使った所は除く */
+export function topRecent(s: RecentStore, max = RECENT_SHOW, window = RECENT_WINDOW): { place: string; hits: number }[] {
   return Object.entries(s.places)
+    .filter(([, e]) => s.n - e.last < window)
     .sort(([, a], [, b]) => b.hits - a.hits || b.last - a.last)
     .slice(0, max)
     .map(([place, e]) => ({ place, hits: e.hits }));
@@ -78,10 +90,11 @@ export function placeOf(path: string): string {
  * 並べるときの重み: 同じ場所なら回数の2倍、どちらかが他方の中（$表 と $表.列 など）なら回数。
  * プレハブ・シーンの物の部品（@enemy.Health）は、その部品（Health・Health.hp）にも回数で効く
  */
-export function recentScore(place: string, s: RecentStore): number {
+export function recentScore(place: string, s: RecentStore, window = RECENT_WINDOW): number {
   const near = (a: string, b: string) => a === b || a.startsWith(b + '.') || b.startsWith(a + '.');
   let best = 0;
   for (const [p, e] of Object.entries(s.places)) {
+    if (s.n - e.last >= window) continue;
     const head = p.split('.')[0];
     const comp = (head.startsWith('@') || head.includes('#')) ? p.split('.')[1] : undefined;
     const w = p === place ? e.hits * 2 : near(p, place) || (comp && near(comp, place)) ? e.hits : 0;

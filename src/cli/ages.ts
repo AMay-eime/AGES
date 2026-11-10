@@ -6,10 +6,10 @@ import { existsSync } from 'node:fs';
 import { join, resolve, relative, basename, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Project } from '../project/project.ts';
-import { renderAssets, renderMap, renderMapSection } from '../project/map.ts';
+import { indexDepth, renderAssets, renderMap, renderMapSection } from '../project/map.ts';
 import { findInProject } from '../project/find.ts';
 import { codeDefs } from '../project/codedefs.ts';
-import { noteRecent, placeOf, readRecent, topRecent } from '../project/recent.ts';
+import { noteRecent, placeOf, readRecent, recentFor, topRecent } from '../project/recent.ts';
 import { readCursor, readLog, readTouched, summarize, writeCursor, type Actor } from '../project/oplog.ts';
 import { OP_DOCS, getValue, parseLiteral, splitCell, type Op } from '../core/patch.ts';
 import { readGuide } from '../project/guide.ts';
@@ -36,7 +36,7 @@ import { parseSpawns, spawnTryout, tryoutGone, tryoutScene } from '../core/tryou
 const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [引数]
 
   init   <dir> [--name 名前] [--pin]  新しいプロジェクトを作る（EDITOR-PLAN.md 付き。ゲームの企画を受けたら最初にこれ。--pin で版だけ同梱の形）
-  map    <dir> [節]                  プロジェクトの地図（作業のたびに最初に読む）。大きなプロジェクトでは目次になり、節（components systems tables prefabs scenes など）で中身を引く
+  map    <dir> [節[/まとめ]]          プロジェクトの地図（作業のたびに最初に読む）。大きなプロジェクトでは目次になり、節（components systems tables prefabs scenes など）で中身を引く。まとめ 名前/(数) は 節/名前（例 prefabs/se）
   find   <dir> <語 ...>              部品・フィールド・表の列と行・システム・プレハブ・シーンの物を、名前と説明から探す（語は全部を含むもの）
   schema <dir> [名前 ...]             詳しく引く: コンポーネント（型・範囲・説明）/ $表 / std:flash などのシェーダー
                / ops（patch の操作の一覧と書き方）/ guide（機能ごとの手順の目次）/ guide:項目（例 guide:ui）
@@ -104,11 +104,18 @@ function compact(obj: Record<string, unknown>): string {
 export async function cmdMap(dir: string, section?: string): Promise<string> {
   const p = await Project.load(dir);
   const files = await p.codeFiles();
-  const ins = { touched: await readTouched(p.dir), locks: await p.effectiveLocks(), code: await p.codeRefs(), windows: await p.windows(), gotos: codeSceneRefs(files), recent: topRecent(await readRecent(p.dir)), defs: codeDefs(files) };
-  // 節を1つだけ引く（目次の地図から）
-  if (section) return withLockReport(p, renderMapSection(p, section, ins));
+  const ins = { touched: await readTouched(p.dir), locks: await p.effectiveLocks(), code: await p.codeRefs(), windows: await p.windows(), gotos: codeSceneRefs(files), defs: codeDefs(files) };
+  // 節を1つだけ引く（目次の地図から）。まとめ（節/まとめ）を引いたら、最近の作業の場所として覚える
+  if (section) {
+    const page = renderMapSection(p, section, ins);
+    if (section.includes('/')) await noteRecent(p.dir, [`map:${section}`]);
+    return withLockReport(p, page);
+  }
+  // 入れ子の深い目次ほど、最近の作業の場所を多く・長く見せる（引く回数を減らす）
+  const { show, window } = recentFor(indexDepth(p, ins));
+  const recent = topRecent(await readRecent(p.dir), show, window);
   const plan = await planWarning(p.dir);
-  return withLockReport(p, (plan ? plan + '\n' : '') + renderMap(p, ins.touched, ins.locks, ins.code, ins.windows, ins.gotos, undefined, ins.recent, ins.defs));
+  return withLockReport(p, (plan ? plan + '\n' : '') + renderMap(p, ins.touched, ins.locks, ins.code, ins.windows, ins.gotos, undefined, recent, ins.defs, window));
 }
 
 /** 名前・説明から探す（目次の地図の中身を引く） */

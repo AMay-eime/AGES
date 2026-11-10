@@ -103,21 +103,24 @@ test('地図: 要約でも上限を超えるときは目次の地図。中身は
   const p = await Project.load(dir);
   const index = renderMap(p, {}, {}, new Map(), [], new Map(), 100);
   assert.match(index, /目次の地図/);
+  // 名前が短く収まる節は、名前を全部（まとめなし）
   assert.match(index, /^## components \d+個: .*\bHealth\b/m);
-  assert.match(index, /^## systems 実行順: /m);
-  assert.match(index, /^## tables（\$表\.行\.列）: .*\$enemies \d+行/m);
-  assert.match(index, /^## prefabs \d+個（主な部品ごとの数）: .*Sound \d+/m);
-  assert.match(index, /^## scenes: main\(\d+体・開始\)/m);
+  assert.match(index, /^## systems \d+個（番号.名前 の番号は実行順）: 1\.playerControl 2\.spawner /m);
+  assert.match(index, /^## tables \d+個（\$表\.行\.列）: .*\$enemies\(\d+行\)/m);
+  assert.match(index, /^## prefabs \d+個（@名前）: .*\bse_shot\b/m);
+  assert.match(index, /^## scenes 2個: main\(\d+体・開始\) result\(\d+体\)$/m);
   assert.doesNotMatch(index, /hp:int|invincibleOnHit/, '目次にはフィールドを出さない');
-  // エディタ拡張は目次でも残すが、名前・説明の最初の一文・ファイルだけ（変える値・欄は節で引く）
-  const wins = [{ path: 'editor/hp-hearts.ext.ts', id: 'hp-hearts', desc: '体力を ♥ の数で見せる。−・＋ で1つずつ変える', fields: ['Health.hp'], edits: [] }];
+  // エディタ拡張は目次でも残すが、名前と見出しだけ（説明・変える値・欄は節で引く）
+  const wins = [{ path: 'editor/hp-hearts.ext.ts', id: 'hp-hearts', title: '体力', desc: '体力を ♥ の数で見せる。−・＋ で1つずつ変える', fields: ['Health.hp'], edits: [] }];
   const withExt = renderMap(p, {}, {}, new Map(), wins, new Map(), 100);
-  assert.match(withExt, /^## editor extensions 1個（/m);
-  assert.match(withExt, /^hp-hearts 体力を ♥ の数で見せる \| editor\/hp-hearts\.ext\.ts$/m);
-  assert.match(renderMapSection(p, 'extensions', { windows: wins }, 100), /^hp-hearts 体力を ♥ の数で見せる。−・＋ で1つずつ変える \| 変える: なし（見るだけ） \| 欄:Health\.hp \| editor\/hp-hearts\.ext\.ts$/m);
+  assert.match(withExt, /^## editor extensions 1個（作る前にここを見て、近いものがあれば直す）: hp-hearts「体力」$/m);
+  assert.match(renderMapSection(p, 'extensions', { windows: wins }, 100), /^hp-hearts「体力」 体力を ♥ の数で見せる。−・＋ で1つずつ変える \| 変える: なし（見るだけ） \| 欄:Health\.hp \| editor\/hp-hearts\.ext\.ts$/m);
   // 節を1つ: 小さいプロジェクトなので詳しい形
   assert.match(renderMapSection(p, 'components'), /^Health 体力。0で倒れる \| hp:int/m);
   assert.match(renderMapSection(p, 'tables', {}, 100), /^\$enemies \d+行 .* \| /m, '大きいプロジェクトでは要約の形');
+  assert.match(renderMapSection(p, 'prefabs/se', {}, 100), /^## prefabs\/se 4個（.*\n@se .*\n@se_explosion /);
+  assert.match(renderMapSection(p, 'scenes/main', {}, 100), /^#hpGauge "HP Gauge" \[UI Gauge\]$/m);
+  assert.throws(() => renderMapSection(p, 'prefabs/sx', {}, 100), /地図の prefabs\/sx はありません。もしかして: se/);
   assert.throws(() => renderMapSection(p, 'scene'), /地図の節 scene はありません。もしかして: scenes/);
   assert.match(await cmdMap(dir, 'prefabs'), /^@se_shot /m);
   // 名前と説明から探す。語は全部を含むもの。シーンをまたぐ同じ物は1行に
@@ -131,9 +134,46 @@ test('地図: 要約でも上限を超えるときは目次の地図。中身は
   await rm(dir, { recursive: true, force: true });
 });
 
+test('入れ子の目次: プロジェクトが大きくなると名前をまとめにし、まとめが大きくなるとさらに入れ子に。中身は ages map <dir> 節/まとめ', async () => {
+  const { renderMap, renderMapSection, indexDepth } = await import('../src/project/map.ts');
+  const { Project } = await import('../src/project/project.ts');
+  const { cmdMap } = await import('../src/cli/ages.ts');
+  const { readRecent } = await import('../src/project/recent.ts');
+  const dir = await shooter();
+  const p = await Project.load(dir);
+  const before = renderMap(p, {}, {}, new Map(), [], new Map(), 100);
+  assert.equal(indexDepth(p, {}, 100), 1, 'se のまとめ1段');
+  // 敵を60種（2つの波）・弾を12種足す
+  const ops = [
+    ...[...Array(30)].map((_, i) => ({ op: 'addPrefab', name: `enemy_wave_a_${i}`, copy: 'enemy' })),
+    ...[...Array(30)].map((_, i) => ({ op: 'addPrefab', name: `enemy_wave_b_${i}`, copy: 'enemy' })),
+    ...[...Array(12)].map((_, i) => ({ op: 'addPrefab', name: `bullet_kind${i}`, copy: 'bullet' })),
+  ];
+  await p.apply(ops as never, { who: 'ai', kind: 'ai', win: 'cli' });
+  const index = renderMap(p, {}, {}, new Map(), [], new Map(), 100);
+  assert.match(index, /^## prefabs 80個（@名前）: bgm {2}bullet\/\(13\) {2}enemy\/\(61\) {2}explosion {2}se\/\(4\)$/m, '名前が収まらないので、まとめと数');
+  assert.match(index, /中身は ages map <dir> 節\/名前（例 prefabs\/enemy）/);
+  assert.ok(index.length < before.length + 60, '名前が72個増えても、地図はほとんど増えない');
+  // まとめを引く: 大きすぎるまとめは、下のまとめを1行ずつ。まとめが大きくなるほど入れ子が深い（連番は 最初〜最後）
+  const enemy = renderMapSection(p, 'prefabs/enemy', {}, 100);
+  assert.match(enemy, /^## prefabs\/enemy 61個（/);
+  assert.match(enemy, /^@enemy まっすぐ落ちてくる敵 /m);
+  assert.match(enemy, /^enemy_wave\/ 60個: enemy_wave_a\/\(30\) {2}enemy_wave_b\/\(30\)$/m);
+  assert.match(enemy, /（名前\/ はまとめ。中身は ages map <dir> prefabs\/enemy\/名前）/);
+  assert.match(renderMapSection(p, 'prefabs/enemy/enemy_wave', {}, 100), /^enemy_wave_b\/ 30個: enemy_wave_b_0〜enemy_wave_b_29$/m);
+  assert.match(renderMapSection(p, 'prefabs/enemy/enemy_wave/enemy_wave_b', {}, 100), /^@enemy_wave_b_29 /m);
+  assert.match(renderMapSection(p, 'prefabs/enemy_wave_a', {}, 100), /^@enemy_wave_a_0 /m, '途中を省いても引ける');
+  assert.equal(renderMapSection(p, 'prefabs/bullet_kind3', {}, 100).split('\n')[1].slice(0, 14), '@bullet_kind3 ');
+  assert.equal(indexDepth(p, {}, 100), 3);
+  // 引いたまとめは最近の作業の場所に（次に地図から直接行ける）
+  await cmdMap(dir, 'prefabs/enemy');
+  assert.deepEqual(Object.keys((await readRecent(dir)).places), ['map:prefabs/enemy']);
+  await rm(dir, { recursive: true, force: true });
+});
+
 test('最近の作業の場所: 見る・変えるで覚え、目次の地図に上位を出し、ages find の並びに使う。操作の回数で古いものを忘れる', async () => {
   const { cmdFind, cmdGet, cmdMap, cmdPatch } = await import('../src/cli/ages.ts');
-  const { readRecent, placeOf, RECENT_WINDOW, noteRecent } = await import('../src/project/recent.ts');
+  const { readRecent, placeOf, RECENT_WINDOW, RECENT_KEEP, noteRecent, recentFor, topRecent } = await import('../src/project/recent.ts');
   const { renderMap } = await import('../src/project/map.ts');
   const { Project } = await import('../src/project/project.ts');
   const dir = await shooter();
@@ -158,7 +198,16 @@ test('最近の作業の場所: 見る・変えるで覚え、目次の地図に
   assert.match(found.split('\n')[1], /^Health\.hp |^部品 Health/);
   // 操作の回数で古いものを忘れる
   for (let i = 0; i < RECENT_WINDOW; i++) await noteRecent(dir, i === RECENT_WINDOW - 1 ? ['x'] : []);
-  assert.deepEqual(Object.keys((await readRecent(dir)).places), ['x']);
+  const old = await readRecent(dir);
+  assert.deepEqual(topRecent(old).map((r) => r.place), ['x'], '地図と ages find では直近の分だけ');
+  assert.ok(old.places['@enemy.Health'], '覚えておくのはもっと長い（入れ子の深い目次で使う）');
+  assert.deepEqual(topRecent(old, 10, recentFor(3).window).map((r) => r.place), ['@enemy.Health', 'x']);
+  for (let i = 0; i < RECENT_KEEP; i++) await noteRecent(dir, i === RECENT_KEEP - 1 ? ['y'] : []);
+  assert.deepEqual(Object.keys((await readRecent(dir)).places), ['y']);
+  // 入れ子が深いほど多く・長く見せる（深さ1までは今までどおり）
+  assert.deepEqual(recentFor(1), { show: 10, window: 50 });
+  assert.deepEqual(recentFor(3), { show: 20, window: 150 });
+  assert.deepEqual(recentFor(9), { show: 30, window: 200 });
   await rm(dir, { recursive: true, force: true });
 });
 
