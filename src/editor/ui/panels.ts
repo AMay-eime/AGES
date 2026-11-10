@@ -5,10 +5,22 @@ import type { Layout, Panel } from './layout.ts';
 import { PREFAB_MIME, importFiles } from './assets.ts';
 import { kindOf } from '../../core/assets.ts';
 import { menuItemsFor } from '../extensions.ts';
+import type { EntityData } from '../../core/docs.ts';
+import { uiParents } from '../tree.ts';
 
 // ---------- 階層 ----------
+const ENTITY_MIME = 'application/x-ages-entity';
+
 export function hierarchyPanel(app: App): Panel {
   const el = h('div', {});
+  // 開いている親（シーン#ID）。はじめは畳む。選んだ物の親は開く
+  const open = new Set<string>();
+  const revealSelected = () => {
+    const sel = app.sel;
+    if (!app.state || app.state.error || sel?.kind !== 'scene') return;
+    const { parent } = uiParents(app.state.scenes[sel.scene]?.entities ?? [], app.state.prefabs);
+    for (let p = parent.get(sel.id), n = 0; p && n < 64; p = parent.get(p), n++) open.add(`${sel.scene}#${p}`);
+  };
   const render = () => {
     if (!app.state || app.state.error) return clear(el);
     const s = app.state;
@@ -54,28 +66,93 @@ export function hierarchyPanel(app: App): Panel {
       app.patch([{ op: 'removeEntity', scene: sel.scene, id: sel.id }], 'hierarchy');
       app.select(null);
     };
+    // シーンの物を UI の親子（UI.parent）で木に並べる。兄弟はシーンの順。UI でない物と親のない UI は一番上
+    const entityRows = () => {
+      const ents = scene?.entities ?? [];
+      const { parent, hasUI } = uiParents(ents, s.prefabs);
+      const kids = new Map<string, EntityData[]>();
+      const roots: EntityData[] = [];
+      for (const e of ents) {
+        const p = parent.get(e.id);
+        if (p) { if (!kids.has(p)) kids.set(p, []); kids.get(p)!.push(e); } else roots.push(e);
+      }
+      const count = (id: string): number => (kids.get(id) ?? []).reduce((n, k) => n + 1 + (seen.has(k.id) ? 0 : count(k.id)), 0);
+      const seen = new Set<string>();
+      const out: HTMLElement[] = [];
+      const ancestorsOf = (id: string) => { const a = new Set<string>(); for (let p = parent.get(id); p && !a.has(p); p = parent.get(p)) a.add(p); return a; };
+      const reparent = async (child: string, to: string | null) => {
+        if (child === to) return;
+        if (!hasUI.has(child) || (to && !hasUI.has(to))) { toast('親子にできるのは UI の物どうしだけ（UI.parent）', 'warn'); return; }
+        if (to && ancestorsOf(to).has(child)) { toast(`${to} は ${child} の中にあるので、親にできない`, 'warn'); return; }
+        if ((parent.get(child) ?? null) === to) return;
+        if (to) open.add(`${app.scene}#${to}`);
+        await app.patch([{ op: 'set', path: `${app.scene}#${child}.UI.parent`, value: to }], 'hierarchy');
+      };
+      const dropOn = (target: string | null) => ({
+        ondragover: (ev: DragEvent) => { if (ev.dataTransfer?.types.includes(ENTITY_MIME)) { ev.preventDefault(); (ev.currentTarget as HTMLElement).classList.add('drop'); } },
+        ondragleave: (ev: DragEvent) => (ev.currentTarget as HTMLElement).classList.remove('drop'),
+        ondrop: (ev: DragEvent) => {
+          (ev.currentTarget as HTMLElement).classList.remove('drop');
+          const id = ev.dataTransfer?.getData(ENTITY_MIME);
+          if (!id) return;
+          ev.preventDefault(); ev.stopPropagation();
+          void reparent(id, target);
+        },
+      });
+      const row = (e: EntityData, depth: number) => {
+        if (seen.has(e.id)) return;
+        seen.add(e.id);
+        const key = `${app.scene}#${e.id}`;
+        const children = kids.get(e.id) ?? [];
+        const isOpen = open.has(key);
+        const n = lockCount(key);
+        const toggle = (ev: MouseEvent) => {
+          ev.stopPropagation();
+          // Alt+クリックで中も全部
+          const all = ev.altKey ? [e.id, ...[...ents].filter((x) => ancestorsOf(x.id).has(e.id)).map((x) => x.id)] : [e.id];
+          for (const id of all) { const k = `${app.scene}#${id}`; if (isOpen) open.delete(k); else open.add(k); }
+          render();
+        };
+        out.push(h('div', {
+          class: `item ${sel?.kind === 'scene' && sel.id === e.id ? 'sel' : app.extra.includes(e.id) ? 'sel2' : ''}`,
+          style: `padding-left:${4 + depth * 14}px`,
+          title: 'Shift・Ctrl+クリックで足す・外す。右クリックで複製・削除・プレハブにする。UI の物は、ほかの UI の上へ運ぶとその子に（一番上の行へ運ぶと親なし。位置は親の四角の中になる。Ctrl+Z で戻せる）',
+          onclick: (ev: MouseEvent) => app.select({ kind: 'scene', scene: app.scene, id: e.id }, { add: ev.shiftKey || ev.ctrlKey || ev.metaKey }),
+          oncontextmenu: (ev: MouseEvent) => {
+            ev.preventDefault();
+            if (app.play) return;
+            if (!app.selectedIds().includes(e.id)) app.select({ kind: 'scene', scene: app.scene, id: e.id });
+            const items = menuItemsFor(app, 'entity', app.selectedIds().map((id) => `${app.scene}#${id}`));
+            if (items.length) menu(ev.clientX, ev.clientY, items);
+          },
+          draggable: !app.play && hasUI.has(e.id),
+          ondragstart: (ev: DragEvent) => { ev.dataTransfer!.setData(ENTITY_MIME, e.id); ev.dataTransfer!.effectAllowed = 'move'; },
+          ...(app.play || !hasUI.has(e.id) ? {} : dropOn(e.id)),
+        },
+        h('span', { class: 'tw', title: children.length ? '開く・畳む（Alt+クリックで中も全部）' : '', onclick: children.length ? toggle : null }, children.length ? (isOpen ? '▾' : '▸') : ''),
+        e.name, h('span', { class: 'muted' }, e.id),
+        children.length > 0 && !isOpen ? h('span', { class: 'muted', title: '中にある物の数' }, `(${count(e.id)})`) : null,
+        e.prefab ? h('span', { class: 'muted', title: `プレハブ @${e.prefab} のインスタンス（つながっている）` }, '←@' + e.prefab) : null,
+        n ? h('span', { style: 'color:var(--lock)', title: `ロック ${n}件` }, '🔒' + n) : null));
+        if (isOpen) for (const c of children) row(c, depth + 1);
+      };
+      for (const e of roots) row(e, 0);
+      // 親子が輪になっている物（一番上からたどれない）も出す。畳んで見えていない物とは分ける
+      const reach = new Set<string>();
+      const walk = (id: string) => { if (reach.has(id)) return; reach.add(id); for (const k of kids.get(id) ?? []) walk(k.id); };
+      for (const e of roots) walk(e.id);
+      for (const e of ents) if (!reach.has(e.id) && !seen.has(e.id)) { out.push(h('div', { class: 'muted', style: 'padding:2px 8px' }, `⚠ ${e.id} の UI.parent が輪になっている`)); walk(e.id); row(e, 0); }
+      return { rows: out, drop: dropOn(null) };
+    };
+    const tree = entityRows();
     clear(el,
       s.issues.length ? h('div', { class: 'issues' }, s.issues.map((i) => h('div', {}, '⚠ ' + i))) : null,
       h('div', { class: 'toolbar' }, sceneSel, h('button', { class: 'icon', title: 'シーンを作る・複製・名前・説明・開始・消す', onclick: sceneMenu, disabled: !!app.play }, '⚙'), h('span', { style: 'flex:1' }),
         h('button', { title: 'エンティティを追加', onclick: addEntity, disabled: !!app.play }, '＋'),
         h('button', { title: '選択中のエンティティを削除', onclick: remove, disabled: !!app.play || sel?.kind !== 'scene' }, '−')),
       h('div', { class: 'list' },
-        h('div', { class: 'folder', title: scene?.desc ?? '' }, `${app.scene}（${scene?.entities.length ?? 0}）${app.play && app.play.game.sceneName === app.scene && app.play.from !== app.scene ? ' ▶実行中' : ''}`),
-        (scene?.entities ?? []).map((e) => {
-          const n = lockCount(`${app.scene}#${e.id}`);
-          return h('div', {
-            class: `item ${sel?.kind === 'scene' && sel.id === e.id ? 'sel' : app.extra.includes(e.id) ? 'sel2' : ''}`,
-            title: 'Shift・Ctrl+クリックで足す・外す。右クリックで複製・削除・プレハブにする',
-            onclick: (ev: MouseEvent) => app.select({ kind: 'scene', scene: app.scene, id: e.id }, { add: ev.shiftKey || ev.ctrlKey || ev.metaKey }),
-            oncontextmenu: (ev: MouseEvent) => {
-              ev.preventDefault();
-              if (app.play) return;
-              if (!app.selectedIds().includes(e.id)) app.select({ kind: 'scene', scene: app.scene, id: e.id });
-              const items = menuItemsFor(app, 'entity', app.selectedIds().map((id) => `${app.scene}#${id}`));
-              if (items.length) menu(ev.clientX, ev.clientY, items);
-            },
-          }, e.name, h('span', { class: 'muted' }, e.id), e.prefab ? h('span', { class: 'muted', title: `プレハブ @${e.prefab} のインスタンス（つながっている）` }, '←@' + e.prefab) : null, n ? h('span', { style: 'color:var(--lock)', title: `ロック ${n}件` }, '🔒' + n) : null);
-        }),
+        h('div', { class: 'folder', title: (scene?.desc ? scene.desc + '\n' : '') + 'UI の物をここへ運ぶと親なしに', ...(app.play ? {} : tree.drop) }, `${app.scene}（${scene?.entities.length ?? 0}）${app.play && app.play.game.sceneName === app.scene && app.play.from !== app.scene ? ' ▶実行中' : ''}`),
+        tree.rows,
         h('div', { class: 'folder' }, `プレハブ（${Object.keys(s.prefabs).length}）`),
         Object.values(s.prefabs).map((p) => {
           const n = lockCount(`@${p.name}`);
@@ -107,7 +184,7 @@ export function hierarchyPanel(app: App): Panel {
     );
   };
   app.on('change', render);
-  app.on('select', render);
+  app.on('select', () => { revealSelected(); render(); });
   app.on('play', render);
   return { id: 'hierarchy', title: '階層', el, render };
 }
