@@ -3,6 +3,7 @@
 import { engineCommitFull, engineVersion, formatVersion, migrations, recordVersion, versionNote } from '../project/version.ts';
 import { readFile, writeFile, readdir, mkdir, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join, resolve, relative, basename, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Project } from '../project/project.ts';
@@ -55,7 +56,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   undo   <dir> [--tx id] [--force]   自分（AI）の直前の編集を元に戻す（その後で変えられた所があれば止まる）。redo <dir> でやり直す
   check  <dir>                       全データの検証とロックの検査
   version <dir> [--record]           AGES の版（記録が古ければ直し方を出す）。--record で今の版を残す
-  pin    <dir> [--repo URL] [--commit SHA]  版だけ同梱の形に（ages.mjs が本体を .ages/engine に取ってくる。GitHub との連携用）
+  pin    <dir> [--repo URL] [--commit SHA] [--force]  版だけ同梱の形に（ages.mjs が本体を .ages/engine に取ってくる。GitHub との連携用）。AGENTS.md は手で直されていなければ本体の版に合わせる（--force で直されていても）
   ui     <dir> [シーン]               UI の配置（四角・置き方）と、重なり・はみ出し。直すのは patch の dockUI / attachUI
   assets <dir> [フォルダ] [--kind image|sound|font] [--unused] [--refs 場所]   アセットの一覧（使っている所の数）・使っている所
   sheet  <dir> <画像>                 画像の切り方（コマの名前・位置・基準点・動き）を見る
@@ -145,6 +146,9 @@ function enginePathFrom(target: string): string {
   return ups >= target.split(sep).filter(Boolean).length ? ENGINE_DIR.replace(/[\\/]$/, '').split(sep).join('/') : rel;
 }
 
+/** 写した手順書の印（手で直されたかを見分ける。ages.project.json の engineSource.agents） */
+const textMark = (s: string): string => createHash('sha256').update(s.replace(/\r\n/g, '\n')).digest('hex').slice(0, 12);
+
 /** プロジェクトに写す AGES の手順書（本体の場所と ages の呼び方を書きかえる） */
 async function projectAgents(engine: string, howToRun: string): Promise<string> {
   return (await readFile(join(ENGINE_DIR, 'AGENTS.md'), 'utf8'))
@@ -162,7 +166,7 @@ const DEFAULT_REPO = 'https://github.com/AMay-eime/AGES.git';
  * 本体は ages.mjs が .ages/engine（git の対象外）に取ってくる。使用者側の AI が本体を書き換えても push されない。
  * 版は今動いている本体のコミット（GitHub にあること）。上げるのは ages.mjs upgrade
  */
-export async function cmdPin(dir: string, repo = DEFAULT_REPO, commit?: string): Promise<string> {
+export async function cmdPin(dir: string, repo = DEFAULT_REPO, commit?: string, force = false): Promise<string> {
   const p = await Project.load(dir);
   const sha = commit ?? engineCommitFull();
   if (!sha || !/^[0-9a-f]{40}$/.test(sha)) throw new Error('本体のコミットが分かりません（git で取った AGES から動かすか、--commit に40文字のコミットを渡す）');
@@ -171,7 +175,13 @@ export async function cmdPin(dir: string, repo = DEFAULT_REPO, commit?: string):
   done.push('ages.mjs（起動用。本体を .ages/engine に取ってきて動かす）');
   const cfgFile = join(p.dir, 'ages.project.json');
   const cfg = JSON.parse(await readFile(cfgFile, 'utf8')) as Record<string, unknown>;
-  cfg.engineSource = { repo, commit: sha };
+  // AGENTS.md は本体の手順の写し。手で直されていなければ（前に書いたときの印と同じなら）新しい版のものに合わせる
+  const agentsFile = join(p.dir, 'AGENTS.md');
+  const agents = await projectAgents(PINNED_ENGINE, `\`ages\` は \`node ages.mjs\`（例 \`node ages.mjs check .\`。AGES 本体は ${PINNED_ENGINE} に自動で取ってくる。**本体は書き換えない**。ages.mjs と .ages/ は起動の仕組みなので読まなくてよい。足りない所は書き出して使用者に伝える）。`);
+  const before = existsSync(agentsFile) ? await readFile(agentsFile, 'utf8') : null;
+  const mark = (cfg.engineSource as { agents?: string } | undefined)?.agents;
+  const edited = before !== null && before !== agents && mark !== undefined && mark !== textMark(before);
+  cfg.engineSource = { repo, commit: sha, agents: edited && !force ? mark : textMark(agents) };
   await writeFile(cfgFile, JSON.stringify(cfg, null, 2) + '\n');
   done.push(`ages.project.json の engineSource（${sha.slice(0, 7)}）`);
   const ignore = join(p.dir, '.gitignore');
@@ -180,8 +190,8 @@ export async function cmdPin(dir: string, repo = DEFAULT_REPO, commit?: string):
     await writeFile(ignore, gi + (gi && !gi.endsWith('\n') ? '\n' : '') + `# AGES 本体（ages.mjs が engineSource の版を取ってくる。共有しない）\n${PINNED_ENGINE}/\n`);
     done.push('.gitignore');
   }
-  await writeFile(join(p.dir, 'AGENTS.md'), await projectAgents(PINNED_ENGINE, `\`ages\` は \`node ages.mjs\`（例 \`node ages.mjs check .\`。AGES 本体は ${PINNED_ENGINE} に自動で取ってくる。**本体は書き換えない**。足りない所は書き出して使用者に伝える）。`));
-  done.push('AGENTS.md');
+  if (edited && !force) done.push(`AGENTS.md は手で直されているので、そのままにした（本体の新しい手順は ${PINNED_ENGINE}/AGENTS.md。直した所を移してから ages pin <dir> --force で合わせる）`);
+  else if (before !== agents) { await writeFile(agentsFile, agents); done.push('AGENTS.md（本体のこの版の手順）'); }
   await writeFile(join(p.dir, '.mcp.json'), JSON.stringify({ mcpServers: { ages: { command: 'node', args: ['ages.mjs', 'mcp'] } } }, null, 2) + '\n');
   done.push('.mcp.json');
   // 型の確かめ（tsconfig）の本体の場所も
@@ -694,6 +704,12 @@ export async function cmdVersion(dir: string, record: boolean): Promise<string> 
   }
   const rec = p.config.engine;
   const lines = [`本体: AGES ${formatVersion(cur)}`, `プロジェクト: ${rec ? `AGES ${formatVersion(rec)}${rec.recorded ? `（${rec.recorded} に記録）` : ''}` : '記録なし（--record で今の版を残す）'}`];
+  // 版だけ同梱で、起動用が前の版のもの（upgrade を前の起動用で行った）なら、当て直し方を出す（起動用と AGENTS.md を今の版に）
+  const pinned = (JSON.parse(await readFile(join(p.dir, 'ages.project.json'), 'utf8')) as { engineSource?: { repo?: string; commit?: string } }).engineSource;
+  const launcher = existsSync(join(p.dir, 'ages.mjs')) ? await readFile(join(p.dir, 'ages.mjs'), 'utf8') : null;
+  if (pinned?.commit && launcher !== null && launcher !== await readFile(join(ENGINE_DIR, 'templates', 'launcher', 'ages.mjs'), 'utf8')) {
+    lines.push(`起動用の ages.mjs がこの版のものと違う。合わせる（AGENTS.md も、手で直されていなければ合わせる）: node ${PINNED_ENGINE}/bin/ages.js pin . --repo ${pinned.repo ?? DEFAULT_REPO} --commit ${pinned.commit}`);
+  }
   if (typeof rec?.compat === 'number' && rec.compat < cur.compat) {
     lines.push('', `直すこと（互換${rec.compat} → ${cur.compat}。上から順に。終わって確かめたら --record）:`);
     for (const m of migrations().filter((m) => m.n > rec.compat && m.n <= cur.compat)) lines.push('', `## ${m.n}. ${m.title}`, m.body);
@@ -833,7 +849,7 @@ async function main(argv: string[]): Promise<void> {
     case 'log': out = await cmdLog(dir, a.flags); break;
     case 'check': out = await cmdCheck(dir); break;
     case 'version': out = await cmdVersion(dir, a.flags.record === true); break;
-    case 'pin': out = await cmdPin(dir, typeof a.flags.repo === 'string' ? a.flags.repo : undefined, typeof a.flags.commit === 'string' ? a.flags.commit : undefined); break;
+    case 'pin': out = await cmdPin(dir, typeof a.flags.repo === 'string' ? a.flags.repo : undefined, typeof a.flags.commit === 'string' ? a.flags.commit : undefined, a.flags.force === true); break;
     case 'assets': out = await cmdAssets(dir, a.pos[1], a.flags); break;
     case 'ui': out = await cmdUi(dir, a.pos[1]); break;
     case 'undo': out = await cmdUndo(dir, a.flags); break;

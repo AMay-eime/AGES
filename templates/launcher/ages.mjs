@@ -60,11 +60,14 @@ const [cmd, ...rest] = process.argv.slice(2);
 if (cmd === 'upgrade') {
   const sha = fetchEngine(rest[0] ?? 'main');
   if (sha === src.commit) { say(`AGES 本体はもう最新です（${sha.slice(0, 7)}）`); process.exit(0); }
-  cfg.engineSource = { repo, commit: sha };
-  writeFileSync(cfgFile, JSON.stringify(cfg, null, 2) + '\n');
-  say(`AGES 本体を ${String(src.commit ?? '?').slice(0, 7)} → ${sha.slice(0, 7)} に上げました（ages.project.json の engineSource）`);
-  const r = spawnSync(process.execPath, [join(engine, 'bin', 'ages.js'), 'version', here], { stdio: 'inherit' });
-  process.exit(r.status ?? 1);
+  say(`AGES 本体を ${String(src.commit ?? '?').slice(0, 7)} → ${sha.slice(0, 7)} に上げます`);
+  // 新しい本体で版だけ同梱の形を当て直す（engineSource・この起動用・AGENTS.md（手で直されていなければ）・.mcp.json）。直しが要れば手順を出す
+  const ages = (...a) => spawnSync(process.execPath, [join(engine, 'bin', 'ages.js'), ...a], { stdio: 'inherit' }).status ?? 1;
+  if (ages('pin', here, '--repo', repo, '--commit', sha)) {
+    cfg.engineSource = { ...src, repo, commit: sha };
+    writeFileSync(cfgFile, JSON.stringify(cfg, null, 2) + '\n');
+  }
+  process.exit(ages('version', here));
 }
 ensureEngine();
 const args = cmd === 'editor' ? [join(engine, 'src', 'editor', 'server.ts'), here, ...rest]

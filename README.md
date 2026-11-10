@@ -66,10 +66,10 @@ node /path/to/AGES/bin/ages.js pin my-game     # 既存のプロジェクトを�
 cd my-game
 node ages.mjs check .                          # 初回に、決めた版の AGES 本体を .ages/engine に取ってくる（git が要る）
 node ages.mjs editor                           # エディタ
-node ages.mjs upgrade                          # 本体を新しい版に上げる（直しが要れば手順が出る）
+node ages.mjs upgrade                          # 本体を新しい版に上げる（起動用と AGENTS.md も合わせる。直しが要れば手順が出る）
 ```
 
-リポジトリに入るのは起動用の `ages.mjs` と、使う本体の版（`ages.project.json` の `engineSource`）だけ。本体は git の対象外の `.ages/engine` に置くので、AI が本体を書き換えても push されず、次に動かす前に元に戻ります。
+リポジトリに入るのは起動用の `ages.mjs` と、使う本体の版（`ages.project.json` の `engineSource`）だけ。本体は git の対象外の `.ages/engine` に置くので、AI が本体を書き換えても push されず、次に動かす前に元に戻ります。プロジェクトの `AGENTS.md` は本体の手順の写しで、上げるときに新しい版のものに合わせます（手で直していたら、そのまま残して知らせます）。
 
 ## エディタでできること
 
