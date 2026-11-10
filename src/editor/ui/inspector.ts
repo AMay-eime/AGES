@@ -11,11 +11,12 @@ import { findFrame, frameLabel, listFrames, type FrameRef, type SheetDef } from 
 import { EASES, EASE_NAMES, type EaseName } from '../../core/ease.ts';
 import { buttonLabel } from '../../core/input.ts';
 import { captureNext } from '../../input/devices.ts';
-import { ASSET_MIME } from './assets.ts';
+import { ASSET_MIME, assetLabel } from './assets.ts';
 import { kindOf } from '../../core/assets.ts';
 import type { Panel } from './layout.ts';
 import { componentDrawersFor, fieldDrawerFor } from '../extensions.ts';
 import type { EditorApi, FieldView } from '../window-api.ts';
+import { T, TD } from '../i18n.ts';
 
 interface Live { path: string; comp: string; field: string; set(v: unknown): void; el: HTMLElement }
 
@@ -32,8 +33,8 @@ export function inspectorPanel(app: App): Panel {
     cleanups = [];
     live = [];
     const sel = app.sel;
-    if (!app.state || app.state.error || !app.registry) return clear(el, h('div', { class: 'pad muted' }, app.state?.error ?? '読み込み中…'));
-    if (!sel) return clear(el, h('div', { class: 'pad muted' }, '階層・ゲーム画面・プロジェクトから選ぶと、ここに表示されます。'));
+    if (!app.state || app.state.error || !app.registry) return clear(el, h('div', { class: 'pad muted' }, app.state?.error ?? T('読み込み中…')));
+    if (!sel) return clear(el, h('div', { class: 'pad muted' }, T('階層・ゲーム画面・プロジェクトから選ぶと、ここに表示されます。')));
 
     const playing = !!app.play && sel.kind === 'scene';
     const base = sel.kind === 'scene' ? `${sel.scene}#${sel.id}` : `@${sel.name}`;
@@ -59,9 +60,9 @@ export function inspectorPanel(app: App): Panel {
     /** 受け継ぐ元: 派生の元か、インスタンスのプレハブ */
     const variantOf = !playing ? (sel.kind === 'prefab' ? app.state.prefabs[sel.name]?.base : rawEnt?.prefab) : undefined;
     const instance = !!rawEnt?.prefab;
-    const what = instance ? 'インスタンス' : '派生';
+    const what = instance ? T('インスタンス') : T('派生');
     const own = (c: string, f?: string) => !!raw?.components[c] && (f === undefined || f in raw.components[c]);
-    if (!holder) return clear(el, h('div', { class: 'pad muted' }, playing ? `${sel.kind === 'scene' ? sel.id : ''} はもう存在しません` : '見つかりません'));
+    if (!holder) return clear(el, h('div', { class: 'pad muted' }, playing ? T('{0} はもう存在しません', sel.kind === 'scene' ? sel.id : '') : T('見つかりません')));
     const savable = sel.kind === 'prefab' || !!app.state.scenes[sel.scene]?.entities.some((e) => e.id === sel.id);
 
     const nameInput = h('input', {
@@ -77,18 +78,18 @@ export function inspectorPanel(app: App): Panel {
     const lockedHere = Object.keys(app.state.locks).filter((k) => k.startsWith(base + '.')).length;
     const head = h('div', { class: 'pad', style: 'border-bottom:1px solid var(--line)' },
       h('div', { class: 'row' }, nameInput,
-        h('label', { class: 'row muted', style: 'gap:4px;white-space:nowrap', title: 'ロックした値を表示しない（人が決め終えた値を画面から外して、残りに集中する）' },
-          h('input', { type: 'checkbox', checked: !app.showLocked, onchange: (e: Event) => setHide((e.target as HTMLInputElement).checked) }), `🔒を隠す${lockedHere ? `（${lockedHere}）` : ''}`)),
+        h('label', { class: 'row muted', style: 'gap:4px;white-space:nowrap', title: T('ロックした値を表示しない（人が決め終えた値を画面から外して、残りに集中する）') },
+          h('input', { type: 'checkbox', checked: !app.showLocked, onchange: (e: Event) => setHide((e.target as HTMLInputElement).checked) }), T('🔒を隠す{0}', lockedHere ? T('（{0}）', lockedHere) : ''))),
       h('div', { class: 'muted', style: 'margin-top:4px;font:var(--mono)' }, base, holder.tags?.length ? `  tags:${holder.tags.join(',')}` : '',
-        playing ? '  ▶ 実行中（変更は停止時に保存するか選べます）' : ''),
+        playing ? T('  ▶ 実行中（変更は停止時に保存するか選べます）') : ''),
       sel.kind === 'prefab' && !playing ? prefabBar(app, sel.name, app.state.prefabs[sel.name]) : null,
       rawEnt && !playing ? instanceBar(app, base, rawEnt) : null,
-      app.extra.length ? h('div', { class: 'muted', style: 'margin-top:4px' }, `ほか ${app.extra.length}体も選んでいます（${app.extra.slice(0, 4).join(', ')}${app.extra.length > 4 ? ' …' : ''}）。ここで変えるのはこの物だけ。動かす・複製・削除はまとめて`) : null);
+      app.extra.length ? h('div', { class: 'muted', style: 'margin-top:4px' }, T('ほか {0}体も選んでいます（{1}{2}）。ここで変えるのはこの物だけ。動かす・複製・削除はまとめて', app.extra.length, app.extra.slice(0, 4).join(', '), app.extra.length > 4 ? ' …' : '')) : null);
 
     let hiddenCount = 0;
     const comps = Object.entries(holder.components).map(([cname, values]) => {
       const def = app.registry.components.get(cname);
-      if (!def) return h('div', { class: 'comp' }, h('div', { class: 'head' }, cname, h('span', { class: 'desc', style: 'color:var(--bad)' }, '未定義のコンポーネント')));
+      if (!def) return h('div', { class: 'comp' }, h('div', { class: 'head' }, cname, h('span', { class: 'desc', style: 'color:var(--bad)' }, T('未定義のコンポーネント'))));
       const entries = Object.entries(def.fields);
       // 部品の見せ方（拡張）: 欄の上に中身を足す。hide の欄は出さない
       const cds = componentDrawersFor(app, cname);
@@ -100,7 +101,7 @@ export function inspectorPanel(app: App): Panel {
           target: base, component: cname, values: filled, playing, editable: !playing && savable, holder: holder!.components,
           locked: (field: string) => !!app.state.locks[`${base}.${cname}.${field}`],
           set: (field: string, v: unknown) => {
-            if (app.state.locks[`${base}.${cname}.${field}`]) { toast(`🔒 ${base}.${cname}.${field} はロックされています`, 'lock'); return; }
+            if (app.state.locks[`${base}.${cname}.${field}`]) { toast(T('🔒 {0}.{1}.{2} はロックされています', base, cname, field), 'lock'); return; }
             if (playing || !savable) return;
             x.api.patch([{ op: 'set', path: `${base}.${cname}.${field}`, value: v }]);
           },
@@ -145,7 +146,7 @@ export function inspectorPanel(app: App): Panel {
         const pf = f.type === 'params' ? app.registry.shaderParams(values[f.of]) : null;
         const standard = () => f.type === 'matrix'
           ? matrixWidget(app, path, value, f.cell ?? 'number')
-          : f.type === 'params' ? { el: pf ? nestedWidget(app, pf, value, path, [], nestedEmit, wctx) : h('span', { class: 'muted' }, values[f.of] ? `シェーダー ${values[f.of]} が見つかりません` : `${f.of} でシェーダーを選ぶと、ここに値が並びます`), set: () => {} }
+          : f.type === 'params' ? { el: pf ? nestedWidget(app, pf, value, path, [], nestedEmit, wctx) : h('span', { class: 'muted' }, values[f.of] ? T('シェーダー {0} が見つかりません', values[f.of]) : T('{0} でシェーダーを選ぶと、ここに値が並びます', f.of)), set: () => {} }
           : isNested(f) ? { el: nestedWidget(app, f, value, path, [], nestedEmit, wctx), set: () => {} }
           : widget(app, f, value, commit, wctx);
         // 欄の見せ方（拡張）があれば、それで作る
@@ -155,27 +156,27 @@ export function inspectorPanel(app: App): Panel {
         if (lock) { w.el.setAttribute('inert', ''); w.el.classList.add('locked-value'); }
         const lockBtn = h('button', {
           class: `icon lockbtn ${lock ? 'on' : ''}`,
-          title: lock ? `🔒 ロック中（${lock.who} ${time(lock.t)}）${lock.note ? '\n' + lock.note : ''}\nAI もエディタも変えられません。クリックでロックマネージャーを開く（外す・値を変える）` : 'ロックする（AI もエディタも変えられなくなります。外すのはロックマネージャーで）',
+          title: lock ? T('🔒 ロック中（{0} {1}）{2}\nAI もエディタも変えられません。クリックでロックマネージャーを開く（外す・値を変える）', lock.who, time(lock.t), lock.note ? '\n' + lock.note : '') : T('ロックする（AI もエディタも変えられなくなります。外すのはロックマネージャーで）'),
           disabled: !savable || (playing && !lock),
           onclick: () => (lock ? app.openLocks(path) : app.lock([path])),
         }, lock ? '🔒' : '🔓');
         // 派生・インスタンスで元（プレハブ）から変えた値は印を付け、元の値に戻せるようにする
         const over = variantOf && own(cname, fname) && !!app.state.prefabs[variantOf] ? true : false;
-        const revert = over && !lock ? h('button', { class: 'icon tiny', title: `元（@${variantOf}）の値に戻す`, onclick: () => app.patch([{ op: 'revert', path }]) }, '↺') : null;
+        const revert = over && !lock ? h('button', { class: 'icon tiny', title: T('元（@{0}）の値に戻す', variantOf), onclick: () => app.patch([{ op: 'revert', path }]) }, '↺') : null;
         const row = h('div', {
           class: `field ${isWide(f) ? 'wide' : ''} ${has ? '' : 'default'} ${touched ? 'touched' : ''} ${lock ? 'locked' : ''} ${over ? 'override' : ''}`,
-        }, h('label', { title: `${fname}: ${brief(f)}${f.desc ? '\n' + f.desc : ''}${touched ? `\n★ ${touched.who} が ${time(touched.t)} に調整` : ''}${variantOf ? (over ? `\n${what}で変えた値（元 @${variantOf} から）` : `\n元 @${variantOf} から受け継いだ値`) : has ? '' : '\n（省略中: 既定値）'}` }, revert, fname), w.el, lockBtn);
+        }, h('label', { title: T('{0}: {1}{2}{3}{4}', fname, brief(f), f.desc ? '\n' + TD(f.desc) : '', touched ? T('\n★ {0} が {1} に調整', touched.who, time(touched.t)) : '', variantOf ? (over ? T('\n{0}で変えた値（元 @{1} から）', what, variantOf) : T('\n元 @{0} から受け継いだ値', variantOf)) : has ? '' : T('\n（省略中: 既定値）')) }, revert, fname), w.el, lockBtn);
         live.push({ path, comp: cname, field: fname, set: w.set, el: row });
         return row;
       });
       const allLocked = entries.length > 0 && visible.length === 0;
       const inheritedComp = variantOf && !!resolvedBase(app, variantOf)?.components[cname];
       return h('div', { class: 'comp' },
-        h('div', { class: 'head' }, cname, h('span', { class: 'desc', title: def.desc }, allLocked ? '（すべて🔒）' : variantOf && !inheritedComp ? `（${what}で足した部品）${def.desc}` : def.desc),
-          inheritedComp && own(cname) && !playing ? h('button', { class: 'icon', title: `${cname} の値をすべて元（@${variantOf}）に戻す`, onclick: () => app.patch([{ op: 'revert', path: `${base}.${cname}` }]) }, '↺') : null,
-          cname === 'Sound' ? h('button', { class: 'icon', title: '今の設定で試しに鳴らす', onclick: () => app.previewSound(holder!.components.Sound as never) }, '▶') : null,
-          !playing && savable && !entries.every(([fname]) => app.state.locks[`${base}.${cname}.${fname}`]) ? h('button', { class: 'icon', title: `${cname} の値をまとめてロックする（外すのはロックマネージャーで）`, onclick: () => app.lock(entries.map(([fname]) => `${base}.${cname}.${fname}`).filter((p2) => !app.state.locks[p2])) }, '🔓') : null,
-          !playing && h('button', { class: 'icon', title: `${cname} を外す`, onclick: () => app.patch([{ op: 'removeComponent', target: base, component: cname }]) }, '×')),
+        h('div', { class: 'head' }, cname, h('span', { class: 'desc', title: TD(def.desc) }, allLocked ? T('（すべて🔒）') : variantOf && !inheritedComp ? T('（{0}で足した部品）{1}', what, TD(def.desc)) : TD(def.desc)),
+          inheritedComp && own(cname) && !playing ? h('button', { class: 'icon', title: T('{0} の値をすべて元（@{1}）に戻す', cname, variantOf), onclick: () => app.patch([{ op: 'revert', path: `${base}.${cname}` }]) }, '↺') : null,
+          cname === 'Sound' ? h('button', { class: 'icon', title: T('今の設定で試しに鳴らす'), onclick: () => app.previewSound(holder!.components.Sound as never) }, '▶') : null,
+          !playing && savable && !entries.every(([fname]) => app.state.locks[`${base}.${cname}.${fname}`]) ? h('button', { class: 'icon', title: T('{0} の値をまとめてロックする（外すのはロックマネージャーで）', cname), onclick: () => app.lock(entries.map(([fname]) => `${base}.${cname}.${fname}`).filter((p2) => !app.state.locks[p2])) }, '🔓') : null,
+          !playing && h('button', { class: 'icon', title: T('{0} を外す', cname), onclick: () => app.patch([{ op: 'removeComponent', target: base, component: cname }]) }, '×')),
         sections, rows);
     });
 
@@ -186,15 +187,15 @@ export function inspectorPanel(app: App): Panel {
           const v = (e.target as HTMLSelectElement).value;
           if (v) app.patch([{ op: 'addComponent', target: base, component: v }]);
         },
-      }, h('option', { value: '' }, '＋ コンポーネントを追加…'), missing.map((n) => h('option', { value: n }, `${n} — ${app.registry.components.get(n)!.desc}`))))
+      }, h('option', { value: '' }, T('＋ コンポーネントを追加…')), missing.map((n) => h('option', { value: n }, `${n} — ${TD(app.registry.components.get(n)!.desc)}`))))
       : null;
 
     // 派生・インスタンスで外した、元の部品（戻せる）
     const removed = variantOf && raw?.remove?.length
-      ? h('div', { class: 'pad muted' }, '元から外した部品: ', raw.remove.map((c) => h('button', { class: 'tiny', title: `${c} を元（@${variantOf}）から受け継ぐように戻す`, onclick: () => app.patch([{ op: 'revert', path: `${base}.${c}` }]) }, `↺ ${c}`)))
+      ? h('div', { class: 'pad muted' }, T('元から外した部品: '), raw.remove.map((c) => h('button', { class: 'tiny', title: T('{0} を元（@{1}）から受け継ぐように戻す', c, variantOf), onclick: () => app.patch([{ op: 'revert', path: `${base}.${c}` }]) }, `↺ ${c}`)))
       : null;
     const note = hiddenCount
-      ? h('div', { class: 'pad muted', style: 'font-size:12px;cursor:pointer', onclick: () => setHide(false) }, `🔒 ロック中の ${hiddenCount} 項目を隠しています（クリックで表示）`)
+      ? h('div', { class: 'pad muted', style: 'font-size:12px;cursor:pointer', onclick: () => setHide(false) }, T('🔒 ロック中の {0} 項目を隠しています（クリックで表示）', hiddenCount))
       : null;
     clear(el, head, note, comps, removed, add);
   };
@@ -217,7 +218,7 @@ export function inspectorPanel(app: App): Panel {
   app.on('settings', render);
   app.on('play', render);
   app.on('extensions', render);
-  return { id: 'inspector', title: 'インスペクタ', el, render };
+  return { id: 'inspector', title: T('インスペクタ'), el, render };
 }
 
 /** 派生の元を、元と重ねた形で（見つからなければ undefined） */
@@ -232,18 +233,18 @@ function prefabBar(app: App, name: string, raw: PrefabDoc): HTMLElement {
     const go = () => { const v = input.value.trim(); close(); if (v) app.patch([{ op: 'addPrefab', name: v, base: name }]).then((r) => { if (r) app.select({ kind: 'prefab', name: v }); }); };
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
     setTimeout(() => { input.focus(); input.select(); }, 0);
-    return h('div', {}, h('h3', {}, `@${name} の派生を作る`),
+    return h('div', {}, h('h3', {}, T('@{0} の派生を作る', name)),
       h('div', { class: 'row' }, h('span', { class: 'muted' }, '@'), input),
-      h('p', { class: 'muted' }, '元の値を受け継ぎ、変えた値だけを持つプレハブです。元を変えると、変えていない値は一緒に変わります。'),
-      h('div', { class: 'row', style: 'justify-content:flex-end;gap:6px;margin-top:12px' }, h('button', { onclick: close }, 'やめる'), h('button', { class: 'primary', onclick: go }, '作る')));
+      h('p', { class: 'muted' }, T('元の値を受け継ぎ、変えた値だけを持つプレハブです。元を変えると、変えていない値は一緒に変わります。')),
+      h('div', { class: 'row', style: 'justify-content:flex-end;gap:6px;margin-top:12px' }, h('button', { onclick: close }, T('やめる')), h('button', { class: 'primary', onclick: go }, T('作る'))));
   });
   const kids = Object.values(app.state.prefabs).filter((p) => p.base === name).map((p) => p.name);
   return h('div', { class: 'row', style: 'margin-top:6px;gap:6px;flex-wrap:wrap' },
-    raw.base ? h('span', { class: 'muted' }, '派生の元: ', h('a', { href: '#', style: 'color:var(--accent)', onclick: (e: Event) => { e.preventDefault(); app.select({ kind: 'prefab', name: raw.base! }); } }, '@' + raw.base)) : null,
-    kids.length ? h('span', { class: 'muted' }, `派生: ${kids.map((k) => '@' + k).join(' ')}`) : null,
+    raw.base ? h('span', { class: 'muted' }, T('派生の元: '), h('a', { href: '#', style: 'color:var(--accent)', onclick: (e: Event) => { e.preventDefault(); app.select({ kind: 'prefab', name: raw.base! }); } }, '@' + raw.base)) : null,
+    kids.length ? h('span', { class: 'muted' }, T('派生: {0}', kids.map((k) => '@' + k).join(' '))) : null,
     h('span', { style: 'flex:1' }),
-    h('button', { class: 'tiny', title: 'このプレハブを元にして、一部だけ変えたプレハブを作る', onclick: derive }, '＋派生を作る'),
-    raw.base ? h('button', { class: 'tiny', title: '元から切り離して、今の値をまるごと持つふつうのプレハブにする（値は変わらない）', onclick: () => app.patch([{ op: 'setPrefab', name, base: null }]) }, '切り離す') : null);
+    h('button', { class: 'tiny', title: T('このプレハブを元にして、一部だけ変えたプレハブを作る'), onclick: derive }, T('＋派生を作る')),
+    raw.base ? h('button', { class: 'tiny', title: T('元から切り離して、今の値をまるごと持つふつうのプレハブにする（値は変わらない）'), onclick: () => app.patch([{ op: 'setPrefab', name, base: null }]) }, T('切り離す')) : null);
 }
 
 /** シーンの物の帯: インスタンスならプレハブへ移る・切り離す。ふつうの物ならプレハブにつなぐ */
@@ -252,16 +253,16 @@ function instanceBar(app: App, target: string, e: EntityData): HTMLElement | nul
     const names = Object.keys(app.state.prefabs);
     if (!names.length) return null;
     const pick = h('select', {
-      class: 'tiny', title: 'プレハブにつなぐ（今の値は変わらない。プレハブと違う値だけが、この物の値として残る）',
+      class: 'tiny', title: T('プレハブにつなぐ（今の値は変わらない。プレハブと違う値だけが、この物の値として残る）'),
       onchange: (ev: Event) => { const v = (ev.target as HTMLSelectElement).value; if (v) app.patch([{ op: 'linkPrefab', target, prefab: v }]); },
-    }, h('option', { value: '' }, 'プレハブにつなぐ…'), names.map((n) => h('option', { value: n }, '@' + n)));
+    }, h('option', { value: '' }, T('プレハブにつなぐ…')), names.map((n) => h('option', { value: n }, '@' + n)));
     return h('div', { class: 'row', style: 'margin-top:6px;gap:6px' }, h('span', { style: 'flex:1' }), pick);
   }
   return h('div', { class: 'row', style: 'margin-top:6px;gap:6px;flex-wrap:wrap' },
-    h('span', { class: 'muted' }, 'プレハブのインスタンス: ', h('a', { href: '#', style: 'color:var(--accent)', onclick: (ev: Event) => { ev.preventDefault(); app.select({ kind: 'prefab', name: e.prefab! }); } }, '@' + e.prefab)),
-    h('span', { class: 'muted', title: 'プレハブを直すと、この物で変えていない値も一緒に変わります' }, '（つながっています）'),
+    h('span', { class: 'muted' }, T('プレハブのインスタンス: '), h('a', { href: '#', style: 'color:var(--accent)', onclick: (ev: Event) => { ev.preventDefault(); app.select({ kind: 'prefab', name: e.prefab! }); } }, '@' + e.prefab)),
+    h('span', { class: 'muted', title: T('プレハブを直すと、この物で変えていない値も一緒に変わります') }, T('（つながっています）')),
     h('span', { style: 'flex:1' }),
-    h('button', { class: 'tiny', title: 'プレハブから切り離して、今の値をまるごと持つふつうの物にする（値は変わらない）', onclick: () => app.patch([{ op: 'linkPrefab', target, prefab: null }]) }, '切り離す'));
+    h('button', { class: 'tiny', title: T('プレハブから切り離して、今の値をまるごと持つふつうの物にする（値は変わらない）'), onclick: () => app.patch([{ op: 'linkPrefab', target, prefab: null }]) }, T('切り離す')));
 }
 
 export interface Ctx {
@@ -292,7 +293,7 @@ export function mountExt(box: HTMLElement, id: string, mount: () => void | (() =
     const c = mount();
     if (typeof c === 'function') cleanups.push(c);
   } catch (e) {
-    box.append(h('span', { style: 'color:var(--bad)', title: (e as Error).stack ?? '' }, `拡張 ${id} のエラー: ${(e as Error).message}`));
+    box.append(h('span', { style: 'color:var(--bad)', title: (e as Error).stack ?? '' }, T('拡張 {0} のエラー: {1}', id, (e as Error).message)));
   }
 }
 
@@ -322,7 +323,7 @@ export function drawnField(app: App, o: { path: string; f: Field; value: unknown
     path: o.path, component: o.ctx.comp, field: o.ctx.field, sub: o.sub, ...(o.sub.length ? { parent: o.parent } : {}), ...(ext.row ? { row: ext.row } : {}),
     def: o.f, value: o.value, isDefault: o.isDefault, locked: !!lock, playing: ext.playing, holder: o.ctx.holder,
     set: (v: unknown, final = true) => {
-      if (lock) { toast(`🔒 ${o.path} はロックされています`, 'lock'); return; }
+      if (lock) { toast(T('🔒 {0} はロックされています', o.path), 'lock'); return; }
       ext.set(o.path, o.sub, v, final, fd.x.api);
     },
     standard: () => { const st = o.standard(); st.style.flex = '1 1 auto'; return st; },
@@ -340,7 +341,7 @@ export function drawnField(app: App, o: { path: string; f: Field; value: unknown
 let inputSeq = 0;
 export function inputWidget(app: App, f: Field, value: unknown, onChange: (v: unknown, final: boolean) => void): HTMLElement {
   const ctx: Ctx = { comp: '', field: '', holder: {} };
-  if (f.type === 'matrix' || f.type === 'params') return h('span', { class: 'muted' }, f.type === 'matrix' ? `行列${matrixSize(value)}（api.input では作れません）` : 'シェーダーの値（api.input では作れません）');
+  if (f.type === 'matrix' || f.type === 'params') return h('span', { class: 'muted' }, f.type === 'matrix' ? T('行列{0}（api.input では作れません）', matrixSize(value)) : T('シェーダーの値（api.input では作れません）'));
   if (!isNested(f)) return widget(app, f, value, onChange, ctx).el;
   const box = h('div', { class: 'ctl', style: 'display:block' });
   const key = `input:${++inputSeq}`;
@@ -401,8 +402,8 @@ export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, 
         : Object.values(app.state.prefabs).filter((p) => !busOnly || p.components.AudioBus).map((p) => p.name);
       const options = f.type === 'enum' ? f.options : [...(f.default === '' ? [''] : []), ...prefabs];
       if (f.type === 'prefab' && typeof value === 'string' && !options.includes(value)) options.push(value);
-      const label = (o: string) => (o === '' ? (busOnly ? '（なし: 全体の直下）' : '（なし）') : o);
-      const sel = h('select', { title: f.type === 'prefab' && f.tags?.length ? `タグ ${f.tags.join(' ')} のプレハブ` : '' }, options.map((o) => h('option', { value: o, selected: o === value }, label(o)))) as HTMLSelectElement;
+      const label = (o: string) => (o === '' ? (busOnly ? T('（なし: 全体の直下）') : T('（なし）')) : o);
+      const sel = h('select', { title: f.type === 'prefab' && f.tags?.length ? T('タグ {0} のプレハブ', f.tags.join(' ')) : '' }, options.map((o) => h('option', { value: o, selected: o === value }, label(o)))) as HTMLSelectElement;
       sel.addEventListener('change', () => commit(sel.value, true));
       wrap.append(sel);
       return { el: wrap, set: (v) => { sel.value = String(v); } };
@@ -421,8 +422,8 @@ export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, 
     case 'ease': {
       // 動き方の名前を選ぶ。横に形（0→1 の進み方）を小さく描く
       const sel = h('select', {}, EASE_NAMES.map((o) => h('option', { value: o, selected: o === value }, o))) as HTMLSelectElement;
-      if (!EASE_NAMES.includes(String(value) as EaseName)) sel.prepend(h('option', { value: String(value), selected: true }, `${String(value)}（ありません）`));
-      const cv = h('canvas', { width: 48, height: 32, class: 'ease-curve', title: '進み方（横: 時間、縦: 値）' }) as HTMLCanvasElement;
+      if (!EASE_NAMES.includes(String(value) as EaseName)) sel.prepend(h('option', { value: String(value), selected: true }, T('{0}（ありません）', String(value))));
+      const cv = h('canvas', { width: 48, height: 32, class: 'ease-curve', title: T('進み方（横: 時間、縦: 値）') }) as HTMLCanvasElement;
       const draw = (name: string) => {
         const g = cv.getContext('2d');
         const fn = EASES[name as EaseName];
@@ -465,7 +466,7 @@ export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, 
       // 名前を先に見せる（長い場所は欄に収まらないので）
       const label = (o: string) => (o.includes('/') ? `${o.slice(o.lastIndexOf('/') + 1)} — ${o.slice(0, o.lastIndexOf('/'))}` : o);
       const sel = h('select', { style: 'min-width:0;flex:1', title: cur }, options.map((o) => h('option', { value: o, selected: o === cur },
-        o === '' ? '（なし）' : files.includes(o) ? label(o) : `${label(o)}（見つかりません）`))) as HTMLSelectElement;
+        o === '' ? T('（なし）') : files.includes(o) ? label(o) : T('{0}（見つかりません）', label(o))))) as HTMLSelectElement;
       const thumb = h('img', { class: 'asset-thumb', alt: '' }) as HTMLImageElement;
       const show = (v: string) => {
         if (f.kind === 'image' && v && files.includes(v)) { thumb.src = app.assetUrl(v); thumb.style.display = ''; } else thumb.style.display = 'none';
@@ -486,17 +487,17 @@ export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, 
         const path = e.dataTransfer?.getData(ASSET_MIME);
         if (!path) return;
         e.preventDefault();
-        if (kindOf(path) !== f.kind) return toast(`${path} は${ASSET_LABEL[f.kind]}ではありません`, 'bad');
+        if (kindOf(path) !== f.kind) return toast(T('{0} は{1}ではありません', path, assetLabel(f.kind)), 'bad');
         sel.value = path;
         show(path);
         commit(path, true);
       });
-      wrap.append(h('button', { class: 'icon', title: 'アセットの画面で見る（使っている所・名前の変更・移動）', onclick: () => { if (sel.value) app.emit('revealAsset', sel.value); } }, '◎'));
-      if (f.kind === 'image') wrap.append(h('button', { class: 'icon', title: 'この画像の切り方（コマ・基準点・動き）を開く', onclick: () => { if (sel.value) app.emit('openSprite', sel.value); } }, '✂'));
+      wrap.append(h('button', { class: 'icon', title: T('アセットの画面で見る（使っている所・名前の変更・移動）'), onclick: () => { if (sel.value) app.emit('revealAsset', sel.value); } }, '◎'));
+      if (f.kind === 'image') wrap.append(h('button', { class: 'icon', title: T('この画像の切り方（コマ・基準点・動き）を開く'), onclick: () => { if (sel.value) app.emit('openSprite', sel.value); } }, '✂'));
       if (f.kind === 'sound') {
         thumb.remove();
         const info = () => app.state.assets.find((a) => a.path === sel.value);
-        wrap.append(h('button', { class: 'icon', title: 'このファイルを試しに鳴らす', onclick: () => { if (sel.value) app.previewSound({ ...(ctx.comp === 'Sound' ? ctx.holder.Sound : {}), clip: sel.value } as never); } }, '▶'),
+        wrap.append(h('button', { class: 'icon', title: T('このファイルを試しに鳴らす'), onclick: () => { if (sel.value) app.previewSound({ ...(ctx.comp === 'Sound' ? ctx.holder.Sound : {}), clip: sel.value } as never); } }, '▶'),
           h('span', { class: 'muted', style: 'font-size:11px' }, info()?.sec !== undefined ? `${info()!.sec}s` : ''));
       }
       return { el: wrap, set: (v) => { sel.value = String(v ?? ''); show(String(v ?? '')); } };
@@ -514,9 +515,9 @@ export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, 
         const t = textCol ? String(rowsById.get(o)?.[textCol] ?? '').replace(/\s+/g, ' ').trim() : '';
         return t ? `${o} — ${t.length > 24 ? t.slice(0, 24) + '…' : t}` : o;
       };
-      const sel = h('select', { title: `表 ${f.table} の行` }, options.map((o) => h('option', { value: o, selected: o === cur }, o === '' ? '（なし）' : ids.includes(o) ? label(o) : `${o}（表にありません）`))) as HTMLSelectElement;
+      const sel = h('select', { title: T('表 {0} の行', f.table) }, options.map((o) => h('option', { value: o, selected: o === cur }, o === '' ? T('（なし）') : ids.includes(o) ? label(o) : T('{0}（表にありません）', o)))) as HTMLSelectElement;
       sel.addEventListener('change', () => commit(sel.value, true));
-      wrap.append(sel, h('button', { class: 'icon row-open', title: `表 ${f.table} を開く`, onclick: () => app.emit('openTable', { name: f.table, row: sel.value }) }, '▦'));
+      wrap.append(sel, h('button', { class: 'icon row-open', title: T('表 {0} を開く', f.table), onclick: () => app.emit('openTable', { name: f.table, row: sel.value }) }, '▦'));
       return { el: wrap, set: (v) => { sel.value = String(v); } };
     }
     case 'scene': {
@@ -524,19 +525,19 @@ export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, 
       const cur = String(value ?? '');
       const options = [...(f.default === '' ? [''] : []), ...names];
       if (!options.includes(cur)) options.push(cur);
-      const sel = h('select', { title: 'シーン' }, options.map((o) => h('option', { value: o, selected: o === cur }, o === '' ? '（なし）' : names.includes(o) ? o : `${o}（ありません）`))) as HTMLSelectElement;
+      const sel = h('select', { title: T('シーン') }, options.map((o) => h('option', { value: o, selected: o === cur }, o === '' ? T('（なし）') : names.includes(o) ? o : T('{0}（ありません）', o)))) as HTMLSelectElement;
       sel.addEventListener('change', () => commit(sel.value, true));
       wrap.append(sel);
       return { el: wrap, set: (v) => { sel.value = String(v); } };
     }
     case 'input': {
       // ボタン・軸の名前。「押して決める」で、次に押したキー・マウス・パッドのボタン（analog なら倒した軸）が入る
-      const t = h('input', { type: 'text', value: String(value ?? ''), style: 'width:110px;font:var(--mono)', title: f.analog ? '軸の名前（例 Pad.LX）' : 'ボタンの名前（例 KeyZ, Space, Mouse0, Pad.A）' }) as HTMLInputElement;
+      const t = h('input', { type: 'text', value: String(value ?? ''), style: 'width:110px;font:var(--mono)', title: f.analog ? T('軸の名前（例 Pad.LX）') : T('ボタンの名前（例 KeyZ, Space, Mouse0, Pad.A）') }) as HTMLInputElement;
       const label = h('span', { class: 'muted input-label' });
       const show = (v: string) => { label.textContent = v ? buttonLabel(v) : ''; label.style.display = v && buttonLabel(v) !== v ? '' : 'none'; };
       show(String(value ?? ''));
       t.addEventListener('change', () => { show(t.value.trim()); commit(t.value.trim(), true); });
-      const pick = h('button', { class: 'icon', title: f.analog ? '倒して決める: 次に大きく倒したスティック・トリガーが入る' : '押して決める: 次に押したキー・マウス・パッドのボタンが入る', onclick: () => capture(!!f.analog, (code) => { t.value = code; show(code); commit(code, true); }) }, '⌨');
+      const pick = h('button', { class: 'icon', title: f.analog ? T('倒して決める: 次に大きく倒したスティック・トリガーが入る') : T('押して決める: 次に押したキー・マウス・パッドのボタンが入る'), onclick: () => capture(!!f.analog, (code) => { t.value = code; show(code); commit(code, true); }) }, '⌨');
       wrap.append(t, label, pick);
       return { el: wrap, set: (v) => { t.value = String(v ?? ''); show(String(v ?? '')); } };
     }
@@ -546,7 +547,7 @@ export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, 
       t.addEventListener('change', () => commit(/^\d+$/.test(t.value.trim()) ? Number(t.value) : t.value.trim(), true));
       const image = ctx.holder.Sprite?.image;
       wrap.append(t);
-      if (typeof image === 'string' && image) wrap.append(h('button', { title: 'この画像をコマに切る', onclick: () => app.emit('openSprite', image) }, '✂ 切る'));
+      if (typeof image === 'string' && image) wrap.append(h('button', { title: T('この画像をコマに切る'), onclick: () => app.emit('openSprite', image) }, T('✂ 切る')));
       return { el: wrap, set: (v) => { t.value = String(v); } };
     }
     default: {
@@ -554,10 +555,10 @@ export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, 
       if (ctx.comp === 'Text' && ctx.field === 'key') {
         const rows = app.state.tables.text?.rows ?? [];
         const id = `keys-${Math.random().toString(36).slice(2)}`;
-        const t = h('input', { type: 'text', value: String(value ?? ''), list: id, placeholder: '表 $text の行（空なら text のまま）' }) as HTMLInputElement;
+        const t = h('input', { type: 'text', value: String(value ?? ''), list: id, placeholder: T('表 $text の行（空なら text のまま）') }) as HTMLInputElement;
         const lang = app.previewLang || (app.state.config.languages ?? ['ja'])[0];
         const show = h('span', { class: 'muted', style: 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px' });
-        const preview = (k: string) => { const r = rows.find((x) => x.id === k) as Record<string, unknown> | undefined; show.textContent = k ? (r ? String(r[lang] || `（${lang} 未訳）`) : '（ない行）') : ''; };
+        const preview = (k: string) => { const r = rows.find((x) => x.id === k) as Record<string, unknown> | undefined; show.textContent = k ? (r ? String(r[lang] || T('（{0} 未訳）', lang)) : T('（ない行）')) : ''; };
         t.addEventListener('change', () => { commit(t.value.trim(), true); preview(t.value.trim()); });
         preview(String(value ?? ''));
         wrap.append(t, h('datalist', { id }, rows.map((r) => h('option', { value: r.id }))), show);
@@ -569,7 +570,7 @@ export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, 
         const cur = value === null || value === undefined ? '' : String(value);
         const options = ['', ...ids];
         if (cur && !ids.includes(cur)) options.push(cur);
-        const sel = h('select', {}, options.map((o) => h('option', { value: o, selected: o === cur }, o === '' ? (ctx.field === 'parent' ? '（なし: 画面）' : '（なし）') : ids.includes(o) ? o : `${o}（ありません）`))) as HTMLSelectElement;
+        const sel = h('select', {}, options.map((o) => h('option', { value: o, selected: o === cur }, o === '' ? (ctx.field === 'parent' ? T('（なし: 画面）') : T('（なし）')) : ids.includes(o) ? o : T('{0}（ありません）', o)))) as HTMLSelectElement;
         sel.addEventListener('change', () => commit(sel.value === '' ? null : sel.value, true));
         wrap.append(sel);
         return { el: wrap, set: (v) => { sel.value = v === null ? '' : String(v); } };
@@ -595,8 +596,8 @@ export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, 
 function matrixWidget(app: App, path: string, value: unknown, cell: string): { el: HTMLElement; set(v: unknown): void } {
   const size = h('span', { class: 'muted', style: 'font:var(--mono)' }, `${matrixSize(value)} ${cell}`);
   const wrap = h('div', { class: 'ctl' }, size,
-    h('button', { onclick: () => app.emit('openMatrix', path), title: '行列エディタで確認・編集' }, '開く'),
-    h('button', { class: 'icon', title: '別のウインドウで開く', onclick: () => window.open(`/?solo=matrix&path=${encodeURIComponent(path)}`, `ages-matrix-${path}`, 'width=900,height=640') }, '↗'));
+    h('button', { onclick: () => app.emit('openMatrix', path), title: T('行列エディタで確認・編集') }, T('開く')),
+    h('button', { class: 'icon', title: T('別のウインドウで開く'), onclick: () => window.open(`/?solo=matrix&path=${encodeURIComponent(path)}`, `ages-matrix-${path}`, 'width=900,height=640') }, '↗'));
   return { el: wrap, set: (v) => { size.textContent = `${matrixSize(v)} ${cell}`; } };
 }
 
@@ -604,8 +605,8 @@ function matrixWidget(app: App, path: string, value: unknown, cell: string): { e
 function frameWidget(app: App, s: { image: string; sheet: SheetDef; w: number; h: number }, value: FrameRef, commit: (v: unknown, final: boolean) => void): { el: HTMLElement; set(v: unknown): void } {
   const all = listFrames(s.sheet, s.w, s.h);
   const count = all.length;
-  const num = h('input', { type: 'text', value: String(value ?? 0), style: 'width:90px;font:var(--mono)', title: '番号（0から）か名前' }) as HTMLInputElement;
-  const preview = h('canvas', { width: 28, height: 28, class: 'asset-thumb', title: 'クリックで絵から選ぶ' }) as HTMLCanvasElement;
+  const num = h('input', { type: 'text', value: String(value ?? 0), style: 'width:90px;font:var(--mono)', title: T('番号（0から）か名前') }) as HTMLInputElement;
+  const preview = h('canvas', { width: 28, height: 28, class: 'asset-thumb', title: T('クリックで絵から選ぶ') }) as HTMLCanvasElement;
   const img = new Image();
   img.src = app.assetUrl(s.image);
   const parse = (t: string): FrameRef => (/^\d+$/.test(t.trim()) ? Number(t) : t.trim());
@@ -633,16 +634,16 @@ function frameWidget(app: App, s: { image: string; sheet: SheetDef; w: number; h
       }));
     }
     const clips = Object.entries(s.sheet.clips ?? {}).map(([n, c]) => `${n}: ${c.frames.join(',')}`).join('  ');
-    const kind = s.sheet.frames ? '自由な矩形' : `格子 ${s.sheet.frame!.join('x')}px`;
-    return h('div', {}, h('h3', {}, `コマを選ぶ — ${s.image}`),
-      h('div', { class: 'muted', style: 'margin-bottom:8px' }, `${count}コマ（${kind}）${clips ? `　動き ${clips}` : ''}`),
+    const kind = s.sheet.frames ? T('自由な矩形') : T('格子 {0}px', s.sheet.frame!.join('x'));
+    return h('div', {}, h('h3', {}, T('コマを選ぶ — {0}', s.image)),
+      h('div', { class: 'muted', style: 'margin-bottom:8px' }, T('{0}コマ（{1}）{2}', count, kind, clips ? T('　動き {0}', clips) : '')),
       h('div', { style: 'overflow:auto;max-height:60vh' }, grid),
       h('div', { class: 'row', style: 'justify-content:space-between;margin-top:10px' },
-        h('button', { onclick: () => { close(); app.emit('openSprite', s.image); } }, '✂ 切り方を編集'),
-        h('button', { onclick: close }, '閉じる')));
+        h('button', { onclick: () => { close(); app.emit('openSprite', s.image); } }, T('✂ 切り方を編集')),
+        h('button', { onclick: close }, T('閉じる'))));
   });
   preview.addEventListener('click', pick);
-  const wrap = h('div', { class: 'ctl' }, preview, num, h('button', { onclick: pick, title: '絵を見て選ぶ' }, '選ぶ'), h('span', { class: 'muted' }, `/${count}`));
+  const wrap = h('div', { class: 'ctl' }, preview, num, h('button', { onclick: pick, title: T('絵を見て選ぶ') }, T('選ぶ')), h('span', { class: 'muted' }, `/${count}`));
   return { el: wrap, set: (v) => { num.value = String(v); paint(v as FrameRef); } };
 }
 
@@ -693,8 +694,8 @@ export const valueSummary = (f: Field, v: unknown): string => {
     // ボタンの割り当てなどの短いリストは、中身をそのまま見せる
     const text = f.of.type === 'input' ? a.map((x) => buttonLabel(String(x))).join(' / ')
       : ['string', 'number', 'int', 'enum', 'row', 'prefab', 'bool'].includes(f.of.type) ? a.map((x) => String(x)).join(', ') : '';
-    if (!a.length) return '（なし）';
-    return text && text.length <= 32 ? text : `${a.length}件`;
+    if (!a.length) return T('（なし）');
+    return text && text.length <= 32 ? text : T('{0}件', a.length);
   }
   if (f.type === 'oneOf') return String((v as { kind?: string } | null)?.kind ?? '');
   if (f.type === 'struct') return '';
@@ -711,7 +712,7 @@ export function nestedWidget(app: App, f: Field, value: unknown, path: string, s
   const key = path + formatSub(sub);
   const leaf = (lf: Field, lv: unknown, lsub: (string | number)[], isDefault = false, parent?: unknown): HTMLElement => {
     const standard = () => isNested(lf) ? nestedWidget(app, lf, lv, path, lsub, emit, ctx)
-      : lf.type === 'matrix' ? h('span', { class: 'muted' }, `行列${matrixSize(lv)}（JSON で編集）`)
+      : lf.type === 'matrix' ? h('span', { class: 'muted' }, T('行列{0}（JSON で編集）', matrixSize(lv)))
       : widget(app, lf, lv, (v, final) => { if (final) emit({ kind: 'set', sub: lsub, value: v }); }, ctx).el;
     // 拡張の欄の見せ方（match の [] と .名前 で入れ子の中にも）
     return drawnField(app, { path: path + formatSub(lsub), f: lf, value: lv, isDefault, sub: lsub, parent, ctx, standard }) ?? standard();
@@ -723,26 +724,26 @@ export function nestedWidget(app: App, f: Field, value: unknown, path: string, s
     const list = Array.isArray(value) ? value : [];
     // 短いリストは開いて始める（長いものは ▸ で開く。開いた・閉じたはエディタを開いている間おぼえる）
     const open = closed.has(key) ? false : opened.has(key) || list.length <= 8;
-    const toggle = h('button', { class: 'icon', title: open ? '閉じる' : '開く', onclick: () => { if (open) { opened.delete(key); closed.add(key); } else { closed.delete(key); opened.add(key); } app.emit('nestToggle'); } }, open ? '▾' : '▸');
-    const add = h('button', { class: 'icon', title: `最後に足す（${typeOf(f.of)}）`, disabled: f.max !== undefined && list.length >= f.max, onclick: () => emit({ kind: 'insert', sub, value: defaultOf(f.of) }) }, '＋');
+    const toggle = h('button', { class: 'icon', title: open ? T('閉じる') : T('開く'), onclick: () => { if (open) { opened.delete(key); closed.add(key); } else { closed.delete(key); opened.add(key); } app.emit('nestToggle'); } }, open ? '▾' : '▸');
+    const add = h('button', { class: 'icon', title: T('最後に足す（{0}）', typeOf(f.of)), disabled: f.max !== undefined && list.length >= f.max, onclick: () => emit({ kind: 'insert', sub, value: defaultOf(f.of) }) }, T('＋'));
     const full = f.max !== undefined && list.length >= f.max;
     const items = open ? list.map((v, i) => row(`[${i}]`, `${key}[${i}]`, leaf(f.of, v, [...sub, i], false, list),
-      h('button', { class: 'icon tiny', title: '複製して、すぐ下に置く', disabled: full, onclick: () => emit({ kind: 'insert', sub, value: structuredClone(v), index: i + 1 }) }, '⧉'),
-      h('button', { class: 'icon tiny', title: '上へ', disabled: i === 0, onclick: () => emit({ kind: 'move', sub: [...sub, i], to: i - 1 }) }, '↑'),
-      h('button', { class: 'icon tiny', title: '下へ', disabled: i === list.length - 1, onclick: () => emit({ kind: 'move', sub: [...sub, i], to: i + 1 }) }, '↓'),
-      h('button', { class: 'icon tiny', title: '消す', disabled: f.min !== undefined && list.length <= f.min, onclick: () => emit({ kind: 'remove', sub: [...sub, i] }) }, '×'))) : [];
+      h('button', { class: 'icon tiny', title: T('複製して、すぐ下に置く'), disabled: full, onclick: () => emit({ kind: 'insert', sub, value: structuredClone(v), index: i + 1 }) }, '⧉'),
+      h('button', { class: 'icon tiny', title: T('上へ'), disabled: i === 0, onclick: () => emit({ kind: 'move', sub: [...sub, i], to: i - 1 }) }, '↑'),
+      h('button', { class: 'icon tiny', title: T('下へ'), disabled: i === list.length - 1, onclick: () => emit({ kind: 'move', sub: [...sub, i], to: i + 1 }) }, '↓'),
+      h('button', { class: 'icon tiny', title: T('消す'), disabled: f.min !== undefined && list.length <= f.min, onclick: () => emit({ kind: 'remove', sub: [...sub, i] }) }, '×'))) : [];
     const t = typeOf(f.of);
-    return h('div', { class: 'nest' }, h('div', { class: 'nest-head', title: `${list.length}件 list<${t}>` }, toggle, h('span', { class: 'muted' }, `${list.length}件${t.length <= 20 ? ' ' + t : ''}`), add), items);
+    return h('div', { class: 'nest' }, h('div', { class: 'nest-head', title: T('{0}件 list<{1}>', list.length, t) }, toggle, h('span', { class: 'muted' }, T('{0}件{1}', list.length, t.length <= 20 ? ' ' + t : '')), add), items);
   }
   if (f.type === 'struct') {
     const obj = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
-    return h('div', { class: 'nest' }, Object.entries(f.fields).map(([k, sf]) => row(k, `${k}: ${typeOf(sf)}${sf.desc ? '\n' + sf.desc : ''}`, leaf(sf, k in obj ? obj[k] : defaultOf(sf), [...sub, k], !(k in obj), obj))));
+    return h('div', { class: 'nest' }, Object.entries(f.fields).map(([k, sf]) => row(k, `${k}: ${typeOf(sf)}${sf.desc ? '\n' + TD(sf.desc) : ''}`, leaf(sf, k in obj ? obj[k] : defaultOf(sf), [...sub, k], !(k in obj), obj))));
   }
   // どれか1つ: 種類を選ぶと、その種類の既定値に入れ替わる（同じ名前・同じ型の欄は今の値を引き継ぐ）
   const o = f as OneOfField;
   const obj = (value && typeof value === 'object' ? value : defaultOf(o)) as Record<string, unknown>;
   const kind = String(obj.kind ?? Object.keys(o.variants)[0]);
-  const pick = h('select', {}, Object.entries(o.variants).map(([k, v]) => h('option', { value: k, selected: k === kind, title: v.desc ?? '' }, k))) as HTMLSelectElement;
+  const pick = h('select', {}, Object.entries(o.variants).map(([k, v]) => h('option', { value: k, selected: k === kind, title: TD(v.desc) }, k))) as HTMLSelectElement;
   pick.addEventListener('change', () => {
     const next = variantDefault(pick.value, o.variants[pick.value].fields) as Record<string, unknown>;
     const before = o.variants[kind]?.fields ?? {};
@@ -752,18 +753,18 @@ export function nestedWidget(app: App, f: Field, value: unknown, path: string, s
     emit({ kind: 'set', sub, value: next });
   });
   const fields = o.variants[kind]?.fields ?? {};
-  return h('div', { class: 'nest' }, row('kind', o.variants[kind]?.desc ?? '種類', pick),
-    Object.entries(fields).map(([k, sf]) => row(k, `${k}: ${typeOf(sf)}${sf.desc ? '\n' + sf.desc : ''}`, leaf(sf, k in obj ? obj[k] : defaultOf(sf), [...sub, k], !(k in obj), obj))));
+  return h('div', { class: 'nest' }, row('kind', TD(o.variants[kind]?.desc) || T('種類'), pick),
+    Object.entries(fields).map(([k, sf]) => row(k, `${k}: ${typeOf(sf)}${sf.desc ? '\n' + TD(sf.desc) : ''}`, leaf(sf, k in obj ? obj[k] : defaultOf(sf), [...sub, k], !(k in obj), obj))));
 }
 
 /** 「押して決める」の画面。次に押されたボタン（analog なら大きく倒した軸）を返す */
 function capture(analog: boolean, done: (code: string) => void): void {
   modal((close) => {
-    const area = h('div', { class: 'capture-area', tabindex: 0 }, analog ? 'スティックかトリガーを大きく倒してください' : 'キーかゲームパッドのボタンを押してください\n（この枠の中でクリックすると、マウスのボタン）');
+    const area = h('div', { class: 'capture-area', tabindex: 0 }, analog ? T('スティックかトリガーを大きく倒してください') : T('キーかゲームパッドのボタンを押してください\n（この枠の中でクリックすると、マウスのボタン）'));
     const stop = captureNext((code) => { close(); done(code); }, { analog, target: area, alive: () => area.isConnected });
     return h('div', {},
-      h('h3', {}, analog ? '軸を決める' : 'ボタンを決める'),
+      h('h3', {}, analog ? T('軸を決める') : T('ボタンを決める')),
       area,
-      h('div', { class: 'row', style: 'justify-content:flex-end;margin-top:12px' }, h('button', { onclick: () => { stop(); close(); } }, '取り消す')));
+      h('div', { class: 'row', style: 'justify-content:flex-end;margin-top:12px' }, h('button', { onclick: () => { stop(); close(); } }, T('取り消す'))));
   });
 }

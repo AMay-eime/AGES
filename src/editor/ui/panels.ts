@@ -11,6 +11,7 @@ import { docPose } from '../edit-ops.ts';
 import { relativeTo } from '../../core/transform.ts';
 import type { Op } from '../../core/patch.ts';
 import type { GitFix, GitHelp } from '../git-help.ts';
+import { T, TD } from '../i18n.ts';
 
 // ---------- 階層 ----------
 const ENTITY_MIME = 'application/x-ages-entity';
@@ -40,26 +41,26 @@ export function hierarchyPanel(app: App): Panel {
       title: scene?.desc ?? '',
       disabled: !!app.play,
       onchange: (e: Event) => { app.scene = (e.target as HTMLSelectElement).value; app.rebuildPreview(); app.select(null); app.emit('change'); },
-    }, Object.keys(s.scenes).map((n) => h('option', { value: n, selected: n === app.scene }, `シーン: ${n}${n === s.config.startScene ? '（開始）' : ''}`)));
+    }, Object.keys(s.scenes).map((n) => h('option', { value: n, selected: n === app.scene }, T('シーン: {0}{1}', n, n === s.config.startScene ? T('（開始）') : ''))));
     // シーンを作る・複製・名前・説明・開始・消す
     const ask = (title: string, value: string, done: (v: string) => void, placeholder = '') => modal((close) => {
       const input = h('input', { type: 'text', value, placeholder, style: 'width:100%' }) as HTMLInputElement;
       const ok = () => { const v = input.value.trim(); close(); done(v); };
       input.addEventListener('keydown', (e) => e.key === 'Enter' && ok());
       setTimeout(() => { input.focus(); input.select(); });
-      return h('div', {}, h('h3', {}, title), input, h('div', { class: 'row', style: 'justify-content:flex-end;margin-top:10px' }, h('button', { onclick: close }, 'やめる'), h('button', { class: 'on', onclick: ok }, '決める')));
+      return h('div', {}, h('h3', {}, title), input, h('div', { class: 'row', style: 'justify-content:flex-end;margin-top:10px' }, h('button', { onclick: close }, T('やめる')), h('button', { class: 'on', onclick: ok }, T('決める'))));
     });
     const go = (name: string) => { app.scene = name; app.rebuildPreview(); app.select(null); app.emit('change'); };
     const sceneMenu = (e: MouseEvent) => menu(e.clientX, e.clientY, [
-      ['新しいシーン', () => ask('新しいシーン（英数字・_・-）', '', async (v) => { if (v && await app.patch([{ op: 'addScene', name: v }], 'hierarchy')) go(v); }, '例 title')],
-      [`${app.scene} を複製`, () => ask(`${app.scene} の写しの名前`, `${app.scene}_copy`, async (v) => { if (v && await app.patch([{ op: 'addScene', name: v, copy: app.scene }], 'hierarchy')) go(v); })],
-      ['名前を変える', () => ask(`${app.scene} の新しい名前`, app.scene, async (v) => { if (v && v !== app.scene && await app.patch([{ op: 'renameScene', name: app.scene, to: v }], 'hierarchy')) go(v); })],
-      ['説明を書く', () => ask(`${app.scene} は何のシーンか（1行。地図に出ます）`, scene?.desc ?? '', (v) => app.patch([{ op: 'setScene', name: app.scene, desc: v }], 'hierarchy'))],
-      ...(app.scene !== s.config.startScene ? [['開始シーンにする', () => app.patch([{ op: 'setScene', name: app.scene, start: true }], 'hierarchy')] as [string, () => void]] : []),
-      ['消す', () => { if (confirm(`シーン ${app.scene} を消しますか？`)) app.patch([{ op: 'removeScene', name: app.scene }], 'hierarchy'); }],
+      [T('新しいシーン'), () => ask(T('新しいシーン（英数字・_・-）'), '', async (v) => { if (v && await app.patch([{ op: 'addScene', name: v }], 'hierarchy')) go(v); }, T('例 title'))],
+      [T('{0} を複製', app.scene), () => ask(T('{0} の写しの名前', app.scene), `${app.scene}_copy`, async (v) => { if (v && await app.patch([{ op: 'addScene', name: v, copy: app.scene }], 'hierarchy')) go(v); })],
+      [T('名前を変える'), () => ask(T('{0} の新しい名前', app.scene), app.scene, async (v) => { if (v && v !== app.scene && await app.patch([{ op: 'renameScene', name: app.scene, to: v }], 'hierarchy')) go(v); })],
+      [T('説明を書く'), () => ask(T('{0} は何のシーンか（1行。地図に出ます）', app.scene), scene?.desc ?? '', (v) => app.patch([{ op: 'setScene', name: app.scene, desc: v }], 'hierarchy'))],
+      ...(app.scene !== s.config.startScene ? [[T('開始シーンにする'), () => app.patch([{ op: 'setScene', name: app.scene, start: true }], 'hierarchy')] as [string, () => void]] : []),
+      [T('消す'), () => { if (confirm(T('シーン {0} を消しますか？', app.scene))) app.patch([{ op: 'removeScene', name: app.scene }], 'hierarchy'); }],
     ]);
     const addEntity = () => modal((close) => {
-      const id = h('input', { type: 'text', placeholder: 'id（英数字・_・-）', style: 'width:100%' }) as HTMLInputElement;
+      const id = h('input', { type: 'text', placeholder: T('id（英数字・_・-）'), style: 'width:100%' }) as HTMLInputElement;
       const ok = async () => {
         close();
         await app.patch([{ op: 'addEntity', scene: app.scene, entity: { id: id.value.trim(), components: { Transform: { x: s.config.view.width / 2, y: s.config.view.height / 2 } } } }], 'hierarchy');
@@ -67,11 +68,11 @@ export function hierarchyPanel(app: App): Panel {
       };
       id.addEventListener('keydown', (e) => e.key === 'Enter' && ok());
       setTimeout(() => id.focus());
-      return h('div', {}, h('h3', {}, 'エンティティを追加'), id, h('div', { class: 'row', style: 'justify-content:flex-end;margin-top:10px' }, h('button', { onclick: close }, 'やめる'), h('button', { class: 'on', onclick: ok }, '追加')));
+      return h('div', {}, h('h3', {}, T('エンティティを追加')), id, h('div', { class: 'row', style: 'justify-content:flex-end;margin-top:10px' }, h('button', { onclick: close }, T('やめる')), h('button', { class: 'on', onclick: ok }, T('追加'))));
     });
     const remove = () => {
       if (sel?.kind !== 'scene') return;
-      if (!confirm(`${sel.scene}#${sel.id} を削除しますか？`)) return;
+      if (!confirm(T('{0}#{1} を削除しますか？', sel.scene, sel.id))) return;
       app.patch([{ op: 'removeEntity', scene: sel.scene, id: sel.id }], 'hierarchy');
       app.select(null);
     };
@@ -92,8 +93,8 @@ export function hierarchyPanel(app: App): Panel {
       const reparent = async (child: string, to: string | null) => {
         if (child === to) return;
         const k = kind.get(child);
-        if (!k || (to && kind.get(to) !== k)) { toast('親子にできるのは UI の物どうし（UI.parent）か、位置のある物どうし（Transform.parent）', 'warn'); return; }
-        if (to && ancestorsOf(to).has(child)) { toast(`${to} は ${child} の中にあるので、親にできない`, 'warn'); return; }
+        if (!k || (to && kind.get(to) !== k)) { toast(T('親子にできるのは UI の物どうし（UI.parent）か、位置のある物どうし（Transform.parent）'), 'warn'); return; }
+        if (to && ancestorsOf(to).has(child)) { toast(T('{0} は {1} の中にあるので、親にできない', to, child), 'warn'); return; }
         if ((parent.get(child) ?? null) === to) return;
         if (to) open.add(`${app.scene}#${to}`);
         const base = `${app.scene}#${child}.${k}`;
@@ -141,7 +142,7 @@ export function hierarchyPanel(app: App): Panel {
         out.push(h('div', {
           class: `item ${sel?.kind === 'scene' && sel.id === e.id ? 'sel' : app.extra.includes(e.id) ? 'sel2' : ''}`,
           style: `padding-left:${4 + depth * 14}px`,
-          title: 'Shift・Ctrl+クリックで足す・外す。右クリックで複製・削除・プレハブにする。ほかの物の上へ運ぶとその子に（UI どうしは UI.parent・位置のある物どうしは Transform.parent。シーン名の行へ運ぶと親なし。Ctrl+Z で戻せる）',
+          title: T('Shift・Ctrl+クリックで足す・外す。右クリックで複製・削除・プレハブにする。ほかの物の上へ運ぶとその子に（UI どうしは UI.parent・位置のある物どうしは Transform.parent。シーン名の行へ運ぶと親なし。Ctrl+Z で戻せる）'),
           onclick: (ev: MouseEvent) => app.select({ kind: 'scene', scene: app.scene, id: e.id }, { add: ev.shiftKey || ev.ctrlKey || ev.metaKey }),
           oncontextmenu: (ev: MouseEvent) => {
             ev.preventDefault();
@@ -154,11 +155,11 @@ export function hierarchyPanel(app: App): Panel {
           ondragstart: (ev: DragEvent) => { ev.dataTransfer!.setData(ENTITY_MIME, e.id); ev.dataTransfer!.effectAllowed = 'move'; },
           ...(app.play || !kind.has(e.id) ? {} : dropOn(e.id)),
         },
-        h('span', { class: 'tw', title: children.length ? '開く・畳む（Alt+クリックで中も全部）' : '', onclick: children.length ? toggle : null }, children.length ? (isOpen ? '▾' : '▸') : ''),
+        h('span', { class: 'tw', title: children.length ? T('開く・畳む（Alt+クリックで中も全部）') : '', onclick: children.length ? toggle : null }, children.length ? (isOpen ? '▾' : '▸') : ''),
         e.name, h('span', { class: 'muted' }, e.id),
-        children.length > 0 && !isOpen ? h('span', { class: 'muted', title: '中にある物の数' }, `(${count(e.id)})`) : null,
-        e.prefab ? h('span', { class: 'muted', title: `プレハブ @${e.prefab} のインスタンス（つながっている）` }, '←@' + e.prefab) : null,
-        n ? h('span', { style: 'color:var(--lock)', title: `ロック ${n}件` }, '🔒' + n) : null));
+        children.length > 0 && !isOpen ? h('span', { class: 'muted', title: T('中にある物の数') }, `(${count(e.id)})`) : null,
+        e.prefab ? h('span', { class: 'muted', title: T('プレハブ @{0} のインスタンス（つながっている）', e.prefab) }, '←@' + e.prefab) : null,
+        n ? h('span', { style: 'color:var(--lock)', title: T('ロック {0}件', n) }, '🔒' + n) : null));
         if (isOpen) rows(children, depth + 1, e.id);
       };
       // 連番の名前（例 star0〜star39）で、子のない兄弟が5つ以上なら1行にまとめる（見せ方だけ）
@@ -173,7 +174,7 @@ export function hierarchyPanel(app: App): Panel {
           out.push(h('div', {
             class: `item ${picked ? 'sel2' : ''}`,
             style: `padding-left:${4 + depth * 14}px`,
-            title: `連番の ${ids.length}個をまとめた行（見せ方だけ）。クリックで全部を選ぶ。▸ で開く`,
+            title: T('連番の {0}個をまとめた行（見せ方だけ）。クリックで全部を選ぶ。▸ で開く', ids.length),
             onclick: () => {
               app.selectMany(ids);
               // まとめを選んだだけでは開かない（選んだ物の親を開く働きを戻す）
@@ -181,7 +182,7 @@ export function hierarchyPanel(app: App): Panel {
             },
           },
           h('span', { class: 'tw', onclick: (ev: MouseEvent) => { ev.stopPropagation(); if (isOpen) open.delete(key); else open.add(key); render(); } }, isOpen ? '▾' : '▸'),
-          `${item.prefix}${nums[0]}〜${nums[nums.length - 1]}`, h('span', { class: 'muted' }, `×${ids.length}`)));
+          T('{0}{1}〜{2}', item.prefix, nums[0], nums[nums.length - 1]), h('span', { class: 'muted' }, `×${ids.length}`)));
           if (isOpen) for (const m of item.members) row(m, depth + 1);
         }
       };
@@ -190,19 +191,19 @@ export function hierarchyPanel(app: App): Panel {
       const reach = new Set<string>();
       const walk = (id: string) => { if (reach.has(id)) return; reach.add(id); for (const k of kids.get(id) ?? []) walk(k.id); };
       for (const e of roots) walk(e.id);
-      for (const e of ents) if (!reach.has(e.id) && !seen.has(e.id)) { out.push(h('div', { class: 'muted', style: 'padding:2px 8px' }, `⚠ ${e.id} の UI.parent が輪になっている`)); walk(e.id); row(e, 0); }
+      for (const e of ents) if (!reach.has(e.id) && !seen.has(e.id)) { out.push(h('div', { class: 'muted', style: 'padding:2px 8px' }, T('⚠ {0} の UI.parent が輪になっている', e.id))); walk(e.id); row(e, 0); }
       return { rows: out, drop: dropOn(null) };
     };
     const tree = entityRows();
     clear(el,
       s.issues.length ? h('div', { class: 'issues' }, s.issues.map((i) => h('div', {}, '⚠ ' + i))) : null,
-      h('div', { class: 'toolbar' }, sceneSel, h('button', { class: 'icon', title: 'シーンを作る・複製・名前・説明・開始・消す', onclick: sceneMenu, disabled: !!app.play }, '⚙'), h('span', { style: 'flex:1' }),
-        h('button', { title: 'エンティティを追加', onclick: addEntity, disabled: !!app.play }, '＋'),
-        h('button', { title: '選択中のエンティティを削除', onclick: remove, disabled: !!app.play || sel?.kind !== 'scene' }, '−')),
+      h('div', { class: 'toolbar' }, sceneSel, h('button', { class: 'icon', title: T('シーンを作る・複製・名前・説明・開始・消す'), onclick: sceneMenu, disabled: !!app.play }, '⚙'), h('span', { style: 'flex:1' }),
+        h('button', { title: T('エンティティを追加'), onclick: addEntity, disabled: !!app.play }, T('＋')),
+        h('button', { title: T('選択中のエンティティを削除'), onclick: remove, disabled: !!app.play || sel?.kind !== 'scene' }, '−')),
       h('div', { class: 'list' },
-        h('div', { class: 'folder', title: (scene?.desc ? scene.desc + '\n' : '') + 'UI の物をここへ運ぶと親なしに', ...(app.play ? {} : tree.drop) }, `${app.scene}（${scene?.entities.length ?? 0}）${app.play && app.play.game.sceneName === app.scene && app.play.from !== app.scene ? ' ▶実行中' : ''}`),
+        h('div', { class: 'folder', title: (scene?.desc ? scene.desc + '\n' : '') + T('UI の物をここへ運ぶと親なしに'), ...(app.play ? {} : tree.drop) }, T('{0}（{1}）{2}', app.scene, scene?.entities.length ?? 0, app.play && app.play.game.sceneName === app.scene && app.play.from !== app.scene ? T(' ▶実行中') : '')),
         tree.rows,
-        h('div', { class: 'folder' }, `プレハブ（${Object.keys(s.prefabs).length}）`),
+        h('div', { class: 'folder' }, T('プレハブ（{0}）', Object.keys(s.prefabs).length)),
         Object.values(s.prefabs).map((p) => {
           const n = lockCount(`@${p.name}`);
           return h('div', {
@@ -217,25 +218,25 @@ export function hierarchyPanel(app: App): Panel {
               if (items.length) menu(ev.clientX, ev.clientY, items);
             },
             // ゲームの画面へ運ぶと、落とした所にインスタンス（プレハブとつながった物）を置く
-            draggable: true, title: 'ゲームの画面へ運ぶと、その場所にこのプレハブのインスタンスを置く。右クリックで写す・名前を変える・削除',
+            draggable: true, title: T('ゲームの画面へ運ぶと、その場所にこのプレハブのインスタンスを置く。右クリックで写す・名前を変える・削除'),
             ondragstart: (e: DragEvent) => { e.dataTransfer!.setData(PREFAB_MIME, p.name); e.dataTransfer!.effectAllowed = 'copy'; },
           }, '@' + p.name, h('span', { class: 'muted' }, p.base ? `← @${p.base}${p.desc ? ' ' + p.desc : ''}` : p.desc ?? ''), n ? h('span', { style: 'color:var(--lock)' }, '🔒' + n) : null);
         }),
-        app.registry?.tables.size ? h('div', { class: 'folder' }, `表（${app.registry.tables.size}）`) : null,
+        app.registry?.tables.size ? h('div', { class: 'folder' }, T('表（{0}）', app.registry.tables.size)) : null,
         [...(app.registry?.tables.values() ?? [])].map((t) => {
           const n = lockCount(`$${t.name}`);
           const rows = s.tables?.[t.name]?.rows.length ?? 0;
           // 説明は最初の文だけ（全体は名前にカーソルを乗せると出る）
-          const first = (t.desc ?? '').split('。')[0];
-          return h('div', { class: 'item', onclick: () => app.emit('openTable', { name: t.name }), title: `${t.desc ?? ''}\n表のエディタで開く` },
-            '$' + t.name, h('span', { class: 'muted' }, `${rows}行 ${first}`), n ? h('span', { style: 'color:var(--lock)' }, '🔒' + n) : null);
+          const first = TD(t.desc).split(/。|\. /)[0];
+          return h('div', { class: 'item', onclick: () => app.emit('openTable', { name: t.name }), title: T('{0}\n表のエディタで開く', t.desc ?? '') },
+            '$' + t.name, h('span', { class: 'muted' }, T('{0}行 {1}', rows, first)), n ? h('span', { style: 'color:var(--lock)' }, '🔒' + n) : null);
         })),
     );
   };
   app.on('change', render);
   app.on('select', () => { revealSelected(); render(); });
   app.on('play', render);
-  return { id: 'hierarchy', title: '階層', el, render };
+  return { id: 'hierarchy', title: T('階層'), el, render };
 }
 
 // ---------- プロジェクト（ファイル） ----------
@@ -250,7 +251,7 @@ export function projectPanel(app: App, openText: (path: string) => void): Panel 
       const dir = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/')) : '.';
       groups.set(dir, [...(groups.get(dir) ?? []), f]);
     }
-    const drop = h('div', { class: 'drop-hint' }, 'ここにファイルをドロップすると assets/ に追加します');
+    const drop = h('div', { class: 'drop-hint' }, T('ここにファイルをドロップすると assets/ に追加します'));
     drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
     drop.addEventListener('dragleave', () => drop.classList.remove('over'));
     drop.addEventListener('drop', async (e) => {
@@ -263,14 +264,14 @@ export function projectPanel(app: App, openText: (path: string) => void): Panel 
       h('div', { class: 'folder' }, dir),
       files.map((f) => h('div', {
         class: 'item',
-        title: `${f.path}（${f.size} bytes）`,
+        title: T('{0}（{1} bytes）', f.path, f.size),
         // 画像は「切り方」で開く（コマ・基準点・動きを決められる）
         onclick: () => /^data\/.+\.table\.json$/.test(f.path) ? app.emit('openTable', { name: f.path.slice(5, -'.table.json'.length) }) : TEXT_EXT.test(f.path) ? openText(f.path) : kindOf(f.path) ? app.emit('revealAsset', f.path) : window.open(`/project@${app.state.version}/${f.path}`),
       }, f.path.split('/').pop()!, h('span', { class: 'muted' }, kb(f.size)))),
     ])));
   };
   app.on('change', render);
-  return { id: 'project', title: 'プロジェクト', el, render };
+  return { id: 'project', title: T('プロジェクト'), el, render };
 }
 
 const kb = (n: number) => (n < 1024 ? `${n}B` : `${(n / 1024).toFixed(1)}KB`);
@@ -279,7 +280,7 @@ const kb = (n: number) => (n < 1024 ? `${n}B` : `${(n / 1024).toFixed(1)}KB`);
 
 // ---------- テキスト ----------
 export function textPanel(app: App, layout: () => Layout): Panel & { open(path: string): void } {
-  const label = h('span', { class: 'muted', style: 'flex:1;font:var(--mono)' }, 'ファイルを選ぶと開きます');
+  const label = h('span', { class: 'muted', style: 'flex:1;font:var(--mono)' }, T('ファイルを選ぶと開きます'));
   const area = h('textarea', { class: 'code', spellcheck: false }) as HTMLTextAreaElement;
   let path = '';
   let dirty = false;
@@ -289,7 +290,7 @@ export function textPanel(app: App, layout: () => Layout): Panel & { open(path: 
       await app.api(`/api/file?path=${encodeURIComponent(path)}`, { method: 'PUT', raw: area.value });
       dirty = false;
       label.textContent = path;
-      toast(`保存しました: ${path}`);
+      toast(T('保存しました: {0}', path));
       await app.refresh();
     } catch (e) {
       toast((e as Error).message, 'bad');
@@ -309,11 +310,11 @@ export function textPanel(app: App, layout: () => Layout): Panel & { open(path: 
   });
   // 外部で変わったら（未保存の変更がなければ）読み直す
   app.on('change', () => { if (path && !dirty) load(path).catch(() => {}); });
-  const el = h('div', {}, h('div', { class: 'toolbar' }, label, h('button', { onclick: save, title: 'Ctrl+S' }, '保存')), area);
+  const el = h('div', {}, h('div', { class: 'toolbar' }, label, h('button', { onclick: save, title: 'Ctrl+S' }, T('保存'))), area);
   return {
-    id: 'text', title: 'テキスト', el, fill: true,
+    id: 'text', title: T('テキスト'), el, fill: true,
     open: async (p: string) => {
-      if (dirty && !confirm(`${path} の未保存の変更を捨てて ${p} を開きますか？`)) return;
+      if (dirty && !confirm(T('{0} の未保存の変更を捨てて {1} を開きますか？', path, p))) return;
       await load(p);
       layout().show('text');
     },
@@ -333,8 +334,8 @@ export function logPanel(app: App): Panel {
       for (const e of raw) {
         const root = e.path.startsWith('sheet:') && e.path.includes('|') ? e.path.split('|')[0] : null;
         const prev = entries[entries.length - 1] as E & { n?: number; root?: string };
-        if (root && prev?.root === root && prev.t === e.t && prev.who === e.who) { prev.n = (prev.n ?? 1) + 1; prev.to = `切り方 ${prev.n}件変更`; continue; }
-        entries.push(root ? { ...e, path: root, from: undefined, to: `切り方 ${e.path.split('|')[1]} ${typeof e.to === 'string' ? e.to : '変更'}`, root } as E : e);
+        if (root && prev?.root === root && prev.t === e.t && prev.who === e.who) { prev.n = (prev.n ?? 1) + 1; prev.to = T('切り方 {0}件変更', prev.n); continue; }
+        entries.push(root ? { ...e, path: root, from: undefined, to: T('切り方 {0} {1}', e.path.split('|')[1], typeof e.to === 'string' ? e.to : T('変更')), root } as E : e);
       }
       // 1回の編集（tx）の最初の行に「戻す」を出す（AI の編集も、人が選んで戻せる）
       const firstOfTx = new Set<E>();
@@ -343,24 +344,24 @@ export function logPanel(app: App): Panel {
       clear(el, entries.length ? entries.reverse().map((e) => h('div', { class: 'line' },
         h('span', { class: 'muted' }, time(e.t), ' '),
         h('span', { class: `who-${e.kind}` }, `${e.who}`), h('span', { class: 'muted' }, `(${e.win ?? e.kind}) `),
-        e.op === 'undo' ? h('span', { class: 'muted' }, '↶元に戻す ') : e.op === 'redo' ? h('span', { class: 'muted' }, '↷やり直し ') : null,
+        e.op === 'undo' ? h('span', { class: 'muted' }, T('↶元に戻す ')) : e.op === 'redo' ? h('span', { class: 'muted' }, T('↷やり直し ')) : null,
         `${e.path} `, ...shownChange(e),
-        firstOfTx.has(e) && e.op !== 'undo' && e.kind !== 'system' ? h('button', { class: 'icon tiny undo-tx', title: 'この編集を元に戻す（その後で変えられた所があれば止まります）', onclick: () => app.undo(false, e.tx) }, '↶') : null)) : h('div', { class: 'pad muted' }, 'まだ編集はありません'));
+        firstOfTx.has(e) && e.op !== 'undo' && e.kind !== 'system' ? h('button', { class: 'icon tiny undo-tx', title: T('この編集を元に戻す（その後で変えられた所があれば止まります）'), onclick: () => app.undo(false, e.tx) }, '↶') : null)) : h('div', { class: 'pad muted' }, T('まだ編集はありません')));
     } catch { /* 起動直後など */ }
   };
   /** 変更の見せ方（ID の変更・リストの並べ替えは言葉で） */
   const shownChange = (e: { path?: string; from?: unknown; to?: unknown; auto?: boolean }) => {
-    const auto = e.auto ? h('span', { class: 'muted' }, '（自動）') : null;
+    const auto = e.auto ? h('span', { class: 'muted' }, T('（自動）')) : null;
     if (e.path?.startsWith('file:')) {
-      const word: Record<string, string> = { added: '取り込み', replaced: '差し替え', removed: '削除' };
-      return typeof e.to === 'string' && word[e.to] ? [h('span', { class: 'muted' }, word[e.to])] : [h('span', { class: 'muted' }, '場所を '), fmt(e.to), h('span', { class: 'muted' }, ' に変更')];
+      const word: Record<string, string> = { added: T('取り込み'), replaced: T('差し替え'), removed: T('削除') };
+      return typeof e.to === 'string' && word[e.to] ? [h('span', { class: 'muted' }, word[e.to])] : [h('span', { class: 'muted' }, T('場所を ')), fmt(e.to), h('span', { class: 'muted' }, T(' に変更'))];
     }
-    if (typeof e.to === 'string' && e.to.startsWith('renamed:')) return [h('span', { class: 'muted' }, 'ID を '), e.to.slice(8), h('span', { class: 'muted' }, ' に変更')];
-    if (typeof e.to === 'string' && e.to.startsWith('moved:')) return [h('span', { class: 'muted' }, `${fmt(e.from)} → `), e.to.slice(6), h('span', { class: 'muted' }, ' へ移動')];
+    if (typeof e.to === 'string' && e.to.startsWith('renamed:')) return [h('span', { class: 'muted' }, T('ID を ')), e.to.slice(8), h('span', { class: 'muted' }, T(' に変更'))];
+    if (typeof e.to === 'string' && e.to.startsWith('moved:')) return [h('span', { class: 'muted' }, `${fmt(e.from)} → `), e.to.slice(6), h('span', { class: 'muted' }, T(' へ移動'))];
     return [h('span', { class: 'muted' }, e.from !== undefined && typeof e.from !== 'object' ? `${fmt(e.from)} → ` : ''), fmt(e.to), auto];
   };
   app.on('change', render);
-  return { id: 'log', title: '操作ログ', el, render };
+  return { id: 'log', title: T('操作ログ'), el, render };
 }
 
 // ---------- Git ----------
@@ -368,7 +369,7 @@ export function gitPanel(app: App): Panel {
   const status = h('pre', { class: 'pad muted' });
   const who = h('div', { class: 'pad' });
   const helpBox = h('div', { class: 'pad' });
-  const msg = h('textarea', { style: 'width:100%;height:90px;font:var(--mono)', placeholder: 'コミットの説明（操作ログから下書きされます）' }) as HTMLTextAreaElement;
+  const msg = h('textarea', { style: 'width:100%;height:90px;font:var(--mono)', placeholder: T('コミットの説明（操作ログから下書きされます）') }) as HTMLTextAreaElement;
   const out = h('pre', { class: 'pad' });
   let edited = false;
   /** GitHub のユーザー名の見当（送り先の持ち主） */
@@ -377,18 +378,18 @@ export function gitPanel(app: App): Panel {
   const render = async () => {
     try {
       const r = await app.api<{ branch: string; status: string; draft: string; identity?: { name: string; email: string }; owner?: string | null }>('/api/git/status');
-      status.textContent = `ブランチ: ${r.branch || '（なし）'}\n${r.status || '変更なし'}`;
+      status.textContent = T('ブランチ: {0}\n{1}', r.branch || T('（なし）'), r.status || T('変更なし'));
       if (!edited) msg.value = r.draft;
       owner = r.owner ?? '';
       // コミットに入る名前・アドレス（プッシュすると誰でも見られる）
       const id = r.identity;
       clear(who);
       if (!id?.email) {
-        who.append(h('span', { style: 'color:var(--warn)' }, 'コミットに入れる名前とメールアドレスが決まっていません '), fixButton({ kind: 'identity' }));
+        who.append(h('span', { style: 'color:var(--warn)' }, T('コミットに入れる名前とメールアドレスが決まっていません ')), fixButton({ kind: 'identity' }));
       } else {
         const hidden = /@users\.noreply\.github\.com$/i.test(id.email);
-        who.append(h('span', { class: 'muted' }, `コミットに入る名前: ${id.name || '（なし）'} <${id.email}>${hidden ? '（GitHub の noreply のアドレス）' : '（プッシュすると誰でも見られます）'} `));
-        if (!hidden) who.append(h('button', { onclick: () => noreplyDialog(), title: 'アドレスを公開したくないときは、GitHub の noreply のアドレスにします' }, 'noreply のアドレスにする'));
+        who.append(h('span', { class: 'muted' }, T('コミットに入る名前: {0} <{1}>{2} ', id.name || T('（なし）'), id.email, hidden ? T('（GitHub の noreply のアドレス）') : T('（プッシュすると誰でも見られます）'))));
+        if (!hidden) who.append(h('button', { onclick: () => noreplyDialog(), title: T('アドレスを公開したくないときは、GitHub の noreply のアドレスにします') }, T('noreply のアドレスにする')));
       }
     } catch (e) {
       status.textContent = (e as Error).message;
@@ -406,8 +407,8 @@ export function gitPanel(app: App): Panel {
     }
   };
   const FIX_LABEL: Record<GitFix['kind'], string> = {
-    noreply: '公開してよいアドレス（noreply）にする', 'set-url': '送り先を新しい場所に直す', pushpull: '取り込んでからプッシュ',
-    'set-upstream': '送り先を決めてプッシュ', identity: '名前とアドレスを決める',
+    noreply: T('公開してよいアドレス（noreply）にする'), 'set-url': T('送り先を新しい場所に直す'), pushpull: T('取り込んでからプッシュ'),
+    'set-upstream': T('送り先を決めてプッシュ'), identity: T('名前とアドレスを決める'),
   };
   function fixButton(f: GitFix): HTMLElement {
     const go = () => {
@@ -419,38 +420,38 @@ export function gitPanel(app: App): Panel {
     return h('button', { onclick: go }, FIX_LABEL[f.kind]);
   }
   const doFix = async (body: Record<string, unknown>) => {
-    out.textContent = '直しています…';
+    out.textContent = T('直しています…');
     const r = await app.api<{ ok: boolean; out: string }>('/api/git/fix', { body });
     out.textContent = r.out;
-    toast(r.ok ? r.out.split('\n').slice(-1)[0] : `直せませんでした。Git のパネルに出力があります`, r.ok ? undefined : 'bad', 8000);
+    toast(r.ok ? r.out.split('\n').slice(-1)[0] : T('直せませんでした。Git のパネルに出力があります'), r.ok ? undefined : 'bad', 8000);
     if (r.ok) showHelp([]);
     await render();
     void check(true);
   };
   /** GH007: アドレスを GitHub の noreply にして、プッシュしていないコミットを作り直す（確かめてから） */
   function noreplyDialog(name?: string): void {
-    const login = h('input', { type: 'text', value: owner, placeholder: 'GitHub のユーザー名', style: 'width:16em' }) as HTMLInputElement;
+    const login = h('input', { type: 'text', value: owner, placeholder: T('GitHub のユーザー名'), style: 'width:16em' }) as HTMLInputElement;
     modal((close) => h('div', {},
-      h('p', {}, 'コミットに入るメールアドレスを、公開してよい GitHub の noreply のアドレス（番号+ユーザー名@users.noreply.github.com）にします。'),
-      h('p', {}, 'まだプッシュしていないコミットは、新しいアドレスで作り直します（中身は変わりません）。このリポジトリだけの設定です。'),
-      h('div', { class: 'toolbar' }, h('label', {}, 'GitHub のユーザー名 ', login)),
+      h('p', {}, T('コミットに入るメールアドレスを、公開してよい GitHub の noreply のアドレス（番号+ユーザー名@users.noreply.github.com）にします。')),
+      h('p', {}, T('まだプッシュしていないコミットは、新しいアドレスで作り直します（中身は変わりません）。このリポジトリだけの設定です。')),
+      h('div', { class: 'toolbar' }, h('label', {}, T('GitHub のユーザー名 '), login)),
       h('div', { class: 'toolbar' },
-        h('button', { onclick: () => { close(); void doFix({ kind: 'noreply', login: login.value.trim(), ...(name ? { name } : {}) }); } }, '直す'),
-        h('button', { onclick: close }, 'やめる'))));
+        h('button', { onclick: () => { close(); void doFix({ kind: 'noreply', login: login.value.trim(), ...(name ? { name } : {}) }); } }, T('直す')),
+        h('button', { onclick: close }, T('やめる')))));
   }
   function identityDialog(): void {
-    const name = h('input', { type: 'text', placeholder: '名前（ハンドルネームでよい）', style: 'width:16em' }) as HTMLInputElement;
-    const email = h('input', { type: 'text', placeholder: 'メールアドレス', style: 'width:22em' }) as HTMLInputElement;
+    const name = h('input', { type: 'text', placeholder: T('名前（ハンドルネームでよい）'), style: 'width:16em' }) as HTMLInputElement;
+    const email = h('input', { type: 'text', placeholder: T('メールアドレス'), style: 'width:22em' }) as HTMLInputElement;
     modal((close) => h('div', {},
-      h('p', {}, 'コミットに入れる名前とメールアドレスを決めます（このリポジトリだけ）。GitHub にプッシュすると誰でも見られます。'),
+      h('p', {}, T('コミットに入れる名前とメールアドレスを決めます（このリポジトリだけ）。GitHub にプッシュすると誰でも見られます。')),
       h('div', { class: 'toolbar' }, name), h('div', { class: 'toolbar' }, email),
-      h('p', { class: 'muted' }, 'アドレスを公開したくなければ、名前だけ入れて「noreply のアドレスにする」を押します。'),
+      h('p', { class: 'muted' }, T('アドレスを公開したくなければ、名前だけ入れて「noreply のアドレスにする」を押します。')),
       h('div', { class: 'toolbar' },
-        h('button', { onclick: () => { close(); void doFix({ kind: 'identity', name: name.value, email: email.value }); } }, '決める'),
-        h('button', { onclick: () => { close(); noreplyDialog(name.value.trim() || undefined); } }, 'noreply のアドレスにする'),
-        h('button', { onclick: close }, 'やめる'))));
+        h('button', { onclick: () => { close(); void doFix({ kind: 'identity', name: name.value, email: email.value }); } }, T('決める')),
+        h('button', { onclick: () => { close(); noreplyDialog(name.value.trim() || undefined); } }, T('noreply のアドレスにする')),
+        h('button', { onclick: close }, T('やめる')))));
   }
-  const OP_NAME: Record<string, string> = { pull: '取り込み（プル）', commit: 'コミット', push: 'プッシュ' };
+  const OP_NAME: Record<string, string> = { pull: T('取り込み（プル）'), commit: T('コミット'), push: T('プッシュ') };
   const run = (op: string) => async () => {
     out.textContent = `${op}…`;
     showHelp([]);
@@ -459,12 +460,12 @@ export function gitPanel(app: App): Panel {
     showHelp(r.help);
     // 失敗したら警告を出す（出力の欄だけだと、うまくいったと思ってしまう）
     const first = r.help?.find((x) => x.level !== 'info');
-    if (!r.ok && !(op === 'commit' && r.help?.some((x) => x.title.startsWith('コミットする変更がありません')))) toast(`${OP_NAME[op] ?? op}できませんでした: ${first?.title ?? 'Git のパネルに出力があります'}`, 'bad', 10000);
-    else if (r.ok && op === 'push') toast('プッシュしました');
+    if (!r.ok && !(op === 'commit' && r.help?.length && r.help.every((x) => x.level === 'info'))) toast(T('{0}できませんでした: {1}', OP_NAME[op] ?? op, first?.title ?? T('Git のパネルに出力があります')), 'bad', 10000);
+    else if (r.ok && op === 'push') toast(T('プッシュしました'));
     if (r.locks) {
       const d = r.locks.diff;
-      const n = `増えたロック ${d.added.length}件・消えたロック ${d.removed.length}件・値が変わったロック ${d.changed.length}件`;
-      toast(`チームのロックの変更を取り込みました（${n}）。ロックマネージャーで確かめて承認するまで、AI の編集は止まります`, 'lock', 10000);
+      const n = T('増えたロック {0}件・消えたロック {1}件・値が変わったロック {2}件', d.added.length, d.removed.length, d.changed.length);
+      toast(T('チームのロックの変更を取り込みました（{0}）。ロックマネージャーで確かめて承認するまで、AI の編集は止まります', n), 'lock', 10000);
       app.openLocks();
     }
     if (op === 'commit' && r.ok) edited = false;
@@ -485,22 +486,22 @@ export function gitPanel(app: App): Panel {
     const r = await app.api<{ ok: boolean; out: string; conflict?: boolean; step: string; help?: GitHelp[] }>('/api/git/sync', { body: { mode } });
     out.textContent = r.out;
     showHelp(r.help);
-    if (r.ok) toast(mode === 'pull' ? 'GitHub の変更を取り込みました' : '手元の変更をプッシュし、GitHub の変更を取り込みました');
-    else if (r.conflict) toast('手元の変更と GitHub の変更が同じ所で食い違ったので、取り込みをやめました（手元の変更はコミット済み・プッシュはしていません）。どちらを残すか決めて合わせる必要があります（AI に頼めます）', 'bad', 15000);
-    else toast(`GitHub との同期が止まりました（${r.step}）: ${r.help?.find((x) => x.level !== 'info')?.title ?? 'Git のパネルに出力があります'}`, 'warn', 10000);
+    if (r.ok) toast(mode === 'pull' ? T('GitHub の変更を取り込みました') : T('手元の変更をプッシュし、GitHub の変更を取り込みました'));
+    else if (r.conflict) toast(T('手元の変更と GitHub の変更が同じ所で食い違ったので、取り込みをやめました（手元の変更はコミット済み・プッシュはしていません）。どちらを残すか決めて合わせる必要があります（AI に頼めます）'), 'bad', 15000);
+    else toast(T('GitHub との同期が止まりました（{0}）: {1}', r.step, r.help?.find((x) => x.level !== 'info')?.title ?? T('Git のパネルに出力があります')), 'warn', 10000);
     await app.refresh();
     render();
   };
   const ask = (s: { remoteHead?: string; behind: number; ahead: number; dirty: number }) => {
     asked = s.remoteHead ?? '';
-    const what = [s.dirty ? `コミットしていない変更 ${s.dirty}件` : '', s.ahead ? `プッシュしていないコミット ${s.ahead}件` : ''].filter(Boolean).join('・');
+    const what = [s.dirty ? T('コミットしていない変更 {0}件', s.dirty) : '', s.ahead ? T('プッシュしていないコミット {0}件', s.ahead) : ''].filter(Boolean).join(T('・'));
     modal((close) => h('div', {},
-      h('p', {}, `GitHub に新しい変更があります（${s.behind}件のコミット）。`),
-      h('p', {}, `手元にまだプッシュしていない変更があります（${what}）。手元の変更をプッシュしてから、GitHub の変更を取り込みますか？`),
-      h('p', { class: 'muted' }, 'GitHub に新しいコミットがあるとそのままではプッシュできないので、コミット → 取り込み → プッシュ の順に行います。同じ所を両方で変えていたら、取り込みをやめて元に戻し、プッシュしません。'),
+      h('p', {}, T('GitHub に新しい変更があります（{0}件のコミット）。', s.behind)),
+      h('p', {}, T('手元にまだプッシュしていない変更があります（{0}）。手元の変更をプッシュしてから、GitHub の変更を取り込みますか？', what)),
+      h('p', { class: 'muted' }, T('GitHub に新しいコミットがあるとそのままではプッシュできないので、コミット → 取り込み → プッシュ の順に行います。同じ所を両方で変えていたら、取り込みをやめて元に戻し、プッシュしません。')),
       h('div', { class: 'toolbar' },
-        h('button', { onclick: () => { close(); void sync('pushpull'); } }, 'プッシュしてから取り込む'),
-        h('button', { onclick: close }, 'あとで'))));
+        h('button', { onclick: () => { close(); void sync('pushpull'); } }, T('プッシュしてから取り込む')),
+        h('button', { onclick: close }, T('あとで')))));
   };
   /** 上流が変わったかを聞き、変わっていれば取り込む（手元に変更があれば聞く）。force は「今すぐ取り込む」 */
   const check = async (force: boolean) => {
@@ -509,11 +510,11 @@ export function gitPanel(app: App): Panel {
     try {
       const s = await app.api<{ upstream: string | null; remoteHead?: string; behind: number; ahead: number; dirty: number; checked: string; error?: string }>(`/api/git/remote${force ? '?force=1' : ''}`);
       const at = new Date(s.checked).toLocaleTimeString();
-      if (!s.upstream) { remoteLine.textContent = 'GitHub: 上流の枝がないので、自動の取り込みは使えません（git push -u で設定）'; return; }
-      if (s.error) { remoteLine.textContent = `GitHub（${s.upstream}）に聞けませんでした: ${s.error}（${at}）`; return; }
-      remoteLine.textContent = s.behind ? `GitHub（${s.upstream}）に新しい変更 ${s.behind}件（${at} に確かめた）` : `GitHub（${s.upstream}）: 最新（${at} に確かめた）`;
+      if (!s.upstream) { remoteLine.textContent = T('GitHub: 上流の枝がないので、自動の取り込みは使えません（git push -u で設定）'); return; }
+      if (s.error) { remoteLine.textContent = T('GitHub（{0}）に聞けませんでした: {1}（{2}）', s.upstream, s.error, at); return; }
+      remoteLine.textContent = s.behind ? T('GitHub（{0}）に新しい変更 {1}件（{2} に確かめた）', s.upstream, s.behind, at) : T('GitHub（{0}）: 最新（{1} に確かめた）', s.upstream, at);
       // プッシュしていないコミットは目立たせる（プッシュが失敗したままに気づけるように）
-      if (s.ahead) remoteLine.append(h('span', { style: 'color:var(--warn);font-weight:600' }, `　⚠ プッシュしていないコミット ${s.ahead}件`));
+      if (s.ahead) remoteLine.append(h('span', { style: 'color:var(--warn);font-weight:600' }, T('　⚠ プッシュしていないコミット {0}件', s.ahead)));
       if (!s.behind) return;
       if (!s.dirty && !s.ahead) await sync('pull');
       else if (force || asked !== (s.remoteHead ?? '')) ask(s);
@@ -527,8 +528,8 @@ export function gitPanel(app: App): Panel {
   document.addEventListener('visibilitychange', () => { if (auto.checked && document.visibilityState === 'visible') void check(false); });
   if (auto.checked) setTimeout(() => void check(false), 3000);
   const el = h('div', {},
-    h('div', { class: 'toolbar' }, h('button', { onclick: run('pull') }, 'プル'), h('button', { onclick: run('commit') }, 'コミット'), h('button', { onclick: run('push') }, 'プッシュ'), h('button', { class: 'icon', onclick: render, title: '更新' }, '↻')),
-    h('div', { class: 'toolbar' }, h('label', {}, auto, ' GitHub から自動で取り込む（開いている間、1分ごとに確かめる）'), h('button', { onclick: () => void check(true) }, '今すぐ取り込む')),
+    h('div', { class: 'toolbar' }, h('button', { onclick: run('pull') }, T('プル')), h('button', { onclick: run('commit') }, T('コミット')), h('button', { onclick: run('push') }, T('プッシュ')), h('button', { class: 'icon', onclick: render, title: T('更新') }, '↻')),
+    h('div', { class: 'toolbar' }, h('label', {}, auto, T(' GitHub から自動で取り込む（開いている間、1分ごとに確かめる）')), h('button', { onclick: () => void check(true) }, T('今すぐ取り込む'))),
     remoteLine, helpBox, who, status, h('div', { class: 'pad' }, msg), out);
   app.on('change', () => { if (el.classList.contains('active')) render(); });
   return { id: 'git', title: 'Git', el, render };
@@ -540,10 +541,10 @@ export function exportPanel(app: App): Panel {
   const out = h('pre', { class: 'pad' });
   const desktop = h('input', { type: 'checkbox' }) as HTMLInputElement;
   const fullscreen = h('input', { type: 'checkbox' }) as HTMLInputElement;
-  const id = h('input', { type: 'text', placeholder: 'com.自分の名前.ゲーム（デスクトップの初めの1回だけ）', style: 'width:22em' }) as HTMLInputElement;
-  const open = h('a', { href: '/play/', target: '_blank', rel: 'noopener', style: 'display:none' }, '書き出したものを開く（新しいタブ）');
+  const id = h('input', { type: 'text', placeholder: T('com.自分の名前.ゲーム（デスクトップの初めの1回だけ）'), style: 'width:22em' }) as HTMLInputElement;
+  const open = h('a', { href: '/play/', target: '_blank', rel: 'noopener', style: 'display:none' }, T('書き出したものを開く（新しいタブ）'));
   let made = false;
-  const opts = h('div', { class: 'toolbar' }, h('label', {}, fullscreen, ' 全画面で始める'), id);
+  const opts = h('div', { class: 'toolbar' }, h('label', {}, fullscreen, T(' 全画面で始める')), id);
   const sync = () => { opts.style.display = desktop.checked && !made ? '' : 'none'; };
   desktop.addEventListener('change', sync);
   const render = async () => {
@@ -551,8 +552,8 @@ export function exportPanel(app: App): Panel {
       const s = await app.api<{ web: string | null; desktop: boolean; id: string | null }>('/api/export');
       made = s.desktop;
       status.textContent = s.web
-        ? `前の書き出し: ${new Date(s.web).toLocaleString()}（dist/web）${s.desktop ? `・デスクトップの元あり（dist/desktop。ID ${s.id ?? '?'}）` : ''}`
-        : 'まだ書き出していません';
+        ? T('前の書き出し: {0}（dist/web）{1}', new Date(s.web).toLocaleString(), s.desktop ? T('・デスクトップの元あり（dist/desktop。ID {0}）', s.id ?? '?') : '')
+        : T('まだ書き出していません');
       open.style.display = s.web ? '' : 'none';
       sync();
     } catch (e) {
@@ -561,12 +562,12 @@ export function exportPanel(app: App): Panel {
   };
   const run = async (btn: HTMLButtonElement) => {
     btn.disabled = true;
-    out.textContent = '書き出しています…';
+    out.textContent = T('書き出しています…');
     try {
       const r = await app.api<{ ok: boolean; out: string }>('/api/export', { body: { desktop: desktop.checked, id: id.value.trim() || undefined, fullscreen: fullscreen.checked } });
       out.textContent = r.out;
-      if (r.ok) toast('書き出しました（dist/web）');
-      else toast('書き出せませんでした。出力を見てください', 'bad', 8000);
+      if (r.ok) toast(T('書き出しました（dist/web）'));
+      else toast(T('書き出せませんでした。出力を見てください'), 'bad', 8000);
     } catch (e) {
       out.textContent = (e as Error).message;
     } finally {
@@ -574,11 +575,11 @@ export function exportPanel(app: App): Panel {
       await render();
     }
   };
-  const go = h('button', { onclick: () => void run(go) }, '書き出す');
+  const go = h('button', { onclick: () => void run(go) }, T('書き出す'));
   const el = h('div', {},
-    h('div', { class: 'pad muted' }, 'エディタを含まない、ゲームだけのファイル一式を dist/ に作ります（Git には入れない）。Web はフォルダごと置けば遊べ、itch.io なら zip にして HTML のゲームとして上げます。デスクトップ（Steam 向けの exe）は、できた dist/desktop/README.md の手順で作ります（Rust と Tauri の道具が要る）。'),
-    h('div', { class: 'toolbar' }, go, h('label', {}, desktop, ' デスクトップ（Tauri）の元も作る'), open),
+    h('div', { class: 'pad muted' }, T('エディタを含まない、ゲームだけのファイル一式を dist/ に作ります（Git には入れない）。Web はフォルダごと置けば遊べ、itch.io なら zip にして HTML のゲームとして上げます。デスクトップ（Steam 向けの exe）は、できた dist/desktop/README.md の手順で作ります（Rust と Tauri の道具が要る）。')),
+    h('div', { class: 'toolbar' }, go, h('label', {}, desktop, T(' デスクトップ（Tauri）の元も作る')), open),
     opts, status, out);
   sync();
-  return { id: 'export', title: '書き出し', el, render };
+  return { id: 'export', title: T('書き出し'), el, render };
 }

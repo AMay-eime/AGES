@@ -20,6 +20,7 @@ import { writeFocus, type EditorFocus } from '../project/focus.ts';
 import { EXPORT_MARK } from '../project/export.ts';
 import { DEFAULT_PORT, choosePort, openBrowser, shouldOpen } from './open.ts';
 import { explainGit, githubOwner, noreplyEmail, safeRemoteUrl, type GitOp } from './git-help.ts';
+import { trFor, type Tr } from './i18n-node.ts';
 
 process.removeAllListeners('warning');
 
@@ -303,13 +304,13 @@ const REMOTE_MIN_MS = 50_000;
  * よくある失敗を直す（Git のパネルのボタン。git-help.ts の fix）。何をしたかを out に返す。
  * noreply: このリポジトリの user.email を GitHub の noreply のアドレスにし、まだプッシュしていないコミットを作り直す（人が確かめてから）
  */
-async function gitFix(b: { kind?: string; url?: string; branch?: string; login?: string; name?: string; email?: string }): Promise<{ ok: boolean; out: string }> {
+async function gitFix(b: { kind?: string; url?: string; branch?: string; login?: string; name?: string; email?: string }, tr: Tr): Promise<{ ok: boolean; out: string }> {
   const branch = await gitValue(['branch', '--show-current']);
   const remote = (await gitValue(['config', `branch.${branch}.remote`])) || 'origin';
   if (b.kind === 'set-url') {
-    if (!b.url || !safeRemoteUrl(b.url)) return { ok: false, out: `送り先にできない形です: ${b.url ?? ''}` };
+    if (!b.url || !safeRemoteUrl(b.url)) return { ok: false, out: tr('送り先にできない形です: {0}', b.url ?? '') };
     const r = await gitRun(['remote', 'set-url', remote, b.url]);
-    return { ok: r.code === 0, out: r.code === 0 ? `送り先（${remote}）を ${b.url} にしました` : r.out };
+    return { ok: r.code === 0, out: r.code === 0 ? tr('送り先（{0}）を {1} にしました', remote, b.url) : r.out };
   }
   if (b.kind === 'set-upstream') {
     const r = await gitRun(['push', '-u', remote, b.branch || branch]);
@@ -317,42 +318,42 @@ async function gitFix(b: { kind?: string; url?: string; branch?: string; login?:
     return { ok: r.code === 0, out: r.out };
   }
   if (b.kind === 'identity') {
-    if (!b.name?.trim() || !b.email?.trim() || /\s/.test(b.email.trim())) return { ok: false, out: '名前とメールアドレスを入れてください' };
+    if (!b.name?.trim() || !b.email?.trim() || /\s/.test(b.email.trim())) return { ok: false, out: tr('名前とメールアドレスを入れてください') };
     await gitRun(['config', 'user.name', b.name.trim()]);
     await gitRun(['config', 'user.email', b.email.trim()]);
-    return { ok: true, out: `コミットに入る名前・アドレスを ${b.name.trim()} <${b.email.trim()}> にしました（このリポジトリだけ）` };
+    return { ok: true, out: tr('コミットに入る名前・アドレスを {0} <{1}> にしました（このリポジトリだけ）', b.name.trim(), b.email.trim()) };
   }
   if (b.kind === 'noreply') {
     const login = (b.login ?? '').trim();
-    if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(login)) return { ok: false, out: `GitHub のユーザー名の形ではありません: ${login}` };
+    if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(login)) return { ok: false, out: tr('GitHub のユーザー名の形ではありません: {0}', login) };
     let id: number;
     try {
       const u = await fetch(`${process.env.AGES_GITHUB_API ?? 'https://api.github.com'}/users/${login}`, { headers: { accept: 'application/vnd.github+json', 'user-agent': 'ages-editor' }, signal: AbortSignal.timeout(10_000) });
-      if (!u.ok) return { ok: false, out: `GitHub にユーザー ${login} が見つかりません（${u.status}）` };
+      if (!u.ok) return { ok: false, out: tr('GitHub にユーザー {0} が見つかりません（{1}）', login, u.status) };
       id = Number(((await u.json()) as { id?: number }).id);
-      if (!id) return { ok: false, out: `GitHub のユーザー ${login} の番号が分かりません` };
+      if (!id) return { ok: false, out: tr('GitHub のユーザー {0} の番号が分かりません', login) };
     } catch (e) {
-      return { ok: false, out: `GitHub につながりません: ${(e as Error).message}` };
+      return { ok: false, out: tr('GitHub につながりません: {0}', (e as Error).message) };
     }
     const email = noreplyEmail(id, login);
-    const log = [`コミットに入るアドレスを ${email} にしました（このリポジトリだけ）`];
-    if (b.name?.trim()) { await gitRun(['config', 'user.name', b.name.trim()]); log.push(`名前を ${b.name.trim()} にしました`); }
+    const log = [tr('コミットに入るアドレスを {0} にしました（このリポジトリだけ）', email)];
+    if (b.name?.trim()) { await gitRun(['config', 'user.name', b.name.trim()]); log.push(tr('名前を {0} にしました', b.name.trim())); }
     else if (!(await gitValue(['config', 'user.name']))) await gitRun(['config', 'user.name', login]);
     await gitRun(['config', 'user.email', email]);
     // まだプッシュしていないコミットを、新しいアドレスで作り直す（上流がなければ作り直さない）
     const up = await gitRun(['rev-parse', '--verify', '-q', '@{u}']);
-    if (up.code !== 0) return { ok: true, out: [...log, '上流の枝がないので、コミットは作り直していません（最後のコミットだけなら AI に頼めます）'].join('\n') };
+    if (up.code !== 0) return { ok: true, out: [...log, tr('上流の枝がないので、コミットは作り直していません（最後のコミットだけなら AI に頼めます）')].join('\n') };
     const ahead = Number((await gitValue(['rev-list', '--count', '@{u}..HEAD'])) || 0);
-    if (!ahead) return { ok: true, out: [...log, 'プッシュしていないコミットはありません'].join('\n') };
+    if (!ahead) return { ok: true, out: [...log, tr('プッシュしていないコミットはありません')].join('\n') };
     const merges = (await gitValue(['rev-list', '--merges', '@{u}..HEAD'])) !== '';
     const r = await gitRun(['-c', 'core.editor=true', 'rebase', '--autostash', ...(merges ? ['--rebase-merges'] : []), '--exec', 'git commit --amend --no-edit --reset-author', '@{u}']);
     if (r.code !== 0) {
       await gitRun(['rebase', '--abort']);
-      return { ok: false, out: [...log, 'コミットを作り直せませんでした（元に戻しました）。AI に頼めます:', r.out].join('\n') };
+      return { ok: false, out: [...log, tr('コミットを作り直せませんでした（元に戻しました）。AI に頼めます:'), r.out].join('\n') };
     }
-    return { ok: true, out: [...log, `プッシュしていないコミット ${ahead}件を作り直しました。もう一度プッシュしてください`].join('\n') };
+    return { ok: true, out: [...log, tr('プッシュしていないコミット {0}件を作り直しました。もう一度プッシュしてください', ahead)].join('\n') };
   }
-  return { ok: false, out: `知らない直し方です: ${b.kind ?? ''}` };
+  return { ok: false, out: tr('知らない直し方です: {0}', b.kind ?? '') };
 }
 
 async function gitDraft(): Promise<string> {
@@ -516,6 +517,8 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
   }
   if (p.startsWith('/api/git/')) {
     const op = p.slice('/api/git/'.length);
+    // 人に見せる文は、エディタの言語で
+    const tr = trFor(String(req.headers['x-ages-lang'] ?? ''));
     if (op === 'status') {
       const remote = (await gitValue(['config', `branch.${await gitValue(['branch', '--show-current'])}.remote`])) || 'origin';
       return json(res, {
@@ -526,7 +529,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
       });
     }
     // 終わりのコード（ok）と、よくある失敗の説明（help）も返す。失敗したら、エディタが警告を出す
-    const answer = (gop: GitOp, r: { code: number; out: string }, extra: Record<string, unknown> = {}) => json(res, { ok: r.code === 0, out: r.out, help: explainGit(gop, r.code, r.out), ...extra });
+    const answer = (gop: GitOp, r: { code: number; out: string }, extra: Record<string, unknown> = {}) => json(res, { ok: r.code === 0, out: r.out, help: explainGit(gop, r.code, r.out, tr), ...extra });
     if (m === 'POST' && op === 'commit') {
       const { message } = JSON.parse((await body(req)).toString('utf8'));
       const add = await gitRun(['add', '-A', '--', '.']);
@@ -536,11 +539,11 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
     if (m === 'POST' && op === 'pull') {
       const r = await pullWithLocks(['pull', '--no-rebase', '--no-edit']);
       // 食い違いの印（<<<<<<<）が入ったままだと JSON が読めずエディタも AI も止まるので、取り込みをやめて元に戻す
-      if (r.code !== 0 && /CONFLICT|Automatic merge failed/.test(r.out)) r.out += '\n' + (await git(['merge', '--abort'])) + '\n（食い違ったので取り込みをやめました。手元の変更は残っています）';
+      if (r.code !== 0 && /CONFLICT|Automatic merge failed/.test(r.out)) r.out += '\n' + (await git(['merge', '--abort'])) + '\n' + tr('（食い違ったので取り込みをやめました。手元の変更は残っています）');
       return answer('pull', r, { locks: r.locks });
     }
     if (m === 'POST' && op === 'push') { const r = await gitRun(['push']); remoteCache = null; return answer('push', r); }
-    if (m === 'POST' && op === 'fix') return json(res, await gitFix(JSON.parse((await body(req)).toString('utf8') || '{}')));
+    if (m === 'POST' && op === 'fix') return json(res, await gitFix(JSON.parse((await body(req)).toString('utf8') || '{}'), tr));
     // 上流（GitHub）が変わったか。?force=1 は「今すぐ取り込む」（間を空けずに聞く）
     if (op === 'remote') {
       if (!remoteCache || url.searchParams.get('force') === '1' || Date.now() - remoteCache.at >= REMOTE_MIN_MS) {
@@ -556,10 +559,10 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
       const { mode } = JSON.parse((await body(req)).toString('utf8') || '{}') as { mode?: string };
       const pullFn = async (args: string[]) => pullWithLocks(args);
       const r = mode === 'pushpull'
-        ? await pushAndPull(gitRun, await gitDraft(), pullFn)
+        ? await pushAndPull(gitRun, await gitDraft(), pullFn, tr)
         : await (async () => { const p = await pullWithLocks(['pull', '--ff-only', '--no-edit']); return { ok: p.code === 0, out: p.out, step: 'pull' }; })();
       remoteCache = null;
-      return json(res, { ...r, help: explainGit('sync', r.ok ? 0 : 1, r.out) });
+      return json(res, { ...r, help: explainGit('sync', r.ok ? 0 : 1, r.out, tr) });
     }
   }
   json(res, { error: `見つかりません: ${m} ${p}` }, 404);
@@ -575,6 +578,9 @@ async function lockRoute(req: http.IncomingMessage, res: http.ServerResponse): P
   const m = req.method ?? 'GET';
   if (p === '/' || p === '/index.html') return serveFile(res, join(EDITOR_DIR, 'locks.html'));
   if (p === '/locks.ts') return serveFile(res, join(EDITOR_DIR, 'locks.ts'));
+  // 言葉（ロックマネージャーもエディタと同じ言語で）
+  if (p === '/i18n.ts') return serveFile(res, join(EDITOR_DIR, 'i18n.ts'));
+  if (p.startsWith('/locales/')) return serveFile(res, inside(join(EDITOR_DIR, 'locales'), p.slice('/locales/'.length)));
   const proj = p.match(/^\/project@\d+\/(.*)$/);
   if (proj) return serveFile(res, inside(projectDir, proj[1]));
   if (p === '/api/events') {

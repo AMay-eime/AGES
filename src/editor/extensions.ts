@@ -13,6 +13,7 @@ import { inputWidget } from './ui/inspector.ts';
 import { SaveData } from '../core/save.ts';
 import { ASSET_MIME, PREFAB_MIME } from './ui/assets.ts';
 import { runTrial, startTrial } from '../core/trial.ts';
+import { T } from './i18n.ts';
 
 export interface LoadedExtension {
   ext: EditorExtension;
@@ -113,7 +114,7 @@ export function makeApi(app: App, win: string): EditorApi {
     modal: (build) => { modal(build); },
     show: (extId, args) => {
       // 相手の拡張がいなければ知らせて false（読み込みに失敗した・登録し忘れ）
-      if (!app.extensions.some((x) => x.ext.id === extId)) { toast(`拡張 ${extId} がありません（ages.project.json の editorWindows を確かめる）`, 'bad'); return false; }
+      if (!app.extensions.some((x) => x.ext.id === extId)) { toast(T('拡張 {0} がありません（ages.project.json の editorWindows を確かめる）', extId), 'bad'); return false; }
       app.emit('showPanel', `win:${extId}`); app.emit(`show:${extId}`, args);
       return true;
     },
@@ -194,7 +195,7 @@ export function askText(title: string, value = ''): Promise<string | null> {
       input.addEventListener('keydown', (e) => { if (e.key === 'Enter') finish(input.value.trim()); if (e.key === 'Escape') finish(null); });
       setTimeout(() => { input.focus(); input.select(); }, 0);
       return h('div', {}, h('h3', {}, title), h('div', { class: 'row' }, input),
-        h('div', { class: 'row', style: 'justify-content:flex-end;gap:6px;margin-top:12px' }, h('button', { onclick: () => finish(null) }, 'やめる'), h('button', { class: 'primary', onclick: () => finish(input.value.trim()) }, 'OK')));
+        h('div', { class: 'row', style: 'justify-content:flex-end;gap:6px;margin-top:12px' }, h('button', { onclick: () => finish(null) }, T('やめる')), h('button', { class: 'primary', onclick: () => finish(input.value.trim()) }, 'OK')));
     });
   });
 }

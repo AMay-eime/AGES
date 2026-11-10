@@ -4,7 +4,7 @@
 
 ### AI と相談して、エディタから作るゲームエンジン
 
-**日本語** | [English](README.en.md) | [简体中文](README.zh-CN.md)
+**日本語** | [English](README.en.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [Deutsch](README.de.md) | [Français](README.fr.md)
 
 </div>
 
@@ -23,7 +23,7 @@
 </tr>
 </table>
 
-<p align="center">📦 作ったゲームは <b>Web</b> と <b>Windows（Steam 向け）</b> に書き出せます<br>🚧 いまは開発中です。<a href="https://github.com/AMay-eime/AGES/issues/new/choose">Issue</a> での協力をお願いします</p>
+<p align="center">📦 作ったゲームは <b>Web</b> と <b>Windows（Steam 向け）</b> に書き出せます<br>🌐 エディタの表示は 日本語・English・简体中文・繁體中文・Deutsch・Français（⚙ 設定で切り替え）<br>🚧 いまは開発中です。<a href="https://github.com/AMay-eime/AGES/issues/new/choose">Issue</a> での協力をお願いします</p>
 
 <div align="center">
 <img src="docs/images/editor.png" alt="AGES のエディタ。見本のゲームを再生している" width="860">

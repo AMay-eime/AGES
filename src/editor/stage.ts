@@ -10,6 +10,7 @@ import { canvasToWorld, drawColliders, drawScreens, fitBox, freeView, makeDraw, 
 import type { StageDraw, StageHandle, StageOptions, StagePointer, StageView } from './window-api.ts';
 import type { Game } from '../core/game.ts';
 import { h } from './ui/dom.ts';
+import { T } from './i18n.ts';
 
 /** シーク・作り直しの早送りに、1回の描画のあいだ使う時間(ms)。残りで画面とほかの窓を動かす */
 const FF_BUDGET = 24;
@@ -39,7 +40,7 @@ export function createStage(app: App, el: HTMLElement, init: StageOptions): Stag
 
   const player = new StagePlayer(
     () => {
-      if (!app.registry || !app.state?.config) throw new Error('読み込み中…');
+      if (!app.registry || !app.state?.config) throw new Error(T('読み込み中…'));
       renderer?.particles.clear();
       const t = startTrial(app.registry, app.state.config, o, { lang: app.previewLang || undefined, camera: isScene() ? undefined : { zoom: o.zoom ?? 2, follow: !!o.follow } });
       t.game.particleListeners.push((cmd) => { if (!player.ff) renderer?.particles.burst(t.game.world, cmd.id, cmd.count); });
@@ -102,7 +103,7 @@ export function createStage(app: App, el: HTMLElement, init: StageOptions): Stag
     try {
       renderer = new Renderer(canvas, { urlOf: (p) => app.assetUrl(p), sheets: app.registry.sheets, filter: app.state.config.view.filter, shaders: app.registry.shaders });
     } catch (e) {
-      rendererError = `この画面では描けません（WebGL2）: ${(e as Error).message}`;
+      rendererError = T('この画面では描けません（WebGL2）: {0}', (e as Error).message);
     }
   };
 
@@ -163,7 +164,7 @@ export function createStage(app: App, el: HTMLElement, init: StageOptions): Stag
       // シーク・作り直しの早送り: 着くまで描かない（前の絵のまま）
       player.fastForward(FF_BUDGET);
       if (player.target !== null) {
-        note.textContent = `進めています ${(player.game!.frame / app.state.config.fps).toFixed(1)} / ${(player.target / app.state.config.fps).toFixed(1)}秒`;
+        note.textContent = T('進めています {0} / {1}秒', (player.game!.frame / app.state.config.fps).toFixed(1), (player.target / app.state.config.fps).toFixed(1));
         return;
       }
     } else player.tick(dt, now);
@@ -251,7 +252,7 @@ export function createStage(app: App, el: HTMLElement, init: StageOptions): Stag
     get game() { return player.game; },
     send(event, data) {
       const g = player.game;
-      if (!g) throw new Error(`舞台のゲームがありません${player.error ? `（${player.error}）` : '（まだ作っていない）'}`);
+      if (!g) throw new Error(T('舞台のゲームがありません{0}', player.error ? T('（{0}）', player.error) : T('（まだ作っていない）')));
       try { g.ctx.emit(event, data); } catch (e) { player.error = (e as Error).message; }
     },
     onFrame(fn) { player.frameFns.add(fn); return () => { player.frameFns.delete(fn); }; },

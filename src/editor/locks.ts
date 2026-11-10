@@ -1,10 +1,16 @@
 // ロックマネージャー（人だけが使う専用の画面）。エディタとは別のオリジンで開くので、エディタや拡張のコードからは操作できない。
 // ロックを付ける・外す・ロックされた値を変える・ロックの記録を確かめるのは、ここからだけ。
-// このファイルは単独で動く（エディタのコードを読み込まない）。
+// このファイルは単独で動く（エディタのコードを読み込まない。言葉だけは同じもの）。
+import { T } from './i18n.ts';
 
 type Lock = { who: string; t: string; value: unknown; note?: string };
 type Item = { path: string; kind: 'value' | 'sheet' | 'file'; value?: unknown; type?: string; problem?: string; lock?: Lock; asset?: { path: string; kind: string; bytes: number; w?: number; h?: number; sec?: number } };
 type State = { items: Item[]; integrity: { ok: boolean; reason?: string; diff: { added: string[]; removed: string[]; changed: string[] }; hasBackup: boolean }; lockReport: string[]; project: string; version: number };
+
+// 画面の固定の文（locks.html）も、選んだ言語に
+document.title = T('🔒 ロックマネージャー — AGES');
+for (const el of document.querySelectorAll<HTMLElement>('[data-t]')) el.textContent = T(el.dataset.t!);
+for (const el of document.querySelectorAll<HTMLElement>('[data-t-title]')) el.title = T(el.dataset.tTitle!);
 
 const params = new URLSearchParams(location.search);
 let focus = params.get('focus') ?? '';
@@ -49,7 +55,7 @@ const act = async (fn: () => Promise<unknown>, ok: string) => {
 
 const time = (iso: string) => { const d = new Date(iso); const p = (n: number) => String(n).padStart(2, '0'); return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
 const show = (v: unknown) => (typeof v === 'string' ? JSON.stringify(v) : JSON.stringify(v));
-const groupOf = (p: string) => (p.startsWith('file:') ? 'ファイル' : p.startsWith('sheet:') ? '画像の切り方' : p.startsWith('$') ? '表' : p.startsWith('@') ? 'プレハブ' : 'シーン');
+const groupOf = (p: string) => (p.startsWith('file:') ? T('ファイル') : p.startsWith('sheet:') ? T('画像の切り方') : p.startsWith('$') ? T('表') : p.startsWith('@') ? T('プレハブ') : T('シーン'));
 
 let state: State | null = null;
 let filter = '';
@@ -62,15 +68,15 @@ function editor(it: Item): HTMLElement {
     const pick = h('input', { type: 'file', style: 'display:none' }) as HTMLInputElement;
     pick.addEventListener('change', () => {
       const f = pick.files?.[0];
-      if (f) act(() => api(`/api/replace?path=${encodeURIComponent(it.path.slice(5))}`, { raw: f }), `差し替えました: ${it.path.slice(5)}`);
+      if (f) act(() => api(`/api/replace?path=${encodeURIComponent(it.path.slice(5))}`, { raw: f }), T('差し替えました: {0}', it.path.slice(5)));
     });
     return h('div', {},
       a?.kind === 'image' ? h('img', { src: `/project@${state?.version ?? 0}/${it.path.slice(5)}?t=${Date.now()}`, alt: '' }) : null,
-      h('div', { class: 'muted' }, a ? [a.kind === 'image' ? `${a.w}×${a.h}` : a.sec !== undefined ? `${a.sec}秒` : '', `${(a.bytes / 1024).toFixed(1)}KB`].filter(Boolean).join('・') : ''),
-      h('button', { onclick: () => pick.click(), title: '中身を別のファイルに差し替える（ロックはそのまま）' }, '差し替える'), pick);
+      h('div', { class: 'muted' }, a ? [a.kind === 'image' ? `${a.w}×${a.h}` : a.sec !== undefined ? T('{0}秒', a.sec) : '', `${(a.bytes / 1024).toFixed(1)}KB`].filter(Boolean).join(T('・')) : ''),
+      h('button', { onclick: () => pick.click(), title: T('中身を別のファイルに差し替える（ロックはそのまま）') }, T('差し替える')), pick);
   }
   const v = it.value;
-  const save = (value: unknown) => act(() => api('/api/set', { body: { path: it.path, value } }), `変えました: ${it.path}`);
+  const save = (value: unknown) => act(() => api('/api/set', { body: { path: it.path, value } }), T('変えました: {0}', it.path));
   if (typeof v === 'number' || typeof v === 'string') {
     const box = h('input', { type: 'text', value: String(v), style: 'width:100%' }) as HTMLInputElement;
     box.addEventListener('change', () => save(typeof v === 'number' ? Number(box.value) : box.value));
@@ -84,7 +90,7 @@ function editor(it: Item): HTMLElement {
   }
   const area = h('textarea', {}) as HTMLTextAreaElement;
   area.value = JSON.stringify(v, null, 1);
-  const apply = h('button', { onclick: () => { try { save(JSON.parse(area.value)); } catch { toast('JSON として読めません', 'bad'); } } }, '変える');
+  const apply = h('button', { onclick: () => { try { save(JSON.parse(area.value)); } catch { toast(T('JSON として読めません'), 'bad'); } } }, T('変える'));
   return h('div', {}, area, h('div', { class: 'row' }, apply, it.type ? h('span', { class: 'meta' }, it.type) : null));
 }
 
@@ -94,19 +100,19 @@ function render(): void {
   document.getElementById('project')!.textContent = s.project;
   const items = s.items.filter((i) => !filter || i.path.toLowerCase().includes(filter.toLowerCase()) || (i.lock?.note ?? '').includes(filter));
   const g = s.integrity;
-  const list = (title: string, xs: string[]) => (xs.length ? h('div', {}, h('div', { class: 'muted' }, `${title}（${xs.length}）`), xs.map((x) => h('div', { class: 'mono', style: 'padding-left:12px' }, x))) : null);
+  const list = (title: string, xs: string[]) => (xs.length ? h('div', {}, h('div', { class: 'muted' }, T('{0}（{1}）', title, xs.length)), xs.map((x) => h('div', { class: 'mono', style: 'padding-left:12px' }, x))) : null);
   const integrity = g.ok ? null : h('div', { class: 'card warn' },
-    h('h2', {}, '🔒⚠ ロックの記録を確認してください'),
+    h('h2', {}, T('🔒⚠ ロックの記録を確認してください')),
     h('div', {}, g.reason ?? ''),
-    h('div', { class: 'muted' }, 'AI からの編集はすべて止まっています。最後にあなたが封印したロックは、確認するまで引き続き有効です。'),
-    list('消されたロック', g.diff.removed), list('増えたロック', g.diff.added), list('値が変わったロック', g.diff.changed),
+    h('div', { class: 'muted' }, T('AI からの編集はすべて止まっています。最後にあなたが封印したロックは、確認するまで引き続き有効です。')),
+    list(T('消されたロック'), g.diff.removed), list(T('増えたロック'), g.diff.added), list(T('値が変わったロック'), g.diff.changed),
     h('div', { class: 'row', style: 'margin-top:10px;justify-content:flex-end' },
-      g.hasBackup ? h('button', { onclick: () => act(() => api('/api/restore', { body: {} }), '前の状態に戻しました') }, '前の状態に戻す') : null,
-      h('button', { class: 'primary', onclick: () => act(() => api('/api/approve', { body: {} }), '今の記録を承認しました') }, 'この内容で承認する')));
+      g.hasBackup ? h('button', { onclick: () => act(() => api('/api/restore', { body: {} }), T('前の状態に戻しました')) }, T('前の状態に戻す')) : null,
+      h('button', { class: 'primary', onclick: () => act(() => api('/api/approve', { body: {} }), T('今の記録を承認しました')) }, T('この内容で承認する'))));
   const report = s.lockReport.filter((l) => !l.startsWith('⚠'));
   // 付ける
-  const pathBox = h('input', { type: 'text', placeholder: '住所（例 main#player.Player.speed / $enemies.basic.hp / sheet:assets/x.png / file:assets/x.png）', style: 'flex:1', list: 'cands' }) as HTMLInputElement;
-  const note = h('input', { type: 'text', placeholder: '理由（任意。AI にも見えます）', style: 'width:220px' }) as HTMLInputElement;
+  const pathBox = h('input', { type: 'text', placeholder: T('住所（例 main#player.Player.speed / $enemies.basic.hp / sheet:assets/x.png / file:assets/x.png）'), style: 'flex:1', list: 'cands' }) as HTMLInputElement;
+  const note = h('input', { type: 'text', placeholder: T('理由（任意。AI にも見えます）'), style: 'width:220px' }) as HTMLInputElement;
   const cands = h('datalist', { id: 'cands' });
   const preview = h('div', { class: 'muted mono', style: 'margin-top:6px;min-height:1.4em' });
   const bulk = h('div', { style: 'margin-top:4px' });
@@ -121,42 +127,42 @@ function render(): void {
       const d = await api<Item>(`/api/describe?path=${encodeURIComponent(q)}`).catch(() => null);
       // 値でなく、物・行などのまとまりなら、中の値をまとめてロックできる
       const inside = list.filter((c) => c.startsWith(q + '.') && !s.items.some((i) => i.path === c));
-      bulk.replaceChildren(d?.problem && inside.length ? h('button', { onclick: () => act(() => api('/api/lock', { body: { paths: inside, note: note.value.trim() || undefined } }), `🔒 ${inside.length}件ロックしました`) }, `この中の値をまとめてロック（${inside.length}件: ${inside.slice(0, 3).map((c) => c.slice(q.length + 1)).join(', ')}${inside.length > 3 ? ' …' : ''}）`) : '');
-      preview.textContent = !d ? '' : d.problem ? (inside.length ? '' : `⚠ ${d.problem}`) : d.lock ? '🔒 すでにロックされています（下の一覧）' : d.kind === 'file' ? `ファイル ${d.asset?.bytes ?? 0} bytes（中身の控えをこの端末に取ります）` : `今の値: ${show(d.value)}${d.type ? `  （${d.type}）` : ''}`;
+      bulk.replaceChildren(d?.problem && inside.length ? h('button', { onclick: () => act(() => api('/api/lock', { body: { paths: inside, note: note.value.trim() || undefined } }), T('🔒 {0}件ロックしました', inside.length)) }, T('この中の値をまとめてロック（{0}件: {1}{2}）', inside.length, inside.slice(0, 3).map((c) => c.slice(q.length + 1)).join(', '), inside.length > 3 ? ' …' : '')) : '');
+      preview.textContent = !d ? '' : d.problem ? (inside.length ? '' : `⚠ ${d.problem}`) : d.lock ? T('🔒 すでにロックされています（下の一覧）') : d.kind === 'file' ? T('ファイル {0} bytes（中身の控えをこの端末に取ります）', d.asset?.bytes ?? 0) : T('今の値: {0}{1}', show(d.value), d.type ? T('  （{0}）', d.type) : '');
     }, 120);
   };
   pathBox.addEventListener('input', look);
   const lockIt = () => {
     const path = pathBox.value.trim();
     if (!path) return;
-    act(() => api('/api/lock', { body: { paths: [path], note: note.value.trim() || undefined } }), `🔒 ロックしました: ${path}`).then(() => { focus = path; });
+    act(() => api('/api/lock', { body: { paths: [path], note: note.value.trim() || undefined } }), T('🔒 ロックしました: {0}', path)).then(() => { focus = path; });
   };
   pathBox.addEventListener('keydown', (e) => { if (e.key === 'Enter') lockIt(); });
   const focused = focus && s.items.some((i) => i.path === focus);
   if (focus && !focused) { pathBox.value = focus; look(); }
   const add = h('div', { class: 'card' },
-    h('h2', {}, 'ロックを付ける'),
-    h('div', { class: 'row' }, pathBox, note, h('button', { class: 'primary', onclick: lockIt }, '🔒 付ける')), cands, preview, bulk,
-    h('div', { class: 'muted', style: 'font-size:12px;margin-top:4px' }, 'ロックした値は、AI・独自のウインドウ・エディタのどこからも変えられません（この画面からだけ）。ファイルのロックは、差し替え・移動・削除を止め、書き換えられたらこの端末の控えから戻します。'));
+    h('h2', {}, T('ロックを付ける')),
+    h('div', { class: 'row' }, pathBox, note, h('button', { class: 'primary', onclick: lockIt }, T('🔒 付ける'))), cands, preview, bulk,
+    h('div', { class: 'muted', style: 'font-size:12px;margin-top:4px' }, T('ロックした値は、AI・独自のウインドウ・エディタのどこからも変えられません（この画面からだけ）。ファイルのロックは、差し替え・移動・削除を止め、書き換えられたらこの端末の控えから戻します。')));
   // 一覧
   const groups = new Map<string, Item[]>();
   for (const it of items) groups.set(groupOf(it.path), [...(groups.get(groupOf(it.path)) ?? []), it]);
-  const filterBox = h('input', { type: 'search', placeholder: '🔍 住所・理由で絞る', value: filter, style: 'width:240px' }) as HTMLInputElement;
+  const filterBox = h('input', { type: 'search', placeholder: T('🔍 住所・理由で絞る'), value: filter, style: 'width:240px' }) as HTMLInputElement;
   filterBox.addEventListener('input', () => { filter = filterBox.value; render(); filterBox.focus(); });
   const rows = [...groups].map(([g2, its]) => [
-    h('div', { class: 'group' }, `${g2}（${its.length}）`),
+    h('div', { class: 'group' }, T('{0}（{1}）', g2, its.length)),
     its.map((it) => h('div', { class: `item${it.path === focus ? ' focus' : ''}`, id: `item-${it.path}` },
       h('div', {}, h('div', { class: 'path' }, it.path),
-        h('div', { class: 'meta' }, `${it.lock?.who ?? ''} ${it.lock ? time(it.lock.t) : ''}${it.lock?.note ? `  理由: ${it.lock.note}` : ''}`),
+        h('div', { class: 'meta' }, T('{0} {1}{2}', it.lock?.who ?? '', it.lock ? time(it.lock.t) : '', it.lock?.note ? T('  理由: {0}', it.lock.note) : '')),
         it.problem ? h('div', { class: 'problem' }, `⚠ ${it.problem}`) : null),
       editor(it),
-      h('div', {}, h('button', { class: 'danger', onclick: () => { if (confirm(`${it.path} のロックを外しますか？\n外すと AI も変えられるようになります。`)) act(() => api('/api/unlock', { body: { paths: [it.path] } }), `ロックを外しました: ${it.path}`); } }, '外す')))),
+      h('div', {}, h('button', { class: 'danger', onclick: () => { if (confirm(T('{0} のロックを外しますか？\n外すと AI も変えられるようになります。', it.path))) act(() => api('/api/unlock', { body: { paths: [it.path] } }), T('ロックを外しました: {0}', it.path)); } }, T('外す'))))),
   ]);
   main.replaceChildren(
     integrity ?? h('span'),
-    report.length ? h('div', { class: 'card' }, h('h2', {}, '直したこと'), report.map((r) => h('div', { class: 'muted' }, r))) : h('span'),
+    report.length ? h('div', { class: 'card' }, h('h2', {}, T('直したこと')), report.map((r) => h('div', { class: 'muted' }, r))) : h('span'),
     add,
-    h('div', { class: 'card' }, h('div', { class: 'row' }, h('h2', { style: 'margin:0;flex:1' }, `ロック ${s.items.length}件`), filterBox), rows.length ? rows : h('div', { class: 'muted', style: 'padding:8px' }, filter ? '見つかりません' : 'まだロックはありません')));
+    h('div', { class: 'card' }, h('div', { class: 'row' }, h('h2', { style: 'margin:0;flex:1' }, T('ロック {0}件', s.items.length)), filterBox), rows.length ? rows : h('div', { class: 'muted', style: 'padding:8px' }, filter ? T('見つかりません') : T('まだロックはありません'))));
   if (focused) document.getElementById(`item-${focus}`)?.scrollIntoView({ block: 'center' });
 }
 
@@ -165,7 +171,7 @@ async function load(): Promise<void> {
     state = await api<State>('/api/state');
     render();
   } catch (e) {
-    main.replaceChildren(h('div', { class: 'card warn' }, `読み込めません: ${(e as Error).message}`));
+    main.replaceChildren(h('div', { class: 'card warn' }, T('読み込めません: {0}', (e as Error).message)));
   }
 }
 

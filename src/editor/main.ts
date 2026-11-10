@@ -11,6 +11,7 @@ import { tablePanel } from './ui/table.ts';
 import { assetsPanel } from './ui/assets.ts';
 import { builtinExtensions, projectExtension, type LoadedExtension } from './extensions.ts';
 import { duplicateOps, nudgeOps, removeOps } from './edit-ops.ts';
+import { EDITOR_LANGS, LANG_NAMES, T, lang, setLang, type EditorLang } from './i18n.ts';
 
 const app = new App();
 (window as unknown as { ages: App }).ages = app; // デバッグ・AIのブラウザ操作用
@@ -32,9 +33,9 @@ if (solo === 'win') {
   document.title = `${title} — AGES`;
   const top = document.getElementById('top')!;
   top.replaceChildren(h('span', { class: 'title' }, 'AGES', h('small', {}, title)));
-  if (!x) el.append(h('div', { class: 'pad', style: 'color:var(--bad)' }, `拡張 ${id} のパネルがありません`));
+  if (!x) el.append(h('div', { class: 'pad', style: 'color:var(--bad)' }, T('拡張 {0} のパネルがありません', id)));
   else {
-    try { x.ext.panel!.mount(el, x.api); } catch (e) { el.append(h('div', { class: 'pad', style: 'color:var(--bad)' }, `エラー: ${(e as Error).message}`)); }
+    try { x.ext.panel!.mount(el, x.api); } catch (e) { el.append(h('div', { class: 'pad', style: 'color:var(--bad)' }, T('エラー: {0}', (e as Error).message))); }
   }
   new EventSource('/api/events').onmessage = (msg) => { if (JSON.parse(msg.data).type !== 'hello') app.refresh(); };
 } else if (solo === 'matrix' || solo === 'sprite' || solo === 'table') {
@@ -46,11 +47,11 @@ if (solo === 'win') {
   document.getElementById('work')!.replaceChildren(m.el);
   const target = (solo === 'matrix' ? params.get('path') : solo === 'sprite' ? params.get('image') : params.get('name')) ?? '';
   m.open(target);
-  document.title = `${solo === 'matrix' ? '行列' : solo === 'sprite' ? '切り方' : '表'} ${target} — AGES`;
+  document.title = T('{0} {1} — AGES', solo === 'matrix' ? T('行列') : solo === 'sprite' ? T('切り方') : T('表'), target);
   const top = document.getElementById('top')!;
-  const user = h('input', { type: 'text', value: app.user, style: 'width:110px', title: '操作ログに残るあなたの名前' }) as HTMLInputElement;
+  const user = h('input', { type: 'text', value: app.user, style: 'width:110px', title: T('操作ログに残るあなたの名前') }) as HTMLInputElement;
   user.addEventListener('change', () => app.setUser(user.value));
-  top.replaceChildren(h('span', { class: 'title' }, 'AGES', h('small', {}, solo === 'matrix' ? '行列エディタ' : solo === 'sprite' ? '切り方' : '表')), h('span', { class: 'spacer' }), h('span', { class: 'muted' }, '名前'), user);
+  top.replaceChildren(h('span', { class: 'title' }, 'AGES', h('small', {}, solo === 'matrix' ? T('行列エディタ') : solo === 'sprite' ? T('切り方') : T('表'))), h('span', { class: 'spacer' }), h('span', { class: 'muted' }, T('名前')), user);
   new EventSource('/api/events').onmessage = (msg) => { if (JSON.parse(msg.data).type !== 'hello') app.refresh(); };
 } else {
   await startEditor();
@@ -106,26 +107,26 @@ const top = document.getElementById('top')!;
 const renderTop = () => {
   const s = app.state;
   const p = app.play;
-  const userInput = h('input', { type: 'text', value: app.user, title: '操作ログに残るあなたの名前', style: 'width:110px' }) as HTMLInputElement;
-  userInput.addEventListener('change', () => { app.setUser(userInput.value); toast(`名前: ${app.user}`); });
+  const userInput = h('input', { type: 'text', value: app.user, title: T('操作ログに残るあなたの名前'), style: 'width:110px' }) as HTMLInputElement;
+  userInput.addEventListener('change', () => { app.setUser(userInput.value); toast(T('名前: {0}', app.user)); });
   const locks = s && !s.error ? Object.keys(s.locks).length : 0;
   const broken = s && !s.error && s.integrity && !s.integrity.ok;
   clear(top,
     h('span', { class: 'title' }, 'AGES', h('small', {}, s?.config?.name ?? '')),
-    h('button', { class: p && !p.paused ? 'on' : '', title: playTitle(), onclick: () => (p ? app.togglePause() : app.startPlay()) }, p && !p.paused ? '⏸ 一時停止' : '▶ 再生'),
-    h('button', { class: playSet() ? 'icon on' : 'icon', title: `再生の設定（始めのシーンに渡す params・日時）${playSet() ? `\n${playSet()}` : ''}`, onclick: openPlaySettings, disabled: !!p }, '…'),
-    h('button', { title: '1フレーム進める', onclick: () => app.stepOnce() }, '⏭'),
+    h('button', { class: p && !p.paused ? 'on' : '', title: playTitle(), onclick: () => (p ? app.togglePause() : app.startPlay()) }, p && !p.paused ? T('⏸ 一時停止') : T('▶ 再生')),
+    h('button', { class: playSet() ? 'icon on' : 'icon', title: T('再生の設定（始めのシーンに渡す params・日時）{0}', playSet() ? `\n${playSet()}` : ''), onclick: openPlaySettings, disabled: !!p }, '…'),
+    h('button', { title: T('1フレーム進める'), onclick: () => app.stepOnce() }, '⏭'),
     speedSelect(),
-    h('button', { title: '停止（実行中の変更を保存するか選べます）', onclick: () => app.stopPlay(), disabled: !p }, '⏹ 停止'),
-    h('button', { title: '入力を記録しながら再生（停止時に recordings/ に保存）', onclick: () => app.startPlay(true), disabled: !!p }, '● 記録して再生'),
-    h('button', { class: 'icon', title: app.undoInfo.undo ? `元に戻す（Ctrl+Z）: ${app.undoInfo.undo.label}` : '元に戻せる編集はありません', disabled: !app.undoInfo.undo || !!p, onclick: () => app.undo() }, '↶'),
-    h('button', { class: 'icon', title: app.undoInfo.redo ? `やり直す（Ctrl+Shift+Z）: ${app.undoInfo.redo.label}` : 'やり直せる編集はありません', disabled: !app.undoInfo.redo || !!p, onclick: () => app.undo(true) }, '↷'),
+    h('button', { title: T('停止（実行中の変更を保存するか選べます）'), onclick: () => app.stopPlay(), disabled: !p }, T('⏹ 停止')),
+    h('button', { title: T('入力を記録しながら再生（停止時に recordings/ に保存）'), onclick: () => app.startPlay(true), disabled: !!p }, T('● 記録して再生')),
+    h('button', { class: 'icon', title: app.undoInfo.undo ? T('元に戻す（Ctrl+Z）: {0}', app.undoInfo.undo.label) : T('元に戻せる編集はありません'), disabled: !app.undoInfo.undo || !!p, onclick: () => app.undo() }, '↶'),
+    h('button', { class: 'icon', title: app.undoInfo.redo ? T('やり直す（Ctrl+Shift+Z）: {0}', app.undoInfo.redo.label) : T('やり直せる編集はありません'), disabled: !app.undoInfo.redo || !!p, onclick: () => app.undo(true) }, '↷'),
     h('span', { class: 'spacer' }),
     audioControls(),
-    broken ? h('button', { style: 'border-color:var(--bad);color:var(--bad)', onclick: () => app.openLocks(), title: `${s.integrity.reason}\nロックマネージャーで確かめます` }, '🔒⚠ ロックの記録を確認') : null,
-    h('span', { class: 'status' }, s?.error ? `⚠ ${s.error}` : `${s.issues.length ? `⚠${s.issues.length} ` : ''}`, s?.error ? null : h('a', { style: 'cursor:pointer', title: 'ロックマネージャーを開く（ロックの一覧・付ける・外す）', onclick: () => app.openLocks() }, `🔒${locks}`), s?.error ? '' : `  v${s.version}`),
-    h('button', { class: 'icon', title: '設定', onclick: openSettings }, '⚙'),
-    h('span', { class: 'muted' }, '名前'), userInput);
+    broken ? h('button', { style: 'border-color:var(--bad);color:var(--bad)', onclick: () => app.openLocks(), title: T('{0}\nロックマネージャーで確かめます', s.integrity.reason) }, T('🔒⚠ ロックの記録を確認')) : null,
+    h('span', { class: 'status' }, s?.error ? `⚠ ${s.error}` : `${s.issues.length ? `⚠${s.issues.length} ` : ''}`, s?.error ? null : h('a', { style: 'cursor:pointer', title: T('ロックマネージャーを開く（ロックの一覧・付ける・外す）'), onclick: () => app.openLocks() }, `🔒${locks}`), s?.error ? '' : `  v${s.version}`),
+    h('button', { class: 'icon', title: T('設定'), onclick: openSettings }, '⚙'),
+    h('span', { class: 'muted' }, T('名前')), userInput);
 };
 app.on('change', renderTop);
 app.on('play', renderTop);
@@ -133,7 +134,7 @@ app.on('audio', renderTop);
 
 /** 再生の速さ（拡張の api.speed と同じ） */
 function speedSelect(): HTMLElement {
-  const sel = h('select', { title: '再生の速さ', style: 'width:auto' }, [0.25, 0.5, 1, 2, 4].map((v) => h('option', { value: String(v), selected: v === app.playSpeed }, `×${v}`))) as HTMLSelectElement;
+  const sel = h('select', { title: T('再生の速さ'), style: 'width:auto' }, [0.25, 0.5, 1, 2, 4].map((v) => h('option', { value: String(v), selected: v === app.playSpeed }, `×${v}`))) as HTMLSelectElement;
   if (![0.25, 0.5, 1, 2, 4].includes(app.playSpeed)) sel.prepend(h('option', { value: String(app.playSpeed), selected: true }, `×${app.playSpeed}`));
   sel.addEventListener('change', () => { app.playSpeed = Number(sel.value); });
   return sel;
@@ -143,29 +144,29 @@ function speedSelect(): HTMLElement {
 function playSet(): string {
   if (!app.state || app.state.error) return '';
   const s = app.playSettings;
-  return [s.params.trim() ? `params: ${s.params.trim()}` : '', s.date.trim() ? `日時: ${s.date.trim()}` : ''].filter(Boolean).join(' / ');
+  return [s.params.trim() ? `params: ${s.params.trim()}` : '', s.date.trim() ? T('日時: {0}', s.date.trim()) : ''].filter(Boolean).join(' / ');
 }
 function playTitle(): string {
-  return `再生${playSet() ? `（${playSet()}）` : ''}`;
+  return T('再生{0}', playSet() ? T('（{0}）', playSet()) : '');
 }
 
 /** 再生の設定: 始めのシーンに渡す params（ages run --params と同じ書き方）と日時（ctx.date。空なら実際の時計） */
 function openPlaySettings(): void {
   modal((close) => {
     const s = app.playSettings;
-    const params = h('input', { type: 'text', value: s.params, placeholder: 'stage=stage_0001,mode=test か JSON', style: 'flex:1' }) as HTMLInputElement;
-    const date = h('input', { type: 'text', value: s.date, placeholder: '空なら実際の時計（例 2026-12-25T09:00）', style: 'flex:1' }) as HTMLInputElement;
+    const params = h('input', { type: 'text', value: s.params, placeholder: T('stage=stage_0001,mode=test か JSON'), style: 'flex:1' }) as HTMLInputElement;
+    const date = h('input', { type: 'text', value: s.date, placeholder: T('空なら実際の時計（例 2026-12-25T09:00）'), style: 'flex:1' }) as HTMLInputElement;
     const save = () => {
       try { app.playSettings = { params: params.value.trim(), date: date.value.trim() }; close(); renderTop(); } catch (e) { toast((e as Error).message, 'bad'); }
     };
     return h('div', { style: 'min-width:420px' },
-      h('h3', {}, '再生の設定'),
-      h('div', { class: 'muted', style: 'margin-bottom:8px' }, '▶ で再生するときに、始めのシーンへ渡すもの（ctx.scene.params）と日時（ctx.date）。このブラウザに覚えます。記録して再生すると、記録にも残ります'),
+      h('h3', {}, T('再生の設定')),
+      h('div', { class: 'muted', style: 'margin-bottom:8px' }, T('▶ で再生するときに、始めのシーンへ渡すもの（ctx.scene.params）と日時（ctx.date）。このブラウザに覚えます。記録して再生すると、記録にも残ります')),
       h('div', { class: 'row' }, h('span', { style: 'width:4em' }, 'params'), params),
-      h('div', { class: 'row', style: 'margin-top:6px' }, h('span', { style: 'width:4em' }, '日時'), date),
+      h('div', { class: 'row', style: 'margin-top:6px' }, h('span', { style: 'width:4em' }, T('日時')), date),
       h('div', { class: 'row', style: 'justify-content:flex-end;gap:6px;margin-top:12px' },
-        h('button', { onclick: () => { params.value = ''; date.value = ''; } }, '空にする'),
-        h('button', { onclick: close }, 'やめる'),
+        h('button', { onclick: () => { params.value = ''; date.value = ''; } }, T('空にする')),
+        h('button', { onclick: close }, T('やめる')),
         h('button', { class: 'primary', onclick: save }, 'OK')));
   });
 }
@@ -173,10 +174,10 @@ function openPlaySettings(): void {
 /** 手元の音量とミュート（このブラウザだけ。ゲームの音量は音量の区分 AudioBus で決める） */
 function audioControls(): HTMLElement {
   const l = app.localAudio;
-  const range = h('input', { type: 'range', min: '0', max: '1', step: '0.05', value: String(l.volume), style: 'width:70px', title: `手元の音量 ${Math.round(l.volume * 100)}%（このブラウザだけ。ゲームの音量は音量の区分 AudioBus で決めます）` }) as HTMLInputElement;
+  const range = h('input', { type: 'range', min: '0', max: '1', step: '0.05', value: String(l.volume), style: 'width:70px', title: T('手元の音量 {0}%（このブラウザだけ。ゲームの音量は音量の区分 AudioBus で決めます）', Math.round(l.volume * 100)) }) as HTMLInputElement;
   range.addEventListener('input', () => app.setLocalAudio(Number(range.value), false));
   return h('span', { class: 'row', style: 'gap:2px' },
-    h('button', { class: 'icon', title: l.muted ? 'ミュート中（クリックで解除）' : '音を消す', onclick: () => app.setLocalAudio(l.volume, !l.muted) }, l.muted ? '🔇' : '🔊'),
+    h('button', { class: 'icon', title: l.muted ? T('ミュート中（クリックで解除）') : T('音を消す'), onclick: () => app.setLocalAudio(l.volume, !l.muted) }, l.muted ? '🔇' : '🔊'),
     range);
 }
 
@@ -192,13 +193,17 @@ app.on('change', () => {
 function openSettings(): void {
   modal((close) => {
     const show = h('input', { type: 'checkbox', checked: app.showLocked, onchange: (e: Event) => { app.showLocked = (e.target as HTMLInputElement).checked; } });
+    // エディタの言葉（変えると読み込み直す）。作るゲームの言語は、ゲームの画面の「言語」で
+    const langSel = h('select', { onchange: (e: Event) => setLang((e.target as HTMLSelectElement).value as EditorLang) },
+      ...EDITOR_LANGS.map((l) => h('option', { value: l, selected: l === lang }, LANG_NAMES[l]))) as HTMLSelectElement;
     return h('div', {},
-      h('h3', {}, '設定'),
-      h('label', { class: 'row' }, show, 'ロックされた値を表示する（インスペクタ・表。表示しても、ここでは変えられません）'),
-      h('div', { class: 'muted', style: 'margin:8px 0' }, 'ロックを付ける・外す・ロックされた値を変えるのは、ロックマネージャーで。'),
+      h('h3', {}, T('設定')),
+      h('label', { class: 'row' }, T('エディタの言葉'), ' ', langSel),
+      h('label', { class: 'row' }, show, T('ロックされた値を表示する（インスペクタ・表。表示しても、ここでは変えられません）')),
+      h('div', { class: 'muted', style: 'margin:8px 0' }, T('ロックを付ける・外す・ロックされた値を変えるのは、ロックマネージャーで。')),
       h('div', { class: 'row', style: 'justify-content:space-between;margin-top:12px' },
-        h('button', { onclick: () => { close(); app.openLocks(); } }, '🔒 ロックマネージャーを開く'),
-        h('button', { onclick: close }, '閉じる')));
+        h('button', { onclick: () => { close(); app.openLocks(); } }, T('🔒 ロックマネージャーを開く')),
+        h('button', { onclick: close }, T('閉じる'))));
   });
 }
 
@@ -233,7 +238,7 @@ window.addEventListener('keydown', (e) => {
     void app.patch(r.ops, 'hierarchy').then((ok) => { if (ok) app.selectMany(r.ids); });
   } else if ((e.key === 'Delete' || e.key === 'Backspace') && !mod) {
     e.preventDefault();
-    if (confirm(ids.length > 1 ? `${ids.length}体を削除しますか？（${ids.join(', ')}）` : `${app.scene}#${ids[0]} を削除しますか？`)) void app.patch(removeOps(app.scene, ids), 'hierarchy').then((ok) => { if (ok) app.select(null); });
+    if (confirm(ids.length > 1 ? T('{0}体を削除しますか？（{1}）', ids.length, ids.join(', ')) : T('{0}#{1} を削除しますか？', app.scene, ids[0]))) void app.patch(removeOps(app.scene, ids), 'hierarchy').then((ok) => { if (ok) app.select(null); });
   } else if (e.key.startsWith('Arrow') && !mod) {
     e.preventDefault();
     const step = e.shiftKey ? app.snap() || 10 : 1;
@@ -265,7 +270,7 @@ async function mountWindows(): Promise<void> {
     try {
       slot.cleanup = p.mount(slot.el, x.api) ?? undefined;
     } catch (e) {
-      slot.el.append(h('div', { class: 'pad', style: 'color:var(--bad)' }, `エラー: ${(e as Error).message}`));
+      slot.el.append(h('div', { class: 'pad', style: 'color:var(--bad)' }, T('エラー: {0}', (e as Error).message)));
     }
   }
   // 欄・部品の見せ方は、インスペクタが描き直すときに使う
@@ -281,20 +286,20 @@ events.onmessage = async (msg) => {
   await app.refresh();
   if (ev.type === 'docs' && ev.by === 'external') {
     const n = ev.changes?.length ?? 0;
-    if (n) toast(`外部でファイルが編集されました（${n}件の変更）`);
+    if (n) toast(T('外部でファイルが編集されました（{0}件の変更）', n));
     if (ev.lockReport?.length) toast(ev.lockReport.map((l: string) => '🔒 ' + l).join('\n'), 'lock', 8000);
   }
   if (ev.type === 'locks' && ev.integrity === false) {
-    toast('🔒⚠ ロックの記録がエディタ以外で書き換えられました。AIからの編集を止めています。上の「🔒⚠ ロックの記録を確認」からロックマネージャーで確かめてください', 'lock', 10000);
+    toast(T('🔒⚠ ロックの記録がエディタ以外で書き換えられました。AIからの編集を止めています。上の「🔒⚠ ロックの記録を確認」からロックマネージャーで確かめてください'), 'lock', 10000);
   }
   if (ev.type === 'code' && app.state.version !== lastVersion) {
     lastVersion = app.state.version;
-    toast(`コードを読み込み直しました: ${(ev.paths ?? []).join(', ')}${app.play ? '\n（再生中のゲームは古いコードのままです。停止して再生し直してください）' : ''}`);
+    toast(T('コードを読み込み直しました: {0}{1}', (ev.paths ?? []).join(', '), app.play ? T('\n（再生中のゲームは古いコードのままです。停止して再生し直してください）') : ''));
     await mountWindows();
     layout.build();
   }
 };
-events.onerror = () => toast('サーバーとの接続が切れました。サーバーを起動し直してください', 'bad', 6000);
+events.onerror = () => toast(T('サーバーとの接続が切れました。サーバーを起動し直してください'), 'bad', 6000);
 
 await mountWindows();
 layout.build();
@@ -310,7 +315,7 @@ async function loadExtensions(): Promise<LoadedExtension[]> {
     try {
       loaded.push(projectExtension(app, path, (await import(`/project@${app.state.version}/${path}`)).default));
     } catch (e) {
-      toast(`拡張 ${path} を読み込めません: ${(e as Error).message}`, 'bad', 8000);
+      toast(T('拡張 {0} を読み込めません: {1}', path, (e as Error).message), 'bad', 8000);
     }
   }
   for (const x of loaded) {

@@ -14,6 +14,7 @@ import { drawnField, isNested, lockAt, mountExt, nestedWidget, runCleanups, toOp
 import { rowDrawersFor } from '../extensions.ts';
 import type { RowView } from '../window-api.ts';
 import type { Panel } from './layout.ts';
+import { T, TD } from '../i18n.ts';
 
 const SIMPLE = new Set(['number', 'int', 'string', 'enum', 'bool', 'color', 'row', 'prefab', 'asset', 'frame', 'ref', 'input', 'scene', 'ease']);
 /** セルの中で書き換えられる型（複数行の文字は右の欄で） */
@@ -58,16 +59,16 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
     const names = [...(app.registry?.tables.keys() ?? [])];
     const d = def();
     const pick = h('select', { onchange: (e: Event) => open((e.target as HTMLSelectElement).value) },
-      h('option', { value: '' }, names.length ? '表を選ぶ…' : '表がありません（ゲームのコードで defineTable）'), names.map((n) => h('option', { value: n, selected: n === name }, `$${n}`))) as HTMLSelectElement;
-    const search = h('input', { type: 'search', placeholder: '絞り込み（id や値）', value: filter, style: 'width:140px', oninput: (e: Event) => { filter = (e.target as HTMLInputElement).value; renderGrid(); } });
+      h('option', { value: '' }, names.length ? T('表を選ぶ…') : T('表がありません（ゲームのコードで defineTable）')), names.map((n) => h('option', { value: n, selected: n === name }, `$${n}`))) as HTMLSelectElement;
+    const search = h('input', { type: 'search', placeholder: T('絞り込み（id や値）'), value: filter, style: 'width:140px', oninput: (e: Event) => { filter = (e.target as HTMLInputElement).value; renderGrid(); } });
     const fileIn = h('input', { type: 'file', accept: '.csv,.tsv,.txt', style: 'display:none' }) as HTMLInputElement;
     fileIn.addEventListener('change', async () => { const f = fileIn.files?.[0]; if (f) importText(await f.text(), f.name); fileIn.value = ''; });
     return h('div', { class: 'table-bar' }, pick,
-      d ? h('span', { class: 'muted' }, `${rows().length}行${d.desc ? ' — ' + d.desc : ''}`) : null,
+      d ? h('span', { class: 'muted' }, T('{0}行{1}', rows().length, d.desc ? ' — ' + TD(d.desc) : '')) : null,
       d ? search : null, h('span', { class: 'spacer' }),
-      d ? h('button', { onclick: addRow, title: '最後に行を足す' }, '＋ 行') : null,
-      d ? h('button', { onclick: exportCsv, title: '表計算ソフトで開ける CSV に書き出す' }, 'CSV書き出し') : null,
-      d ? h('button', { onclick: () => fileIn.click(), title: 'CSV・TSV から表をまるごと置き換える（1行目は列の名前）' }, 'CSV読み込み') : null, fileIn);
+      d ? h('button', { onclick: addRow, title: T('最後に行を足す') }, T('＋ 行')) : null,
+      d ? h('button', { onclick: exportCsv, title: T('表計算ソフトで開ける CSV に書き出す') }, T('CSV書き出し')) : null,
+      d ? h('button', { onclick: () => fileIn.click(), title: T('CSV・TSV から表をまるごと置き換える（1行目は列の名前）') }, T('CSV読み込み')) : null, fileIn);
   };
 
   // ---------- 表 ----------
@@ -90,7 +91,7 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
     const cols = Object.entries(d.columns);
     const locks = app.state.locks, touched = app.state.touched;
     const th = (k: string, f?: Field) => h('th', {
-      title: f ? `${k}: ${typeOf(f)}${f.desc ? '\n' + f.desc : ''}\nクリックで並べて見る（データの並びは変わりません）` : '行の名前（並べ替えても変わらない）',
+      title: f ? T('{0}: {1}{2}\nクリックで並べて見る（データの並びは変わりません）', k, typeOf(f), f.desc ? '\n' + TD(f.desc) : '') : T('行の名前（並べ替えても変わらない）'),
       onclick: () => { if (sortCol === k) sortDir = -sortDir; else { sortCol = k; sortDir = 1; } renderGrid(); },
     }, k, sortCol === k ? (sortDir > 0 ? ' ▲' : ' ▼') : '');
     const body = visibleRows().map((r) => h('tr', { class: r.id === selRow ? 'sel' : '', onclick: (e: Event) => { if ((e.target as HTMLElement).tagName === 'TD' || (e.target as HTMLElement).tagName === 'TR') pick(r.id); } },
@@ -102,7 +103,7 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
   const markSel = () => grid.querySelectorAll('tbody tr').forEach((tr, i) => tr.classList.toggle('sel', visibleRows()[i]?.id === selRow));
 
   const idInput = (r: Row) => {
-    const t = h('input', { type: 'text', value: r.id, class: 'cell-in', title: 'ID を変えると、この行を指している値も書き換わります' }) as HTMLInputElement;
+    const t = h('input', { type: 'text', value: r.id, class: 'cell-in', title: T('ID を変えると、この行を指している値も書き換わります') }) as HTMLInputElement;
     t.addEventListener('focus', () => pick(r.id));
     t.addEventListener('change', () => { const to = t.value.trim(); if (to && to !== r.id) { selRow = to; app.selectRow(name, to); patch([{ op: 'renameRow', table: name, id: r.id, to }]); } else t.value = r.id; });
     return t;
@@ -113,12 +114,12 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
     const v = k in r ? r[k] : defaultOf(f);
     const cls = `${k in r ? '' : 'default'} ${touched ? 'touched' : ''} ${lock ? 'locked' : ''}`;
     // ロックされたセルは見るだけ（設定で隠すこともできる）。変えるのはロックマネージャーで
-    if (lock && !app.showLocked) return h('td', { class: `cplx ${cls}`, title: '🔒 ロック中（設定で隠しています）', 'data-row': r.id, 'data-col': k }, '🔒');
-    if (!inCell(f)) return h('td', { class: `cplx ${cls}`, title: '行を選ぶと右で編集できます' }, valueSummary(f, v), lock ? ' 🔒' : '');
+    if (lock && !app.showLocked) return h('td', { class: `cplx ${cls}`, title: T('🔒 ロック中（設定で隠しています）'), 'data-row': r.id, 'data-col': k }, '🔒');
+    if (!inCell(f)) return h('td', { class: `cplx ${cls}`, title: T('行を選ぶと右で編集できます') }, valueSummary(f, v), lock ? ' 🔒' : '');
     const commit = (nv: unknown, final: boolean) => { if (final && JSON.stringify(nv) !== JSON.stringify(v)) patch([{ op: 'set', path: addr(r.id, k), value: nv }]); };
     const w = widget(app, f, v, commit, { comp: '', field: k, holder: {} });
     if (lock) w.el.setAttribute('inert', '');
-    const td = h('td', { class: cls, 'data-row': r.id, 'data-col': k }, w.el, lock ? h('span', { class: 'lockmark', title: '🔒 ロック中（AI もエディタも変えられません）。変えるならロックマネージャーで' }, '🔒') : null);
+    const td = h('td', { class: cls, 'data-row': r.id, 'data-col': k }, w.el, lock ? h('span', { class: 'lockmark', title: T('🔒 ロック中（AI もエディタも変えられません）。変えるならロックマネージャーで') }, '🔒') : null);
     td.addEventListener('focusin', () => pick(r.id));
     // 表計算ソフトからの貼り付け（複数のセル）
     td.addEventListener('paste', (e) => {
@@ -145,7 +146,7 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
         if (v !== undefined) ops.push({ op: 'set', path: addr(r.id, c), value: v });
       }));
     } catch (e) { return toast((e as Error).message, 'bad', 8000); }
-    if (ops.length) { patch(ops); toast(`${ops.length}セルを貼り付けました`); }
+    if (ops.length) { patch(ops); toast(T('{0}セルを貼り付けました', ops.length)); }
   };
 
   // ---------- 右: 選んだ行 ----------
@@ -156,7 +157,7 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
     cleanups = [];
     const d = def();
     const r = rows().find((x) => x.id === selRow);
-    if (!d || !r) return clear(side, h('div', { class: 'pad muted' }, '行を選ぶと、ここで全部の列（リストなど入れ子の値も）を編集できます'));
+    if (!d || !r) return clear(side, h('div', { class: 'pad muted' }, T('行を選ぶと、ここで全部の列（リストなど入れ子の値も）を編集できます')));
     const i = rows().indexOf(r);
     const locks = app.state.locks;
     const allPaths = Object.keys(d.columns).map((k) => addr(r.id, k));
@@ -171,7 +172,7 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
         table: name, id: r.id, values: structuredClone(values), editable: true,
         locked: (col: string) => !!lockAt(locks, addr(r.id, col)),
         set: (col: string, v: unknown) => {
-          if (lockAt(locks, addr(r.id, col))) { toast(`🔒 ${addr(r.id, col)} はロックされています`, 'lock'); return; }
+          if (lockAt(locks, addr(r.id, col))) { toast(T('🔒 {0} はロックされています', addr(r.id, col)), 'lock'); return; }
           void x.api.patch([{ op: 'set', path: addr(r.id, col), value: v }]);
         },
       };
@@ -188,20 +189,20 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
       // 欄の見せ方（拡張）からの変更は、拡張の api で（入れ子の中も）
       const ctx: Ctx = { comp: '', field: k, holder: {}, ext: { playing: false, row: rowRef, cleanups, set: (p, _sub, nv, final, api) => { if (final) void api.patch([{ op: 'set', path: p, value: nv }]); } } };
       const standard = () => isNested(f) ? nestedWidget(app, f, v, path, [], emit, ctx)
-        : f.type === 'matrix' ? h('span', { class: 'muted' }, '行列（ages set で編集）')
+        : f.type === 'matrix' ? h('span', { class: 'muted' }, T('行列（ages set で編集）'))
         : widget(app, f, v, (nv, final) => { if (final) patch([{ op: 'set', path, value: nv }]); }, ctx).el;
       const w = drawnField(app, { path, f, value: v, isDefault: !(k in r), sub: [], ctx, standard }) ?? standard();
       if (lock) { w.setAttribute('inert', ''); w.classList.add('locked-value'); }
       const wide = isNested(f) || (f.type === 'string' && !!f.multiline);
       return h('div', { class: `field ${wide ? 'wide' : ''} ${k in r ? '' : 'default'} ${touched ? 'touched' : ''} ${lock ? 'locked' : ''}` },
-        h('label', { title: `${k}: ${typeOf(f)}${f.desc ? '\n' + f.desc : ''}${touched ? `\n★ ${touched.who} が ${time(touched.t)} に調整` : ''}` }, k), w,
-        h('button', { class: `icon lockbtn ${lock ? 'on' : ''}`, title: lock ? `🔒 ロック中（${lock.who}）。クリックでロックマネージャーを開く（外す・値を変える）` : 'ロックする（外すのはロックマネージャーで）', onclick: () => (lock ? app.openLocks(path) : app.lock([path], 'table')) }, lock ? '🔒' : '🔓'));
+        h('label', { title: T('{0}: {1}{2}{3}', k, typeOf(f), f.desc ? '\n' + TD(f.desc) : '', touched ? T('\n★ {0} が {1} に調整', touched.who, time(touched.t)) : '') }, k), w,
+        h('button', { class: `icon lockbtn ${lock ? 'on' : ''}`, title: lock ? T('🔒 ロック中（{0}）。クリックでロックマネージャーを開く（外す・値を変える）', lock.who) : T('ロックする（外すのはロックマネージャーで）'), onclick: () => (lock ? app.openLocks(path) : app.lock([path], 'table')) }, lock ? '🔒' : '🔓'));
     };
     const cols = Object.entries(d.columns) as [string, Field][];
     const fields: HTMLElement[] = cols.filter(([k]) => !hidden.has(k)).map(fieldOf);
     const folded = cols.filter(([k]) => hidden.has(k));
     if (folded.length) {
-      const box = h('details', { class: 'pad hidden-cols' }, h('summary', { class: 'muted', title: '行の見せ方（拡張）が代わりに見せている列。この行だけ違う値にするときに開く' }, `ほかの欄（${folded.map(([k]) => k).join('・')}）`));
+      const box = h('details', { class: 'pad hidden-cols' }, h('summary', { class: 'muted', title: T('行の見せ方（拡張）が代わりに見せている列。この行だけ違う値にするときに開く') }, T('ほかの欄（{0}）', folded.map(([k]) => k).join(T('・')))));
       box.addEventListener('toggle', () => { if ((box as HTMLDetailsElement).open && !box.querySelector('.field')) box.append(...folded.map(fieldOf)); });
       fields.push(box);
     }
@@ -209,11 +210,11 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
       h('div', { class: 'pad', style: 'border-bottom:1px solid var(--line)' },
         h('div', { style: 'font-weight:600' }, `$${name}.${r.id}`),
         h('div', { class: 'row', style: 'gap:4px;margin-top:6px;flex-wrap:wrap' },
-          h('button', { class: 'icon', title: '上へ', disabled: i === 0, onclick: () => patch([{ op: 'moveRow', table: name, id: r.id, to: i - 1 }]) }, '↑'),
-          h('button', { class: 'icon', title: '下へ', disabled: i === rows().length - 1, onclick: () => patch([{ op: 'moveRow', table: name, id: r.id, to: i + 1 }]) }, '↓'),
-          h('button', { onclick: () => duplicate(r), title: 'この行を複製して、すぐ下に置く' }, '複製'),
-          h('button', { onclick: () => (allLocked ? app.openLocks(`$${name}.${r.id}`) : app.lock(allPaths.filter((p) => !locks[p]), 'table')), title: allLocked ? 'この行のロックを見る・外す（ロックマネージャーで）' : 'この行の値をまとめてロックする（外すのはロックマネージャーで）' }, allLocked ? '🔒 行のロック' : '🔒 行をロック'),
-          h('button', { style: 'color:var(--bad)', onclick: () => { if (confirm(`$${name}.${r.id} を消しますか？`)) { selRow = ''; app.selectRow(name, null); patch([{ op: 'removeRow', table: name, id: r.id }]); } } }, '消す'))),
+          h('button', { class: 'icon', title: T('上へ'), disabled: i === 0, onclick: () => patch([{ op: 'moveRow', table: name, id: r.id, to: i - 1 }]) }, '↑'),
+          h('button', { class: 'icon', title: T('下へ'), disabled: i === rows().length - 1, onclick: () => patch([{ op: 'moveRow', table: name, id: r.id, to: i + 1 }]) }, '↓'),
+          h('button', { onclick: () => duplicate(r), title: T('この行を複製して、すぐ下に置く') }, T('複製')),
+          h('button', { onclick: () => (allLocked ? app.openLocks(`$${name}.${r.id}`) : app.lock(allPaths.filter((p) => !locks[p]), 'table')), title: allLocked ? T('この行のロックを見る・外す（ロックマネージャーで）') : T('この行の値をまとめてロックする（外すのはロックマネージャーで）') }, allLocked ? T('🔒 行のロック') : T('🔒 行をロック')),
+          h('button', { style: 'color:var(--bad)', onclick: () => { if (confirm(T('${0}.{1} を消しますか？', name, r.id))) { selRow = ''; app.selectRow(name, null); patch([{ op: 'removeRow', table: name, id: r.id }]); } } }, T('消す')))),
       sections, fields);
   };
 
@@ -240,13 +241,13 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
   const importText = (text: string, file: string) => {
     let ops: Op[];
     try { ops = importOps(def()!, rows(), cellsToRows(def()!, parseDelimited(text))); } catch (e) { return toast((e as Error).message, 'bad', 8000); }
-    if (!ops.length) return toast('読み込んだ内容は今の表と同じです');
+    if (!ops.length) return toast(T('読み込んだ内容は今の表と同じです'));
     const count = (t: string) => ops.filter((o) => o.op === t).length;
     modal((close) => h('div', {},
-      h('h3', {}, `${file} を $${name} に読み込みますか？`),
-      h('div', {}, `行の追加 ${count('addRow')}・削除 ${count('removeRow')}・値の変更 ${count('set')}・並べ替え ${count('moveRow')}`),
-      h('div', { class: 'muted', style: 'margin-top:6px' }, '表をまるごとファイルの内容にします（ファイルにない行は消えます）。操作ログに残り、あとから見直せます'),
-      h('div', { class: 'row', style: 'justify-content:flex-end;margin-top:12px' }, h('button', { onclick: close }, 'やめる'), h('button', { class: 'on', onclick: () => { close(); patch(ops); } }, '読み込む'))));
+      h('h3', {}, T('{0} を ${1} に読み込みますか？', file, name)),
+      h('div', {}, T('行の追加 {0}・削除 {1}・値の変更 {2}・並べ替え {3}', count('addRow'), count('removeRow'), count('set'), count('moveRow'))),
+      h('div', { class: 'muted', style: 'margin-top:6px' }, T('表をまるごとファイルの内容にします（ファイルにない行は消えます）。操作ログに残り、あとから見直せます')),
+      h('div', { class: 'row', style: 'justify-content:flex-end;margin-top:12px' }, h('button', { onclick: close }, T('やめる')), h('button', { class: 'on', onclick: () => { close(); patch(ops); } }, T('読み込む')))));
   };
 
   // ---------- 全体 ----------
@@ -254,7 +255,7 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
   let barEl = bar();
   const render = () => {
     barEl = bar();
-    if (!def()) { clear(el, barEl, h('div', { class: 'pad muted' }, '表を選んでください。表はゲームのコードの defineTable で形を決め、中身は data/<名前>.table.json に入ります')); return; }
+    if (!def()) { clear(el, barEl, h('div', { class: 'pad muted' }, T('表を選んでください。表はゲームのコードの defineTable で形を決め、中身は data/<名前>.table.json に入ります'))); return; }
     clear(el, barEl, body);
     renderGrid();
     renderSide();
@@ -272,5 +273,5 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
   // 拡張（行・欄の見せ方）を読み込んだ・読み込み直した
   app.on('extensions', () => renderSide());
   render();
-  return { id: 'table', title: '表', el, fill: true, area: 'center', open, render, current: () => name };
+  return { id: 'table', title: T('表'), el, fill: true, area: 'center', open, render, current: () => name };
 }

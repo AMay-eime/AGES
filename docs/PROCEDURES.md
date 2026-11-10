@@ -90,7 +90,7 @@ node src/editor/server.ts <プロジェクトのフォルダ>      # 例: exampl
 4. **ドキュメントを更新する（毎回）**
    - [PLAN.md](PLAN.md) の「現在地」と段階のチェック
    - 新しく決めたことは [DECISIONS.md](DECISIONS.md) に、理由と一緒に追記
-   - 使い方が変わったら [MANUAL.md](MANUAL.md)（README は短い紹介だけ。始め方・推す点が変わったときだけ直し、README.en.md・README.zh-CN.md も合わせる）と、AIの手順が変わったら [../AGENTS.md](../AGENTS.md)（目次の1行）と [GUIDE.md](GUIDE.md)（機能ごとの手順）
+   - 使い方が変わったら [MANUAL.md](MANUAL.md)（README は短い紹介だけ。始め方・推す点が変わったときだけ直し、6つの表紙 README.md・README.en.md・README.zh-CN.md・README.zh-TW.md・README.de.md・README.fr.md をすべて合わせる）と、AIの手順が変わったら [../AGENTS.md](../AGENTS.md)（目次の1行）と [GUIDE.md](GUIDE.md)（機能ごとの手順）
 5. コミット（説明は日本語、何をなぜ）→ プッシュ → PR
 6. **取り込みは、開発者がその場で「取り込んで」と言ったときだけ AI が行う**（テストが通っていること。古い PR から順に）。言われていなければ、AI は取り込みを待たずに前の PR のブランチの上に積んで次へ進む。積んだ PR は main 向けに作り、前の PR を含むことを説明に書く（2026-11-08 → 2026-11-09 に変更。開発者の指示がある取り込みは、実行環境の安全確認を通った）
 
@@ -109,6 +109,7 @@ rm -rf examples/shooter/.ages examples/shooter/recordings/*.json
 - **`src/core` と `src/render` はブラウザでもNodeでも動くこと**（`node:` の機能を使わない）。Node専用は `src/project` `src/cli` `src/editor/server.ts` `worker.ts`
 - **AI向けの出力は短く。** 一覧は1行1件、変化は「前→後」、長いJSONは `--dump` のときだけ
 - **毎回読む説明を増やさない。** 道具を増やさず、patch の op（`OP_DOCS` に書き方）・手順（docs/GUIDE.md の項目）・`ages run` の要約の行に足す。AGENTS.md には目次の1行だけ、地図には使っているときだけ出る行を足す。`test/budget.test.ts` の上限を超えたら、上げる前に削れるものを探し、上げるなら DECISIONS.md に理由を書く
+- **エディタの画面に出す文は、日本語の元の文を `T('…{0}…', 値)` で包み、`src/editor/locales/` の5つの言語（en・zh-Hans・zh-Hant・de・fr）にも訳を足す。** 鍵は日本語の文そのもの。サーバーから画面へ返す文は `trFor(言語)` の `tr`、本体の標準の説明は `TD`。プロジェクトが書いた文は訳さない。抜け・使っていない訳・{0} の数・繁体字への簡体字の混じりは `test/editor-i18n.test.ts` が知らせる
 - **エラーには場所・範囲・候補を書く**（`suggest()` を使う）
 - **人の編集はすべて `Project.apply` などを通して操作ログに残す。** 直接ファイルを書く処理を足すときも、ログと★・🔒の扱いを必ず考える
 - **ロックは決して弱めない。** AIの経路（CLI・将来のMCP）からロックを設定・解除・回避できる機能は作らない

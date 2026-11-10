@@ -8,14 +8,15 @@ import { baseNameOf, checkSheet, checkSheetImage, isGrid, listFrames, sheetPathO
 import { autoRects, carryClips, gridRects, nameFrames, type Pixels, type Rect } from '../../core/slice.ts';
 import { h, clear, toast, modal } from './dom.ts';
 import type { Panel } from './layout.ts';
+import { T } from '../i18n.ts';
 
 type DFrame = FrameDef & { orig?: string };
 type Grid = { cell: [number, number]; spacing: number; margin: number };
 type Mode = { kind: 'move' | 'create' | 'resize'; i: number; sx: number; sy: number; start: Rect; handle?: string };
 
 const PIVOTS: [string, [number, number] | null][] = [
-  ['なし（Sprite.anchor を使う）', null], ['中央', [0.5, 0.5]], ['下の中央', [0.5, 1]], ['上の中央', [0.5, 0]],
-  ['左上', [0, 0]], ['左下', [0, 1]], ['右下', [1, 1]], ['左の中央', [0, 0.5]], ['右の中央', [1, 0.5]],
+  [T('なし（Sprite.anchor を使う）'), null], [T('中央'), [0.5, 0.5]], [T('下の中央'), [0.5, 1]], [T('上の中央'), [0.5, 0]],
+  [T('左上'), [0, 0]], [T('左下'), [0, 1]], [T('右下'), [1, 1]], [T('左の中央'), [0, 0.5]], [T('右の中央'), [1, 0.5]],
 ];
 const HANDLE = 6;
 
@@ -43,7 +44,7 @@ export function spritePanel(app: App): Panel & { open(image: string): void } {
   const scroller = h('div', { class: 'sprite-scroll' }, canvas);
   const side = h('div', { class: 'sprite-side' });
   const bar = h('div', { class: 'sprite-bar' });
-  const hint = h('div', { class: 'sprite-hint muted' }, 'クリックで選ぶ・ドラッグで移動・つまみで大きさ・何もない所をドラッグで新しいコマ・ダブルクリックで基準点・Delete で削除・矢印で1px（Shiftで10px）');
+  const hint = h('div', { class: 'sprite-hint muted' }, T('クリックで選ぶ・ドラッグで移動・つまみで大きさ・何もない所をドラッグで新しいコマ・ダブルクリックで基準点・Delete で削除・矢印で1px（Shiftで10px）'));
   const body = h('div', { class: 'sprite-body' }, scroller, side);
 
   const base = () => baseNameOf(image);
@@ -93,7 +94,7 @@ export function spritePanel(app: App): Panel & { open(image: string): void } {
   };
 
   const open = (path: string) => {
-    if (dirty && path !== image && !confirm(`${image} の切り方の変更を保存していません。捨てて ${path} を開きますか？`)) return;
+    if (dirty && path !== image && !confirm(T('{0} の切り方の変更を保存していません。捨てて {1} を開きますか？', image, path))) return;
     const changed = path !== image;
     image = path;
     sel = -1;
@@ -273,7 +274,7 @@ export function spritePanel(app: App): Panel & { open(image: string): void } {
     if (sel < 0) return;
     const ref = refOf(sel);
     const using = Object.entries(clips).filter(([, c]) => c.frames.includes(ref)).map(([n]) => n);
-    if (using.length) return toast(`このコマは動き ${using.join(', ')} で使われています。先に動きから外してください`, 'bad');
+    if (using.length) return toast(T('このコマは動き {0} で使われています。先に動きから外してください', using.join(', ')), 'bad');
     // 番号で指定している動きは、後ろのコマが1つずつ前にずれるので、名前に変えておく
     for (const c of Object.values(clips)) c.frames = c.frames.map((r) => (typeof r === 'number' && r > sel ? frames[r].name : r));
     frames.splice(sel, 1);
@@ -285,14 +286,14 @@ export function spritePanel(app: App): Panel & { open(image: string): void } {
   // ---------- 切る ----------
   const slice = (opts: { kind: 'cell' | 'count' | 'auto'; cell: [number, number]; count: [number, number]; spacing: number; margin: number; skipEmpty: boolean; alpha: number; min: number; gap: number; pad: number; pivot: [number, number] | null }) => {
     const px = opts.kind === 'auto' || opts.skipEmpty ? getPixels() : null;
-    if ((opts.kind === 'auto' || opts.skipEmpty) && !px) return toast('画像の画素を読めませんでした', 'bad');
+    if ((opts.kind === 'auto' || opts.skipEmpty) && !px) return toast(T('画像の画素を読めませんでした'), 'bad');
     let rects: Rect[];
     try {
       rects = opts.kind === 'auto'
         ? autoRects(px!, { alpha: opts.alpha, minSize: opts.min, gap: opts.gap, pad: opts.pad })
         : gridRects(W, H, { cell: opts.kind === 'cell' ? opts.cell : undefined, count: opts.kind === 'count' ? opts.count : undefined, spacing: opts.spacing, margin: opts.margin, skipEmpty: opts.skipEmpty }, px ?? undefined);
     } catch (e) { return toast((e as Error).message, 'bad'); }
-    if (!rects.length) return toast('コマが1つも見つかりませんでした', 'bad');
+    if (!rects.length) return toast(T('コマが1つも見つかりませんでした'), 'bad');
     const before = sheetOf() ?? undefined;
     const pristineGrid = opts.kind === 'cell' && !opts.skipEmpty && !opts.pivot;
     // 前が自由な矩形なら、同じ場所のコマは名前と基準点を引き継ぐ
@@ -308,16 +309,16 @@ export function spritePanel(app: App): Panel & { open(image: string): void } {
       sel = -1;
       dirty = true;
       renderAll();
-      toast(`${frames.length}コマに切りました（まだ保存していません）`);
+      toast(T('{0}コマに切りました（まだ保存していません）', frames.length));
     };
     if (!carried.missing.length) return apply();
     modal((close) => h('div', {},
-      h('h3', {}, '動きのコマが無くなります'),
-      h('div', {}, `この切り方では、次のコマが無くなります: ${carried.missing.join(', ')}`),
-      h('div', { class: 'muted', style: 'margin-top:6px' }, '「外して切る」を選ぶと、そのコマを動きから外します'),
+      h('h3', {}, T('動きのコマが無くなります')),
+      h('div', {}, T('この切り方では、次のコマが無くなります: {0}', carried.missing.join(', '))),
+      h('div', { class: 'muted', style: 'margin-top:6px' }, T('「外して切る」を選ぶと、そのコマを動きから外します')),
       h('div', { class: 'row', style: 'justify-content:flex-end;margin-top:12px' },
-        h('button', { onclick: close }, 'やめる'),
-        h('button', { class: 'on', onclick: () => { close(); apply(); } }, '外して切る'))));
+        h('button', { onclick: close }, T('やめる')),
+        h('button', { class: 'on', onclick: () => { close(); apply(); } }, T('外して切る')))));
   };
 
   // ---------- 保存 ----------
@@ -331,14 +332,14 @@ export function spritePanel(app: App): Panel & { open(image: string): void } {
     const op: Op = { op: 'setSheet', image, sheet };
     if (Object.keys(renames).length) op.renames = renames;
     const r = await app.patch([op], 'sprite');
-    if (r) { dirty = false; load(); renderAll(); toast(`保存しました（${image}）`); }
+    if (r) { dirty = false; load(); renderAll(); toast(T('保存しました（{0}）', image)); }
   };
 
   // ---------- 画面 ----------
   let saveBtn: HTMLButtonElement | null = null;
   let errBox: HTMLElement | null = null;
   const status = () => {
-    if (saveBtn) { saveBtn.disabled = !dirty; saveBtn.className = dirty ? 'on' : ''; saveBtn.textContent = dirty ? '保存 ●' : '保存'; }
+    if (saveBtn) { saveBtn.disabled = !dirty; saveBtn.className = dirty ? 'on' : ''; saveBtn.textContent = dirty ? T('保存 ●') : T('保存'); }
     if (errBox) {
       const s = sheetOf();
       const errs = s ? [...checkSheet(sheetPathOf(image), s), ...checkSheetImage(sheetPathOf(image), s, W, H)] : [];
@@ -350,30 +351,30 @@ export function spritePanel(app: App): Panel & { open(image: string): void } {
   const renderBar = () => {
     const images = app.state?.assets?.filter((a) => a.kind === 'image').map((a) => a.path) ?? [];
     const pick = h('select', { onchange: (e: Event) => open((e.target as HTMLSelectElement).value) },
-      h('option', { value: '' }, '画像を選ぶ…'), images.map((p) => h('option', { value: p, selected: p === image }, p))) as HTMLSelectElement;
+      h('option', { value: '' }, T('画像を選ぶ…')), images.map((p) => h('option', { value: p, selected: p === image }, p))) as HTMLSelectElement;
     const lockPath = `sheet:${image}`;
     const lock = app.state?.locks?.[lockPath];
     const touched = app.state?.touched?.[lockPath];
     const z = (f: number) => () => { zoom = Math.max(0.1, Math.min(32, f > 0 ? (zoom >= 1 ? zoom + 1 : zoom * 2) : (zoom > 1 ? zoom - 1 : zoom / 2))); draw(); zoomLabel.textContent = `${Math.round(zoom * 100)}%`; };
     const zoomLabel = h('span', { class: 'muted', style: 'min-width:44px;text-align:center' }, `${Math.round(zoom * 100)}%`);
-    saveBtn = h('button', { onclick: save, title: '切り方を保存（操作ログに残ります）' }, '保存') as HTMLButtonElement;
+    saveBtn = h('button', { onclick: save, title: T('切り方を保存（操作ログに残ります）') }, T('保存')) as HTMLButtonElement;
     const solo = new URLSearchParams(location.search).get('solo');
     clear(bar,
       pick,
       image && h('span', { class: 'muted' }, `${W}x${H}`),
-      h('button', { class: 'icon', title: '縮小', onclick: z(-1) }, '−'), zoomLabel, h('button', { class: 'icon', title: '拡大', onclick: z(1) }, '＋'),
-      h('button', { title: '画面に合わせる', onclick: () => { fit(); draw(); zoomLabel.textContent = `${Math.round(zoom * 100)}%`; } }, '合わせる'),
+      h('button', { class: 'icon', title: T('縮小'), onclick: z(-1) }, '−'), zoomLabel, h('button', { class: 'icon', title: T('拡大'), onclick: z(1) }, T('＋')),
+      h('button', { title: T('画面に合わせる'), onclick: () => { fit(); draw(); zoomLabel.textContent = `${Math.round(zoom * 100)}%`; } }, T('合わせる')),
       h('span', { class: 'spacer' }),
-      touched && !lock ? h('span', { class: 'muted', title: `${touched.who} が調整` }, '★') : null,
-      lock ? h('span', { style: 'color:var(--lock)', title: '変えるなら、ロックマネージャーで外してから' }, '🔒 ロック中（保存できません）') : null,
+      touched && !lock ? h('span', { class: 'muted', title: T('{0} が調整', touched.who) }, '★') : null,
+      lock ? h('span', { style: 'color:var(--lock)', title: T('変えるなら、ロックマネージャーで外してから') }, T('🔒 ロック中（保存できません）')) : null,
       image && h('button', {
         class: `icon lockbtn ${lock ? 'on' : ''}`,
-        title: lock ? `🔒 この画像の切り方はロック中（${lock.who}）。AI もエディタも変えられません。クリックでロックマネージャーを開く` : 'この画像の切り方をロックする（外すのはロックマネージャーで）',
+        title: lock ? T('🔒 この画像の切り方はロック中（{0}）。AI もエディタも変えられません。クリックでロックマネージャーを開く', lock.who) : T('この画像の切り方をロックする（外すのはロックマネージャーで）'),
         onclick: () => (lock ? app.openLocks(lockPath) : app.lock([lockPath], 'sprite')),
       }, lock ? '🔒' : '🔓'),
-      h('button', { onclick: () => { load(); renderAll(); }, title: '保存していない変更を捨てる' }, '元に戻す'),
+      h('button', { onclick: () => { load(); renderAll(); }, title: T('保存していない変更を捨てる') }, T('元に戻す')),
       saveBtn,
-      solo || !image ? null : h('button', { class: 'icon', title: '別のウインドウで開く', onclick: () => window.open(`/?solo=sprite&image=${encodeURIComponent(image)}`, `ages-sprite-${image}`, 'width=1100,height=760') }, '↗'));
+      solo || !image ? null : h('button', { class: 'icon', title: T('別のウインドウで開く'), onclick: () => window.open(`/?solo=sprite&image=${encodeURIComponent(image)}`, `ages-sprite-${image}`, 'width=1100,height=760') }, '↗'));
     status();
   };
 
@@ -389,23 +390,23 @@ export function spritePanel(app: App): Panel & { open(image: string): void } {
     const row = (label: string, ...c: unknown[]) => h('div', { class: 'row', style: 'gap:4px;margin:3px 0' }, h('span', { class: 'muted', style: 'width:64px' }, label), ...(c as HTMLElement[]));
     const params = h('div', {});
     const renderParams = () => clear(params,
-      o.kind === 'cell' ? row('1コマ', numIn(o.cell[0], (n) => (o.cell[0] = n)), '×', numIn(o.cell[1], (n) => (o.cell[1] = n)), 'px') : null,
-      o.kind === 'count' ? row('数', numIn(o.count[0], (n) => (o.count[0] = n)), '列 ×', numIn(o.count[1], (n) => (o.count[1] = n)), '行') : null,
-      o.kind !== 'auto' ? row('隙間・余白', numIn(o.spacing, (n) => (o.spacing = n), 44), numIn(o.margin, (n) => (o.margin = n), 44)) : null,
-      o.kind !== 'auto' ? row('', h('label', { class: 'row', style: 'gap:4px' }, h('input', { type: 'checkbox', checked: o.skipEmpty, onchange: (e: Event) => (o.skipEmpty = (e.target as HTMLInputElement).checked) }), '空のコマを除く')) : null,
-      o.kind === 'auto' ? row('まとめる距離', numIn(o.gap, (n) => (o.gap = n), 44), h('span', { class: 'muted' }, 'px（離れた部品を1コマに）')) : null,
-      o.kind === 'auto' ? row('小さすぎ', numIn(o.min, (n) => (o.min = n), 44), h('span', { class: 'muted' }, 'px未満は捨てる')) : null,
-      o.kind === 'auto' ? row('広げる', numIn(o.pad, (n) => (o.pad = n), 44), h('span', { class: 'muted' }, 'px')) : null,
-      row('基準点', h('select', { onchange: (e: Event) => (o.pivot = PIVOTS[Number((e.target as HTMLSelectElement).value)][1]) },
+      o.kind === 'cell' ? row(T('1コマ'), numIn(o.cell[0], (n) => (o.cell[0] = n)), '×', numIn(o.cell[1], (n) => (o.cell[1] = n)), 'px') : null,
+      o.kind === 'count' ? row(T('数'), numIn(o.count[0], (n) => (o.count[0] = n)), T('列 ×'), numIn(o.count[1], (n) => (o.count[1] = n)), T('行')) : null,
+      o.kind !== 'auto' ? row(T('隙間・余白'), numIn(o.spacing, (n) => (o.spacing = n), 44), numIn(o.margin, (n) => (o.margin = n), 44)) : null,
+      o.kind !== 'auto' ? row('', h('label', { class: 'row', style: 'gap:4px' }, h('input', { type: 'checkbox', checked: o.skipEmpty, onchange: (e: Event) => (o.skipEmpty = (e.target as HTMLInputElement).checked) }), T('空のコマを除く'))) : null,
+      o.kind === 'auto' ? row(T('まとめる距離'), numIn(o.gap, (n) => (o.gap = n), 44), h('span', { class: 'muted' }, T('px（離れた部品を1コマに）'))) : null,
+      o.kind === 'auto' ? row(T('小さすぎ'), numIn(o.min, (n) => (o.min = n), 44), h('span', { class: 'muted' }, T('px未満は捨てる'))) : null,
+      o.kind === 'auto' ? row(T('広げる'), numIn(o.pad, (n) => (o.pad = n), 44), h('span', { class: 'muted' }, 'px')) : null,
+      row(T('基準点'), h('select', { onchange: (e: Event) => (o.pivot = PIVOTS[Number((e.target as HTMLSelectElement).value)][1]) },
         PIVOTS.map(([l, v], i) => h('option', { value: String(i), selected: JSON.stringify(v) === JSON.stringify(o.pivot) }, l)))));
     renderParams();
     return h('div', { class: 'sprite-sec' },
-      h('div', { class: 'sprite-h' }, '切る'),
-      h('div', { class: 'seg' }, ([['cell', '格子（大きさ）'], ['count', '格子（数）'], ['auto', '自動']] as const).map(([k, l]) =>
+      h('div', { class: 'sprite-h' }, T('切る')),
+      h('div', { class: 'seg' }, ([['cell', T('格子（大きさ）')], ['count', T('格子（数）')], ['auto', T('自動')]] as const).map(([k, l]) =>
         h('button', { class: o.kind === k ? 'on' : '', onclick: () => { o.kind = k; renderSide(); } }, l))),
       params,
       h('div', { class: 'row', style: 'justify-content:flex-end;margin-top:4px' },
-        h('button', { class: 'on', disabled: !img?.naturalWidth, onclick: () => slice({ ...o }), title: '今のコマは置き換わります（同じ場所のコマは名前と基準点を引き継ぎます）' }, '切る')));
+        h('button', { class: 'on', disabled: !img?.naturalWidth, onclick: () => slice({ ...o }), title: T('今のコマは置き換わります（同じ場所のコマは名前と基準点を引き継ぎます）') }, T('切る'))));
   };
 
   let inputs: { x: HTMLInputElement; y: HTMLInputElement; w: HTMLInputElement; h: HTMLInputElement } | null = null;
@@ -416,7 +417,7 @@ export function spritePanel(app: App): Panel & { open(image: string): void } {
   };
   const frameBox = () => {
     inputs = null;
-    if (sel < 0 || !frames[sel]) return h('div', { class: 'sprite-sec muted' }, frames.length ? 'コマを選ぶと、名前・位置・基準点を変えられます' : 'まだコマがありません。「切る」か、画像の上をドラッグして作ってください');
+    if (sel < 0 || !frames[sel]) return h('div', { class: 'sprite-sec muted' }, frames.length ? T('コマを選ぶと、名前・位置・基準点を変えられます') : T('まだコマがありません。「切る」か、画像の上をドラッグして作ってください'));
     const f = frames[sel];
     const setRect = (k: number) => (e: Event) => { const r = [...f.rect] as Rect; r[k] = Math.round(Number((e.target as HTMLInputElement).value)); f.rect = clampRect(r); touch(true); syncInputs(); };
     const n = (k: number) => h('input', { type: 'number', value: String(f.rect[k]), style: 'width:56px', onchange: setRect(k) }) as HTMLInputElement;
@@ -424,8 +425,8 @@ export function spritePanel(app: App): Panel & { open(image: string): void } {
     const name = h('input', { type: 'text', value: f.name, style: 'flex:1' }) as HTMLInputElement;
     name.addEventListener('change', () => {
       const v = name.value.trim();
-      if (!v || /^\d+$/.test(v)) { toast('名前は空や数字だけにできません', 'bad'); name.value = f.name; return; }
-      if (frames.some((o, i) => i !== sel && o.name === v)) { toast(`${v} はもうあります`, 'bad'); name.value = f.name; return; }
+      if (!v || /^\d+$/.test(v)) { toast(T('名前は空や数字だけにできません'), 'bad'); name.value = f.name; return; }
+      if (frames.some((o, i) => i !== sel && o.name === v)) { toast(T('{0} はもうあります', v), 'bad'); name.value = f.name; return; }
       for (const c of Object.values(clips)) c.frames = c.frames.map((r) => (r === f.name ? v : r));
       f.name = v;
       touch(true);
@@ -444,17 +445,17 @@ export function spritePanel(app: App): Panel & { open(image: string): void } {
     px.addEventListener('change', setPivot);
     py.addEventListener('change', setPivot);
     return h('div', { class: 'sprite-sec' },
-      h('div', { class: 'sprite-h' }, `コマ #${sel}`, grid ? h('span', { class: 'muted' }, '（格子のまま。番号で指定）') : null),
-      h('div', { class: 'row', style: 'gap:4px' }, h('span', { class: 'muted', style: 'width:40px' }, '名前'), name),
-      h('div', { class: 'row', style: 'gap:4px;margin-top:4px' }, h('span', { class: 'muted', style: 'width:40px' }, '位置'), inputs.x, inputs.y),
-      h('div', { class: 'row', style: 'gap:4px;margin-top:4px' }, h('span', { class: 'muted', style: 'width:40px' }, '大きさ'), inputs.w, inputs.h),
-      h('div', { class: 'row', style: 'gap:4px;margin-top:4px' }, h('span', { class: 'muted', style: 'width:40px' }, '基準点'),
+      h('div', { class: 'sprite-h' }, T('コマ #{0}', sel), grid ? h('span', { class: 'muted' }, T('（格子のまま。番号で指定）')) : null),
+      h('div', { class: 'row', style: 'gap:4px' }, h('span', { class: 'muted', style: 'width:40px' }, T('名前')), name),
+      h('div', { class: 'row', style: 'gap:4px;margin-top:4px' }, h('span', { class: 'muted', style: 'width:40px' }, T('位置')), inputs.x, inputs.y),
+      h('div', { class: 'row', style: 'gap:4px;margin-top:4px' }, h('span', { class: 'muted', style: 'width:40px' }, T('大きさ')), inputs.w, inputs.h),
+      h('div', { class: 'row', style: 'gap:4px;margin-top:4px' }, h('span', { class: 'muted', style: 'width:40px' }, T('基準点')),
         h('select', { style: 'flex:1;min-width:0', onchange: (e: Event) => { const v = PIVOTS[Number((e.target as HTMLSelectElement).value)][1]; if (v) f.pivot = [...v] as [number, number]; else delete f.pivot; touch(true); renderSide(); } },
-          PIVOTS.map(([l], i) => h('option', { value: String(i), selected: i === pvIdx }, l)), pvIdx < 0 ? h('option', { selected: true }, '自由') : null)),
-      h('div', { class: 'row', style: 'gap:4px;margin-top:4px' }, h('span', { class: 'muted', style: 'width:40px' }, ''), px, py, h('span', { class: 'muted' }, 'ダブルクリックでも')),
+          PIVOTS.map(([l], i) => h('option', { value: String(i), selected: i === pvIdx }, l)), pvIdx < 0 ? h('option', { selected: true }, T('自由')) : null)),
+      h('div', { class: 'row', style: 'gap:4px;margin-top:4px' }, h('span', { class: 'muted', style: 'width:40px' }, ''), px, py, h('span', { class: 'muted' }, T('ダブルクリックでも'))),
       h('div', { class: 'row', style: 'justify-content:space-between;margin-top:6px' },
-        h('button', { onclick: () => { addToClip(); }, disabled: !preview, title: preview ? `動き ${preview} の最後に足す` : '動きを選ぶと使えます' }, `＋ ${preview ?? '動き'}に足す`),
-        h('button', { onclick: removeSelected, style: 'color:var(--bad)' }, 'コマを消す')));
+        h('button', { onclick: () => { addToClip(); }, disabled: !preview, title: preview ? T('動き {0} の最後に足す', preview) : T('動きを選ぶと使えます') }, T('＋ {0}に足す', preview ?? T('動き'))),
+        h('button', { onclick: removeSelected, style: 'color:var(--bad)' }, T('コマを消す'))));
   };
 
   const listBox = h('div', { class: 'sprite-list' });
@@ -487,34 +488,34 @@ export function spritePanel(app: App): Panel & { open(image: string): void } {
       const nameIn = h('input', { type: 'text', value: n, style: 'width:84px' }) as HTMLInputElement;
       nameIn.addEventListener('change', () => {
         const v = nameIn.value.trim();
-        if (!v || clips[v]) { nameIn.value = n; return toast(v ? `${v} はもうあります` : '名前が空です', 'bad'); }
+        if (!v || clips[v]) { nameIn.value = n; return toast(v ? T('{0} はもうあります', v) : T('名前が空です'), 'bad'); }
         clips = Object.fromEntries(Object.entries(clips).map(([k, x]) => [k === n ? v : k, x]));
         if (preview === n) preview = v;
         touch();
         renderSide();
       });
-      const framesIn = h('input', { type: 'text', value: c.frames.join(', '), style: 'flex:1;min-width:0;font:var(--mono)', title: 'コマの番号か名前を , で区切って' }) as HTMLInputElement;
+      const framesIn = h('input', { type: 'text', value: c.frames.join(', '), style: 'flex:1;min-width:0;font:var(--mono)', title: T('コマの番号か名前を , で区切って') }) as HTMLInputElement;
       framesIn.addEventListener('change', () => { c.frames = parseRefs(framesIn.value); touch(); draw(); });
       return h('div', { class: `clip ${preview === n ? 'sel' : ''}` },
         h('div', { class: 'row', style: 'gap:4px' },
-          h('button', { class: 'icon', title: 'この動きを再生（コマの上に足すときも、ここで選ぶ）', onclick: () => { preview = preview === n ? null : n; renderSide(); draw(); } }, preview === n ? '■' : '▶'),
+          h('button', { class: 'icon', title: T('この動きを再生（コマの上に足すときも、ここで選ぶ）'), onclick: () => { preview = preview === n ? null : n; renderSide(); draw(); } }, preview === n ? '■' : '▶'),
           nameIn,
-          h('input', { type: 'number', value: String(c.fps), min: '1', style: 'width:48px', title: '1秒あたりのコマ数', onchange: (e: Event) => { c.fps = Math.max(0.1, Number((e.target as HTMLInputElement).value)); touch(); } }), h('span', { class: 'muted' }, 'fps'),
-          h('label', { class: 'row muted', style: 'gap:2px', title: '最後まで行ったら最初に戻る' }, h('input', { type: 'checkbox', checked: c.loop !== false, onchange: (e: Event) => { if ((e.target as HTMLInputElement).checked) delete c.loop; else c.loop = false; touch(); } }), '繰り返す'),
-          h('button', { class: 'icon', title: 'この動きを消す', onclick: () => { delete clips[n]; if (preview === n) preview = null; touch(); renderSide(); } }, '×')),
+          h('input', { type: 'number', value: String(c.fps), min: '1', style: 'width:48px', title: T('1秒あたりのコマ数'), onchange: (e: Event) => { c.fps = Math.max(0.1, Number((e.target as HTMLInputElement).value)); touch(); } }), h('span', { class: 'muted' }, 'fps'),
+          h('label', { class: 'row muted', style: 'gap:2px', title: T('最後まで行ったら最初に戻る') }, h('input', { type: 'checkbox', checked: c.loop !== false, onchange: (e: Event) => { if ((e.target as HTMLInputElement).checked) delete c.loop; else c.loop = false; touch(); } }), T('繰り返す')),
+          h('button', { class: 'icon', title: T('この動きを消す'), onclick: () => { delete clips[n]; if (preview === n) preview = null; touch(); renderSide(); } }, '×')),
         h('div', { class: 'row', style: 'gap:4px;margin-top:3px' }, framesIn));
     });
     previewCanvas = preview ? h('canvas', { width: 120, height: 120, class: 'sprite-preview' }) as HTMLCanvasElement : null;
     return h('div', { class: 'sprite-sec' },
-      h('div', { class: 'sprite-h' }, '動き', h('span', { class: 'spacer' }),
+      h('div', { class: 'sprite-h' }, T('動き'), h('span', { class: 'spacer' }),
         h('button', { onclick: () => {
           let i = names.length; while (clips[`anim${i}`]) i++;
           clips[`anim${i}`] = { frames: sel >= 0 ? [refOf(sel)] : frames.length ? [refOf(0)] : [], fps: 8 };
           preview = `anim${i}`;
           touch();
           renderSide();
-        }, disabled: !frames.length }, '＋ 動き')),
-      rows.length ? rows : h('div', { class: 'muted' }, 'まだありません'),
+        }, disabled: !frames.length }, T('＋ 動き'))),
+      rows.length ? rows : h('div', { class: 'muted' }, T('まだありません')),
       previewCanvas);
   };
   // 動きの再生
@@ -554,14 +555,14 @@ export function spritePanel(app: App): Panel & { open(image: string): void } {
     errBox = h('div', { class: 'sprite-err' });
     renderList();
     clear(side, sliceBox(), frameBox(), clipBox(),
-      h('div', { class: 'sprite-sec' }, h('div', { class: 'sprite-h' }, `コマ（${frames.length}）`, grid ? h('span', { class: 'muted' }, ' 格子') : null), listBox),
+      h('div', { class: 'sprite-sec' }, h('div', { class: 'sprite-h' }, T('コマ（{0}）', frames.length), grid ? h('span', { class: 'muted' }, T(' 格子')) : null), listBox),
       errBox);
     status();
   };
   const renderAll = () => {
     renderBar();
     if (!image) {
-      clear(el, bar, h('div', { class: 'pad muted' }, '画像を選ぶと、切り方（コマ・基準点・動き）を決められます。インスペクタの画像の ✂、プロジェクトの画像のクリックからも開けます'));
+      clear(el, bar, h('div', { class: 'pad muted' }, T('画像を選ぶと、切り方（コマ・基準点・動き）を決められます。インスペクタの画像の ✂、プロジェクトの画像のクリックからも開けます')));
       return;
     }
     if (!el.contains(body)) clear(el, bar, body, hint);
@@ -579,7 +580,7 @@ export function spritePanel(app: App): Panel & { open(image: string): void } {
   new ResizeObserver(fitIfNeeded).observe(scroller);
 
   renderAll();
-  return { id: 'sprite', title: '切り方', el, fill: true, area: 'center', open, render: fitIfNeeded };
+  return { id: 'sprite', title: T('切り方'), el, fill: true, area: 'center', open, render: fitIfNeeded };
 }
 
 const round3 = (v: number) => Math.round(v * 1000) / 1000;
