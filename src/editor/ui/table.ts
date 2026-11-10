@@ -26,6 +26,8 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
   let filter = '';
   let sortCol = '';
   let sortDir = 1;
+  /** 絞り込みと並べ替えは表ごとに覚える（別の表に替えて戻ったとき、前の見方に戻る。ほかの表の列で並べ替えない） */
+  const views = new Map<string, { filter: string; sortCol: string; sortDir: number }>();
 
   const def = () => app.registry?.tables.get(name);
   const rows = (): Row[] => app.registry?.tableData.get(name)?.rows ?? [];
@@ -40,7 +42,11 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
     app.selectRow(name, id || null);
   };
   const open = (n: string, row?: string) => {
-    if (n !== name) selRow = '';
+    if (n !== name) {
+      selRow = '';
+      if (name) views.set(name, { filter, sortCol, sortDir });
+      ({ filter, sortCol, sortDir } = views.get(n) ?? { filter: '', sortCol: '', sortDir: 1 });
+    }
     name = n;
     if (row) selRow = row;
     render();
@@ -71,7 +77,8 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
     const d = def()!;
     let list = rows();
     if (filter) { const q = filter.toLowerCase(); list = list.filter((r) => r.id.toLowerCase().includes(q) || Object.values(r).some((v) => cellText(v).toLowerCase().includes(q))); }
-    if (sortCol) {
+    // 並べ替えの列が今の表にない（列を消した・名前を変えた）ときは並べ替えない
+    if (sortCol && (sortCol === 'id' || sortCol in d.columns)) {
       const val = (r: Row) => (sortCol === 'id' ? r.id : sortCol in r ? r[sortCol] : defaultOf(d.columns[sortCol]));
       list = [...list].sort((a, b) => { const x = val(a), y = val(b); return (typeof x === 'number' && typeof y === 'number' ? x - y : cellText(x).localeCompare(cellText(y))) * sortDir; });
     }
