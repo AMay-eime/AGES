@@ -57,6 +57,20 @@ claude mcp add ages -- node /path/to/AGES/src/mcp/server.ts --project /path/to/m
 
 使用者のPC上で動く小さなプログラムで、ネット上のサーバーは要りません。
 
+## GitHub と連携する（使う人の選択）
+
+本体とプロジェクトを並べて置く今の形のままでも使えます。クラウドの会話（スマホ・Web）からも同じプロジェクトを触りたいときは、**版だけ同梱**の形にします。
+
+```sh
+node /path/to/AGES/bin/ages.js pin my-game     # 既存のプロジェクトを変える（新しく作るなら ages init my-game --pin）
+cd my-game
+node ages.mjs check .                          # 初回に、決めた版の AGES 本体を .ages/engine に取ってくる（git が要る）
+node ages.mjs editor                           # エディタ
+node ages.mjs upgrade                          # 本体を新しい版に上げる（直しが要れば手順が出る）
+```
+
+リポジトリに入るのは起動用の `ages.mjs` と、使う本体の版（`ages.project.json` の `engineSource`）だけ。本体は git の対象外の `.ages/engine` に置くので、AI が本体を書き換えても push されず、次に動かす前に元に戻ります。
+
 ## エディタでできること
 
 - 階層（UI の親子と位置の親子（Transform.parent）は木で畳める。運んで親を変える。連番の名前は1行にまとめる）・プロジェクト（ファイル一覧）・アセット・インスペクタ・ゲーム・テキスト・操作ログ・Git

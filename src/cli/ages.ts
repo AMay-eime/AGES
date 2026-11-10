@@ -1,6 +1,6 @@
 // AGES の AI 向け CLI。出力はすべて短いテキスト（トークン節約）。
 // 後で MCP サーバーから同じ関数を呼べるよう、各コマンドは文字列を返す関数にしてある。
-import { engineVersion, formatVersion, migrations, recordVersion, versionNote } from '../project/version.ts';
+import { engineCommitFull, engineVersion, formatVersion, migrations, recordVersion, versionNote } from '../project/version.ts';
 import { readFile, writeFile, readdir, mkdir, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, resolve, relative, basename, dirname, sep } from 'node:path';
@@ -35,7 +35,7 @@ import { parseSpawns, spawnTryout, tryoutGone, tryoutScene } from '../core/tryou
 
 const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [引数]
 
-  init   <dir> [--name 名前]          新しいプロジェクトを作る（EDITOR-PLAN.md 付き。ゲームの企画を受けたら最初にこれ）
+  init   <dir> [--name 名前] [--pin]  新しいプロジェクトを作る（EDITOR-PLAN.md 付き。ゲームの企画を受けたら最初にこれ。--pin で版だけ同梱の形）
   map    <dir> [節]                  プロジェクトの地図（作業のたびに最初に読む）。大きなプロジェクトでは目次になり、節（components systems tables prefabs scenes など）で中身を引く
   find   <dir> <語 ...>              部品・フィールド・表の列と行・システム・プレハブ・シーンの物を、名前と説明から探す（語は全部を含むもの）
   schema <dir> [名前 ...]             詳しく引く: コンポーネント（型・範囲・説明）/ $表 / std:flash などのシェーダー
@@ -55,6 +55,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   undo   <dir> [--tx id] [--force]   自分（AI）の直前の編集を元に戻す（その後で変えられた所があれば止まる）。redo <dir> でやり直す
   check  <dir>                       全データの検証とロックの検査
   version <dir> [--record]           AGES の版（記録が古ければ直し方を出す）。--record で今の版を残す
+  pin    <dir> [--repo URL] [--commit SHA]  版だけ同梱の形に（ages.mjs が本体を .ages/engine に取ってくる。GitHub との連携用）
   ui     <dir> [シーン]               UI の配置（四角・置き方）と、重なり・はみ出し。直すのは patch の dockUI / attachUI
   assets <dir> [フォルダ] [--kind image|sound|font] [--unused] [--refs 場所]   アセットの一覧（使っている所の数）・使っている所
   sheet  <dir> <画像>                 画像の切り方（コマの名前・位置・基準点・動き）を見る
@@ -137,6 +138,55 @@ function enginePathFrom(target: string): string {
   return ups >= target.split(sep).filter(Boolean).length ? ENGINE_DIR.replace(/[\\/]$/, '').split(sep).join('/') : rel;
 }
 
+/** プロジェクトに写す AGES の手順書（本体の場所と ages の呼び方を書きかえる） */
+async function projectAgents(engine: string, howToRun: string): Promise<string> {
+  return (await readFile(join(ENGINE_DIR, 'AGENTS.md'), 'utf8'))
+    .replace('`ages` は `node bin/ages.js`（`npm link` で `ages` コマンドになる）。', howToRun)
+    .replaceAll('docs/PLAN.md', `${engine}/docs/PLAN.md`)
+    .replaceAll('docs/GUIDE.md', `${engine}/docs/GUIDE.md`)
+    .replaceAll('`examples/', `\`${engine}/examples/`);
+}
+
+const PINNED_ENGINE = '.ages/engine';
+const DEFAULT_REPO = 'https://github.com/AMay-eime/AGES.git';
+
+/**
+ * 版だけ同梱の形にする（GitHub との連携の土台）。リポジトリには起動用の ages.mjs と使う本体の版（ages.project.json の engineSource）だけを入れ、
+ * 本体は ages.mjs が .ages/engine（git の対象外）に取ってくる。使用者側の AI が本体を書き換えても push されない。
+ * 版は今動いている本体のコミット（GitHub にあること）。上げるのは ages.mjs upgrade
+ */
+export async function cmdPin(dir: string, repo = DEFAULT_REPO, commit?: string): Promise<string> {
+  const p = await Project.load(dir);
+  const sha = commit ?? engineCommitFull();
+  if (!sha || !/^[0-9a-f]{40}$/.test(sha)) throw new Error('本体のコミットが分かりません（git で取った AGES から動かすか、--commit に40文字のコミットを渡す）');
+  const done: string[] = [];
+  await writeFile(join(p.dir, 'ages.mjs'), await readFile(join(ENGINE_DIR, 'templates', 'launcher', 'ages.mjs'), 'utf8'));
+  done.push('ages.mjs（起動用。本体を .ages/engine に取ってきて動かす）');
+  const cfgFile = join(p.dir, 'ages.project.json');
+  const cfg = JSON.parse(await readFile(cfgFile, 'utf8')) as Record<string, unknown>;
+  cfg.engineSource = { repo, commit: sha };
+  await writeFile(cfgFile, JSON.stringify(cfg, null, 2) + '\n');
+  done.push(`ages.project.json の engineSource（${sha.slice(0, 7)}）`);
+  const ignore = join(p.dir, '.gitignore');
+  const gi = existsSync(ignore) ? await readFile(ignore, 'utf8') : '';
+  if (!gi.split(/\r?\n/).includes(`${PINNED_ENGINE}/`)) {
+    await writeFile(ignore, gi + (gi && !gi.endsWith('\n') ? '\n' : '') + `# AGES 本体（ages.mjs が engineSource の版を取ってくる。共有しない）\n${PINNED_ENGINE}/\n`);
+    done.push('.gitignore');
+  }
+  await writeFile(join(p.dir, 'AGENTS.md'), await projectAgents(PINNED_ENGINE, `\`ages\` は \`node ages.mjs\`（例 \`node ages.mjs check .\`。AGES 本体は ${PINNED_ENGINE} に自動で取ってくる。**本体は書き換えない**。足りない所は書き出して使用者に伝える）。`));
+  done.push('AGENTS.md');
+  await writeFile(join(p.dir, '.mcp.json'), JSON.stringify({ mcpServers: { ages: { command: 'node', args: ['ages.mjs', 'mcp'] } } }, null, 2) + '\n');
+  done.push('.mcp.json');
+  // 型の確かめ（tsconfig）の本体の場所も
+  const ts = join(p.dir, 'tsconfig.json');
+  if (existsSync(ts)) {
+    const t = await readFile(ts, 'utf8');
+    const u = t.replace(/"ages":\s*\["[^"]*\/src\/index\.ts"\]/, `"ages": ["./${PINNED_ENGINE}/src/index.ts"]`);
+    if (u !== t) { await writeFile(ts, u); done.push('tsconfig.json'); }
+  }
+  return [`版だけ同梱の形にしました（AGES ${sha.slice(0, 7)}）:`, ...done.map((d) => `  ${d}`), '使い方: node ages.mjs <命令> . ・node ages.mjs editor ・本体を上げる: node ages.mjs upgrade'].join('\n');
+}
+
 /** 新しいプロジェクトを作る。AIへの手順書とエディタ計画書のひな形も入れる。 */
 export async function cmdInit(dir: string, name?: string): Promise<string> {
   const target = resolve(dir);
@@ -164,12 +214,7 @@ export async function cmdInit(dir: string, name?: string): Promise<string> {
   };
   await copy(tpl, target);
   // AIの手順書は AGES 本体の AGENTS.md をそのまま写す（プロジェクトだけを開いたAIも手順にたどり着けるように）
-  const agents = (await readFile(join(ENGINE_DIR, 'AGENTS.md'), 'utf8'))
-    .replace('`ages` は `node bin/ages.js`（`npm link` で `ages` コマンドになる）。', `\`ages\` は \`node ${engine}/bin/ages.js\`（AGES本体の場所: ${engine}。本体で \`npm link\` すれば \`ages\` だけで動く）。`)
-    .replaceAll('docs/PLAN.md', `${engine}/docs/PLAN.md`)
-    .replaceAll('docs/GUIDE.md', `${engine}/docs/GUIDE.md`)
-    .replaceAll('`examples/', `\`${engine}/examples/`);
-  await writeFile(join(target, 'AGENTS.md'), agents);
+  await writeFile(join(target, 'AGENTS.md'), await projectAgents(engine, `\`ages\` は \`node ${engine}/bin/ages.js\`（AGES本体の場所: ${engine}。本体で \`npm link\` すれば \`ages\` だけで動く）。`));
   created.push('AGENTS.md');
   // MCP の設定（Claude Code などがこのフォルダを開くと、AGES の道具と使い方の説明が自動で渡る）
   const mcp = { mcpServers: { ages: { command: 'node', args: [`${engine}/src/mcp/server.ts`] } } };
@@ -756,7 +801,7 @@ async function main(argv: string[]): Promise<void> {
   const force = a.flags.force === true;
   let out: string;
   switch (cmd) {
-    case 'init': out = await cmdInit(dir, typeof a.flags.name === 'string' ? a.flags.name : undefined); break;
+    case 'init': out = await cmdInit(dir, typeof a.flags.name === 'string' ? a.flags.name : undefined); if (a.flags.pin === true) out += '\n' + await cmdPin(dir); break;
     case 'map': out = await cmdMap(dir, a.pos[1]); break;
     case 'find': out = await cmdFind(dir, need(a.pos.slice(1).join(' ') || undefined, '探す語（例 移動速度）')); break;
     case 'schema': out = await cmdSchema(dir, a.pos.slice(1)); break;
@@ -781,6 +826,7 @@ async function main(argv: string[]): Promise<void> {
     case 'log': out = await cmdLog(dir, a.flags); break;
     case 'check': out = await cmdCheck(dir); break;
     case 'version': out = await cmdVersion(dir, a.flags.record === true); break;
+    case 'pin': out = await cmdPin(dir, typeof a.flags.repo === 'string' ? a.flags.repo : undefined, typeof a.flags.commit === 'string' ? a.flags.commit : undefined); break;
     case 'assets': out = await cmdAssets(dir, a.pos[1], a.flags); break;
     case 'ui': out = await cmdUi(dir, a.pos[1]); break;
     case 'undo': out = await cmdUndo(dir, a.flags); break;
