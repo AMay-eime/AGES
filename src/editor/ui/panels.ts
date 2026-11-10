@@ -392,9 +392,61 @@ export function gitPanel(app: App): Panel {
     await app.refresh();
     render();
   };
+  // ---- GitHub からの自動の取り込み（エディタを開いて見ている間だけ、1分に1回ほど「変わったか」だけを聞く） ----
+  const remoteLine = h('div', { class: 'pad muted' });
+  const AUTO_KEY = 'ages.autoPull';
+  const auto = h('input', { type: 'checkbox' }) as HTMLInputElement;
+  auto.checked = localStorage.getItem(AUTO_KEY) !== 'off';
+  auto.addEventListener('change', () => { localStorage.setItem(AUTO_KEY, auto.checked ? 'on' : 'off'); if (auto.checked) check(false); });
+  /** 聞いたのにまだ取り込んでいない上流の先（同じ変更について何度も聞かない） */
+  let asked = '';
+  let busy = false;
+  const sync = async (mode: 'pull' | 'pushpull') => {
+    const r = await app.api<{ ok: boolean; out: string; conflict?: boolean; step: string }>('/api/git/sync', { body: { mode } });
+    out.textContent = r.out;
+    if (r.ok) toast(mode === 'pull' ? 'GitHub の変更を取り込みました' : '手元の変更をプッシュし、GitHub の変更を取り込みました');
+    else if (r.conflict) toast('手元の変更と GitHub の変更が同じ所で食い違ったので、取り込みをやめました（手元の変更はコミット済み・プッシュはしていません）。どちらを残すか決めて合わせる必要があります（AI に頼めます）', 'bad', 15000);
+    else toast(`GitHub との同期が止まりました（${r.step}）。Git のパネルに出力があります`, 'warn', 8000);
+    await app.refresh();
+    render();
+  };
+  const ask = (s: { remoteHead?: string; behind: number; ahead: number; dirty: number }) => {
+    asked = s.remoteHead ?? '';
+    const what = [s.dirty ? `コミットしていない変更 ${s.dirty}件` : '', s.ahead ? `プッシュしていないコミット ${s.ahead}件` : ''].filter(Boolean).join('・');
+    modal((close) => h('div', {},
+      h('p', {}, `GitHub に新しい変更があります（${s.behind}件のコミット）。`),
+      h('p', {}, `手元にまだプッシュしていない変更があります（${what}）。手元の変更をプッシュしてから、GitHub の変更を取り込みますか？`),
+      h('p', { class: 'muted' }, 'GitHub に新しいコミットがあるとそのままではプッシュできないので、コミット → 取り込み → プッシュ の順に行います。同じ所を両方で変えていたら、取り込みをやめて元に戻し、プッシュしません。'),
+      h('div', { class: 'toolbar' },
+        h('button', { onclick: () => { close(); void sync('pushpull'); } }, 'プッシュしてから取り込む'),
+        h('button', { onclick: close }, 'あとで'))));
+  };
+  /** 上流が変わったかを聞き、変わっていれば取り込む（手元に変更があれば聞く）。force は「今すぐ取り込む」 */
+  const check = async (force: boolean) => {
+    if (busy) return;
+    busy = true;
+    try {
+      const s = await app.api<{ upstream: string | null; remoteHead?: string; behind: number; ahead: number; dirty: number; checked: string; error?: string }>(`/api/git/remote${force ? '?force=1' : ''}`);
+      const at = new Date(s.checked).toLocaleTimeString();
+      if (!s.upstream) { remoteLine.textContent = 'GitHub: 上流の枝がないので、自動の取り込みは使えません（git push -u で設定）'; return; }
+      if (s.error) { remoteLine.textContent = `GitHub（${s.upstream}）に聞けませんでした: ${s.error}（${at}）`; return; }
+      remoteLine.textContent = s.behind ? `GitHub（${s.upstream}）に新しい変更 ${s.behind}件（${at} に確かめた）` : `GitHub（${s.upstream}）: 最新（${at} に確かめた）${s.ahead ? `・プッシュしていないコミット ${s.ahead}件` : ''}`;
+      if (!s.behind) return;
+      if (!s.dirty && !s.ahead) await sync('pull');
+      else if (force || asked !== (s.remoteHead ?? '')) ask(s);
+    } catch (e) {
+      remoteLine.textContent = `GitHub: ${(e as Error).message}`;
+    } finally {
+      busy = false;
+    }
+  };
+  setInterval(() => { if (auto.checked && document.visibilityState === 'visible') void check(false); }, 60_000);
+  document.addEventListener('visibilitychange', () => { if (auto.checked && document.visibilityState === 'visible') void check(false); });
+  if (auto.checked) setTimeout(() => void check(false), 3000);
   const el = h('div', {},
     h('div', { class: 'toolbar' }, h('button', { onclick: run('pull') }, 'プル'), h('button', { onclick: run('commit') }, 'コミット'), h('button', { onclick: run('push') }, 'プッシュ'), h('button', { class: 'icon', onclick: render, title: '更新' }, '↻')),
-    status, h('div', { class: 'pad' }, msg), out);
+    h('div', { class: 'toolbar' }, h('label', {}, auto, ' GitHub から自動で取り込む（開いている間、1分ごとに確かめる）'), h('button', { onclick: () => void check(true) }, '今すぐ取り込む')),
+    remoteLine, status, h('div', { class: 'pad' }, msg), out);
   app.on('change', () => { if (el.classList.contains('active')) render(); });
   return { id: 'git', title: 'Git', el, render };
 }

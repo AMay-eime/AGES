@@ -15,6 +15,7 @@ import { summarize, readLog } from '../project/oplog.ts';
 import { checkAssetPath, freeName } from '../core/assets.ts';
 import { writeShaderResult } from '../project/shader-status.ts';
 import type { Op } from '../core/patch.ts';
+import { dirtyCount, pushAndPull, remoteState, type RemoteState } from './gitsync.ts';
 
 process.removeAllListeners('warning');
 
@@ -207,10 +208,48 @@ async function listDirs(dir = projectDir, base = ''): Promise<string[]> {
 }
 
 function git(a: string[]): Promise<string> {
+  return gitRun(a).then((r) => r.out);
+}
+
+/** git を動かし、終わりのコードと出力を返す */
+function gitRun(a: string[]): Promise<{ code: number; out: string }> {
   return new Promise((ok) => {
-    execFile('git', a, { cwd: projectDir }, (err, stdout, stderr) => ok((stdout + stderr).trim() || (err ? err.message : '')));
+    execFile('git', a, { cwd: projectDir }, (err, stdout, stderr) => {
+      const code = err ? (typeof (err as { code?: unknown }).code === 'number' ? (err as { code: number }).code : 1) : 0;
+      ok({ code, out: (stdout + stderr).trim() || (err ? err.message : '') });
+    });
   });
 }
+
+/** 取り込み（pull）。取り込んだロックの変更は、ロックマネージャーで人が確認するまで AI を止める（エディタからは承認しない） */
+async function pullWithLocks(args: string[]): Promise<{ code: number; out: string; locks: unknown }> {
+  const lockFile = join(projectDir, '.ages', 'locks.json');
+  const okBefore = (await call<{ integrity?: { ok: boolean } }>('state')).integrity?.ok !== false;
+  const before = await readFile(lockFile, 'utf8').catch(() => null);
+  pulling = true;
+  let r: { code: number; out: string };
+  let locks: unknown = null;
+  try {
+    r = await gitRun(args);
+    const after = await readFile(lockFile, 'utf8').catch(() => null);
+    if (before !== after) {
+      await call('recheckLocks');
+      const st = await call<{ integrity?: { ok: boolean; diff: unknown } }>('state');
+      if (st.integrity && !st.integrity.ok) {
+        locks = { approved: false, before: okBefore, diff: st.integrity.diff };
+        lastLockOk = false;
+      }
+    }
+  } finally {
+    pulling = false;
+  }
+  broadcast({ type: 'locks', integrity: lastLockOk, pulled: locks });
+  return { ...r, locks };
+}
+
+/** GitHub の上流が変わったかを聞いた結果（何本タブを開いていても、聞くのは50秒に1回まで） */
+let remoteCache: { at: number; state: RemoteState } | null = null;
+const REMOTE_MIN_MS = 50_000;
 
 async function gitDraft(): Promise<string> {
   const since = (await git(['log', '-1', '--format=%cI', '--', '.'])).trim();
@@ -350,31 +389,30 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
       return json(res, { out: add + '\n' + (await git(['commit', '-m', message || (await gitDraft())])) });
     }
     if (m === 'POST' && op === 'pull') {
-      const lockFile = join(projectDir, '.ages', 'locks.json');
-      const okBefore = (await call<{ integrity?: { ok: boolean } }>('state')).integrity?.ok !== false;
-      const before = await readFile(lockFile, 'utf8').catch(() => null);
-      pulling = true;
-      let out: string;
-      let locks: unknown = null;
-      try {
-        out = await git(['pull', '--no-edit']);
-        const after = await readFile(lockFile, 'utf8').catch(() => null);
-        if (before !== after) {
-          await call('recheckLocks');
-          const st = await call<{ integrity?: { ok: boolean; diff: unknown } }>('state');
-          // 取り込んだロックの変更は、ロックマネージャーで人が確認するまで AI を止める（エディタからは承認しない）
-          if (st.integrity && !st.integrity.ok) {
-            locks = { approved: false, before: okBefore, diff: st.integrity.diff };
-            lastLockOk = false;
-          }
-        }
-      } finally {
-        pulling = false;
-      }
-      broadcast({ type: 'locks', integrity: lastLockOk, pulled: locks });
-      return json(res, { out, locks });
+      const r = await pullWithLocks(['pull', '--no-rebase', '--no-edit']);
+      return json(res, { out: r.out, locks: r.locks });
     }
     if (m === 'POST' && op === 'push') return json(res, { out: await git(['push']) });
+    // 上流（GitHub）が変わったか。?force=1 は「今すぐ取り込む」（間を空けずに聞く）
+    if (op === 'remote') {
+      if (!remoteCache || url.searchParams.get('force') === '1' || Date.now() - remoteCache.at >= REMOTE_MIN_MS) {
+        remoteCache = { at: Date.now(), state: await remoteState(gitRun) };
+      } else {
+        // 聞かずに、手元の変更の数だけ数え直す
+        remoteCache.state = { ...remoteCache.state, dirty: await dirtyCount(gitRun) };
+      }
+      return json(res, remoteCache.state);
+    }
+    // 自動の取り込み: pull は手元に何もないときの早送りだけ、pushpull は人が選んだとき（コミット → 取り込み → プッシュ）
+    if (m === 'POST' && op === 'sync') {
+      const { mode } = JSON.parse((await body(req)).toString('utf8') || '{}') as { mode?: string };
+      const pullFn = async (args: string[]) => pullWithLocks(args);
+      const r = mode === 'pushpull'
+        ? await pushAndPull(gitRun, await gitDraft(), pullFn)
+        : await (async () => { const p = await pullWithLocks(['pull', '--ff-only', '--no-edit']); return { ok: p.code === 0, out: p.out, step: 'pull' }; })();
+      remoteCache = null;
+      return json(res, r);
+    }
   }
   json(res, { error: `見つかりません: ${m} ${p}` }, 404);
 }
