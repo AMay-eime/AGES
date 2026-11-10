@@ -80,13 +80,29 @@ export class World {
 
   /** 画面のこの位置に置く（親があれば、親から見た位置に直して書く） */
   setWorldPos(e: Entity | string, x: number, y: number): void {
+    this.setWorld(e, { x, y });
+  }
+
+  /** 画面の位置・向き・大きさを決めて置く（渡した値だけ。親があれば、親から見た値に直して書く） */
+  setWorld(e: Entity | string, w: Partial<Pose>): void {
     const ent = typeof e === 'string' ? this.entities.get(e) : e;
     const t = ent?.c.Transform;
-    if (!t) return;
+    if (!ent || !t) return;
     const parent = t.parent ? this.entities.get(t.parent) : undefined;
-    if (!parent?.c.Transform) { t.x = x; t.y = y; return; }
-    const r = relativeTo(this.pose(parent)!, { x, y, rot: 0, sx: 1, sy: 1 });
-    t.x = r.x; t.y = r.y;
+    const pos = w.x !== undefined || w.y !== undefined;
+    if (!parent?.c.Transform) {
+      if (pos) { t.x = w.x ?? t.x; t.y = w.y ?? t.y; }
+      if (w.rot !== undefined) t.rot = w.rot;
+      if (w.sx !== undefined) t.sx = w.sx;
+      if (w.sy !== undefined) t.sy = w.sy;
+      return;
+    }
+    const cur = this.pose(ent)!;
+    const local = relativeTo(this.pose(parent)!, { x: w.x ?? cur.x, y: w.y ?? cur.y, rot: w.rot ?? cur.rot, sx: w.sx ?? cur.sx, sy: w.sy ?? cur.sy });
+    if (pos) { t.x = local.x; t.y = local.y; }
+    if (w.rot !== undefined) t.rot = local.rot;
+    if (w.sx !== undefined) t.sx = local.sx;
+    if (w.sy !== undefined) t.sy = local.sy;
   }
 
   /** 位置の親を変える（null で親なし）。画面の位置・向き・大きさはそのまま。親の中にある物を親にはできない */
