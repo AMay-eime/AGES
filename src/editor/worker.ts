@@ -5,6 +5,7 @@ import { parentPort, workerData } from 'node:worker_threads';
 import { Project } from '../project/project.ts';
 import { readTouched, readLog, type Actor } from '../project/oplog.ts';
 import type { Op } from '../core/patch.ts';
+import { eventWarnings } from '../project/events.ts';
 
 const port = parentPort!;
 let project: Project;
@@ -32,7 +33,7 @@ const READ_ONLY = new Set(['state', 'lockState', 'describe', 'lockCandidates', '
 async function state() {
   if (loadError) return { error: loadError };
   const ver = versionNote(project.config.engine);
-  heavy ??= { issues: [...project.validate(), ...project.projectChecks().map((m) => `⚠ ${m}`), ...(ver ? [`⚠ ${ver}`] : [])], codeRefs: await codeRefsCached() };
+  heavy ??= { issues: [...project.validate(), ...project.projectChecks().map((m) => `⚠ ${m}`), ...eventWarnings(project.registry.systems, await project.codeFiles()).map((m) => `⚠ ${m}`), ...(ver ? [`⚠ ${ver}`] : [])], codeRefs: await codeRefsCached() };
   return {
     config: project.config,
     scenes: Object.fromEntries(project.docs.scenes),
