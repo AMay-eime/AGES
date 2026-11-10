@@ -24,9 +24,11 @@ export interface RemoteState {
 /** 上流が変わったかを聞き、変わっていれば取ってきて、手元との差を数える */
 export async function remoteState(git: Git, now = new Date()): Promise<RemoteState> {
   const checked = now.toISOString();
-  const branch = (await git(['branch', '--show-current'])).out.trim();
-  const remote = branch ? (await git(['config', `branch.${branch}.remote`])).out.trim() : '';
-  const merge = branch ? (await git(['config', `branch.${branch}.merge`])).out.trim() : '';
+  // 設定がないとき git は失敗する（出力はエラーの文なので、値として使わない）
+  const value = async (a: string[]) => { const r = await git(a); return r.code === 0 ? r.out.trim() : ''; };
+  const branch = await value(['branch', '--show-current']);
+  const remote = branch ? await value(['config', `branch.${branch}.remote`]) : '';
+  const merge = branch ? await value(['config', `branch.${branch}.merge`]) : '';
   const dirty = await dirtyCount(git);
   if (!branch || !remote || !merge) return { upstream: null, behind: 0, ahead: 0, dirty, checked };
   const upstream = `${remote}/${merge.replace(/^refs\/heads\//, '')}`;

@@ -56,9 +56,13 @@ export async function appendLog(root: string, actor: Actor, op: string, changes:
 }
 
 export async function readLog(root: string): Promise<LogEntry[]> {
+  return (await readLogLines(root)).map((l) => JSON.parse(l));
+}
+
+/** 操作ログの行（そのままの文字。どの行が増えたかを見分けるため） */
+export async function readLogLines(root: string): Promise<string[]> {
   try {
-    const text = await readFile(join(dirOf(root), 'oplog.jsonl'), 'utf8');
-    return text.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    return (await readFile(join(dirOf(root), 'oplog.jsonl'), 'utf8')).split('\n').map((l) => l.replace(/\r$/, '')).filter(Boolean);
   } catch {
     return [];
   }

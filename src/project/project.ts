@@ -13,7 +13,7 @@ import { Game } from '../core/game.ts';
 import { RUN_DATE, parseDate, type DateStart } from '../core/clock.ts';
 import { FIELD_TYPES, brief, checkAt, fieldAt, suggest, visit, type Field } from '../core/schema.ts';
 import { ROW_ID, type TableDoc } from '../core/table.ts';
-import { appendLog, localTime, lockedHits, markTouched, movePrefixTouched, moveTouched, readLocks as readLockFile, readLog, readTouched, writeLocks, type Actor, type LockMark } from './oplog.ts';
+import { appendLog, localTime, lockedHits, markTouched, movePrefixTouched, moveTouched, readLocks as readLockFile, readLogLines, readTouched, writeLocks, type Actor, type LockMark, type LogEntry } from './oplog.ts';
 import { agesHome, lockDiff, verifyLocks, type LockIntegrity } from './seal.ts';
 import { scanAssets, type AssetInfo } from './assets.ts';
 import { assetRefs, codePrefabRefs, codeRefs, codeSceneRefs, isUnder } from '../core/assets.ts';
@@ -1182,15 +1182,32 @@ export class Project {
   }
 
   /** 誰が書いたか分からない外部の編集（別のエディタやAIによる直接編集）の後に呼ぶ。ロックは復元される。 */
+  /**
+   * 操作ログで見たことのある行。前に見たときから増えた行（AGES の CLI が書いた行・Git で取り込んだ行）の変更は、
+   * 時刻が古くても「外からの編集」として二重に記録しない。エディタ（ファイルを見張る側）が rememberLog で始める
+   */
+  private logSeen: Set<string> | null = null;
+
+  /** 今の操作ログの行を覚える（この後に増えた行を、すでに記録された変更として扱う） */
+  async rememberLog(): Promise<void> {
+    this.logSeen = new Set(await readLogLines(this.dir));
+  }
+
   async externalEdit(): Promise<{ changes: Change[]; lockReport: string[] }> {
     const before = this.docs;
     await this.reload();
-    // AGESのCLIなど、すでにログに残っている変更は二重に記録しない
-    const recent = (await readLog(this.dir)).slice(-200).filter((e) => Date.now() - Date.parse(e.t) < 15000);
+    // すでにログに残っている変更は二重に記録しない: 前に見たときから増えた行（CLI・Git の取り込み。時刻は問わない）と、15秒以内の行
+    const lines = await readLogLines(this.dir);
+    const seen = this.logSeen;
+    const logged = [
+      ...(seen ? lines.filter((l) => !seen.has(l)) : []).map((l) => JSON.parse(l) as LogEntry),
+      ...lines.slice(-200).map((l) => JSON.parse(l) as LogEntry).filter((e) => Date.now() - Date.parse(e.t) < 15000),
+    ];
     const changes = diffDocs(before, this.docs).filter(
-      (c) => !recent.some((e) => e.path === c.path && JSON.stringify(e.to) === JSON.stringify(c.to)),
+      (c) => !logged.some((e) => e.path === c.path && JSON.stringify(e.to) === JSON.stringify(c.to)),
     );
     await appendLog(this.dir, { who: 'external', kind: 'system', win: 'file' }, 'external', changes);
+    if (seen) await this.rememberLog();
     return { changes, lockReport: this.lockReport };
   }
 
