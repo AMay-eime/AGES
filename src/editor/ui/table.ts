@@ -19,7 +19,7 @@ const SIMPLE = new Set(['number', 'int', 'string', 'enum', 'bool', 'color', 'row
 /** セルの中で書き換えられる型（複数行の文字は右の欄で） */
 const inCell = (f: Field) => SIMPLE.has(f.type) && !(f.type === 'string' && f.multiline);
 
-export function tablePanel(app: App): Panel & { open(name: string, row?: string): void } {
+export function tablePanel(app: App): Panel & { open(name: string, row?: string): void; current(): string } {
   const el = h('div', { class: 'table-ed' });
   let name = '';
   let selRow = '';
@@ -265,5 +265,5 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
   // 拡張（行・欄の見せ方）を読み込んだ・読み込み直した
   app.on('extensions', () => renderSide());
   render();
-  return { id: 'table', title: '表', el, fill: true, area: 'center', open, render };
+  return { id: 'table', title: '表', el, fill: true, area: 'center', open, render, current: () => name };
 }
