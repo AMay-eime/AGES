@@ -6,7 +6,7 @@ import { PREFAB_MIME, importFiles } from './assets.ts';
 import { kindOf } from '../../core/assets.ts';
 import { menuItemsFor } from '../extensions.ts';
 import type { EntityData } from '../../core/docs.ts';
-import { uiParents } from '../tree.ts';
+import { uiParents, groupNumbered, groupKey, NUMBERED } from '../tree.ts';
 
 // ---------- 階層 ----------
 const ENTITY_MIME = 'application/x-ages-entity';
@@ -19,7 +19,12 @@ export function hierarchyPanel(app: App): Panel {
     const sel = app.sel;
     if (!app.state || app.state.error || sel?.kind !== 'scene') return;
     const { parent } = uiParents(app.state.scenes[sel.scene]?.entities ?? [], app.state.prefabs);
-    for (let p = parent.get(sel.id), n = 0; p && n < 64; p = parent.get(p), n++) open.add(`${sel.scene}#${p}`);
+    // 連番のまとめも開く（まとめになっていなければ使われない鍵）
+    for (let id: string | undefined = sel.id, n = 0; id && n < 64; id = parent.get(id), n++) {
+      const m = NUMBERED.exec(id);
+      if (m) open.add(groupKey(sel.scene, parent.get(id) ?? '', m[1]));
+      if (id !== sel.id) open.add(`${sel.scene}#${id}`);
+    }
   };
   const render = () => {
     if (!app.state || app.state.error) return clear(el);
@@ -134,9 +139,35 @@ export function hierarchyPanel(app: App): Panel {
         children.length > 0 && !isOpen ? h('span', { class: 'muted', title: '中にある物の数' }, `(${count(e.id)})`) : null,
         e.prefab ? h('span', { class: 'muted', title: `プレハブ @${e.prefab} のインスタンス（つながっている）` }, '←@' + e.prefab) : null,
         n ? h('span', { style: 'color:var(--lock)', title: `ロック ${n}件` }, '🔒' + n) : null));
-        if (isOpen) for (const c of children) row(c, depth + 1);
+        if (isOpen) rows(children, depth + 1, e.id);
       };
-      for (const e of roots) row(e, 0);
+      // 連番の名前（例 star0〜star39）で、子のない兄弟が5つ以上なら1行にまとめる（見せ方だけ）
+      const rows = (list: EntityData[], depth: number, under: string) => {
+        for (const item of groupNumbered(list, (id) => (kids.get(id)?.length ?? 0) > 0)) {
+          if (!('members' in item)) { row(item, depth); continue; }
+          const key = groupKey(app.scene, under, item.prefix);
+          const isOpen = open.has(key);
+          const ids = item.members.map((m) => m.id);
+          const nums = item.members.map((m) => m.id.slice(item.prefix.length));
+          const picked = sel?.kind === 'scene' && ids.includes(sel.id);
+          out.push(h('div', {
+            class: `item ${picked ? 'sel2' : ''}`,
+            style: `padding-left:${4 + depth * 14}px`,
+            title: `連番の ${ids.length}個をまとめた行（見せ方だけ）。クリックで全部を選ぶ。▸ で開く`,
+            onclick: () => {
+              app.select({ kind: 'scene', scene: app.scene, id: ids[0] });
+              app.extra = ids.slice(1);
+              app.emit('select');
+              // まとめを選んだだけでは開かない（選んだ物の親を開く働きを戻す）
+              if (!isOpen && open.delete(key)) render();
+            },
+          },
+          h('span', { class: 'tw', onclick: (ev: MouseEvent) => { ev.stopPropagation(); if (isOpen) open.delete(key); else open.add(key); render(); } }, isOpen ? '▾' : '▸'),
+          `${item.prefix}${nums[0]}〜${nums[nums.length - 1]}`, h('span', { class: 'muted' }, `×${ids.length}`)));
+          if (isOpen) for (const m of item.members) row(m, depth + 1);
+        }
+      };
+      rows(roots, 0, '');
       // 親子が輪になっている物（一番上からたどれない）も出す。畳んで見えていない物とは分ける
       const reach = new Set<string>();
       const walk = (id: string) => { if (reach.has(id)) return; reach.add(id); for (const k of kids.get(id) ?? []) walk(k.id); };
