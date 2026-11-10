@@ -16,6 +16,7 @@ import { checkAssetPath, freeName } from '../core/assets.ts';
 import { writeShaderResult } from '../project/shader-status.ts';
 import type { Op } from '../core/patch.ts';
 import { dirtyCount, pushAndPull, remoteState, type RemoteState } from './gitsync.ts';
+import { writeFocus, type EditorFocus } from '../project/focus.ts';
 
 process.removeAllListeners('warning');
 
@@ -378,6 +379,12 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
     if (m === 'GET') return json(res, JSON.parse(await readFile(file, 'utf8').catch(() => 'null')));
     await mkdir(dirname(file), { recursive: true });
     await writeFile(file, (await body(req)).toString('utf8'));
+    return json(res, { ok: true });
+  }
+  // エディタで人が見ている所（AI の地図の先頭と ages find の並びに使う。手元だけ）。closed なら消す
+  if (m === 'POST' && p === '/api/focus') {
+    const f = JSON.parse((await body(req)).toString('utf8') || '{}') as Omit<EditorFocus, 'at'> & { closed?: boolean };
+    await writeFocus(projectDir, f.closed ? null : f);
     return json(res, { ok: true });
   }
   if (p.startsWith('/api/git/')) {

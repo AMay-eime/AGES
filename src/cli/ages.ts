@@ -12,6 +12,7 @@ import { findInProject } from '../project/find.ts';
 import { codeDefs } from '../project/codedefs.ts';
 import { noteRecent, placeOf, readRecent, recentFor, topRecent } from '../project/recent.ts';
 import { eventWarnings } from '../project/events.ts';
+import { focusLine, readFocus, withFocus } from '../project/focus.ts';
 import { readCursor, readLog, readTouched, summarize, writeCursor, type Actor } from '../project/oplog.ts';
 import { OP_DOCS, getValue, parseLiteral, splitCell, type Op } from '../core/patch.ts';
 import { readGuide } from '../project/guide.ts';
@@ -117,13 +118,19 @@ export async function cmdMap(dir: string, section?: string): Promise<string> {
   const { show, window } = recentFor(indexDepth(p, ins));
   const recent = topRecent(await readRecent(p.dir), show, window);
   const plan = await planWarning(p.dir);
-  return withLockReport(p, (plan ? plan + '\n' : '') + renderMap(p, ins.touched, ins.locks, ins.code, ins.windows, ins.gotos, undefined, recent, ins.defs, window));
+  const map = renderMap(p, ins.touched, ins.locks, ins.code, ins.windows, ins.gotos, undefined, recent, ins.defs, window);
+  // エディタで人が見ている所（開いているときだけ）を、見出しのすぐ下に
+  const focus = await readFocus(p.dir);
+  const fl = focus ? focusLine(p, focus) : null;
+  const withFocusLine = fl ? map.replace('\n', `\n${fl}\n`) : map;
+  return withLockReport(p, (plan ? plan + '\n' : '') + withFocusLine);
 }
 
 /** 名前・説明から探す（目次の地図の中身を引く） */
 export async function cmdFind(dir: string, query: string): Promise<string> {
   const p = await Project.load(dir);
-  const r = findInProject(p, query, await readGuide(), await readRecent(p.dir), codeDefs(await p.codeFiles()));
+  // 最近の作業の場所と、エディタで人が見ている所に近いものを上に
+  const r = findInProject(p, query, await readGuide(), withFocus(await readRecent(p.dir), await readFocus(p.dir)), codeDefs(await p.codeFiles()));
   await noteRecent(p.dir, []);
   return r.text;
 }

@@ -58,11 +58,15 @@ if (solo === 'win') {
 
 /** 通常のエディタ（全パネルとレイアウト） */
 async function startEditor(): Promise<void> {
+/** エディタで人が見ている所を知らせる間合い（sendFocus） */
+let focusTimer: ReturnType<typeof setTimeout> | undefined;
 const savedLayout = await app.api<LayoutData | null>('/api/layout').catch(() => null);
 let saveTimer: ReturnType<typeof setTimeout>;
 const layout = new Layout(document.getElementById('work')!, savedLayout, (d) => {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => app.api('/api/layout', { method: 'PUT', raw: JSON.stringify(d, null, 2) + '\n' }).catch(() => {}), 300);
+  // 見えている窓が変わった（エディタで人が見ている所）
+  sendFocus();
 });
 
 const text = textPanel(app, () => layout);
@@ -73,6 +77,24 @@ const table = tablePanel(app);
 const assets = assetsPanel(app);
 for (const p of [hierarchyPanel(app), projectPanel(app, (path) => text.open(path)), game, matrix, sprite, table, text, assets, logPanel(app), gitPanel(app), inspectorPanel(app)]) layout.add(p);
 app.on('openText', (path) => text.open(String(path)));
+
+// エディタで人が見ている所を、AI の地図に出すために知らせる（選びが変わったら少し待って、開いている間は1分ごと。閉じたら消す）
+const focusNow = () => ({
+  scene: app.scene,
+  selected: app.sel?.kind === 'prefab' ? [`@${app.sel.name}`] : app.selectedIds().map((id) => `${app.scene}#${id}`),
+  ...(app.row ? { row: `$${app.row.table}.${app.row.id}` } : {}),
+  ...(layout.isVisible('table') && table.current() ? { table: table.current() } : {}),
+  windows: [...layout.panels.values()].filter((p) => p.id.startsWith('win:') && layout.isVisible(p.id)).map((p) => ({ id: p.id.slice(4), title: p.title })),
+});
+function sendFocus(): void {
+  clearTimeout(focusTimer);
+  focusTimer = setTimeout(() => { app.api('/api/focus', { body: focusNow() }).catch(() => {}); }, 400);
+}
+app.on('select', sendFocus);
+app.on('change', sendFocus);
+app.on('openTable', sendFocus);
+setInterval(() => { if (document.visibilityState === 'visible') sendFocus(); }, 60_000);
+window.addEventListener('pagehide', () => { navigator.sendBeacon('/api/focus', new Blob([JSON.stringify({ closed: true })], { type: 'application/json' })); });
 app.on('revealAsset', (path) => { layout.show('assets'); assets.reveal(path as string); });
 app.on('openMatrix', (path) => { matrix.open(path as string); layout.show('matrix'); });
 app.on('openSprite', (image) => { sprite.open(image as string); layout.show('sprite'); sprite.render?.(); });
