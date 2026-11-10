@@ -45,6 +45,8 @@ export interface Ctx {
   worldOf(e: Entity | string): Pose | null;
   /** 画面のこの位置に置く（親があれば親から見た位置に直して書く） */
   setWorldPos(e: Entity | string, x: number, y: number): void;
+  /** 画面の位置・向き・大きさを決めて置く（渡した値だけ。例 ctx.setWorld(part, { x, y, rot: 30 })。親があれば親から見た値に直して書く） */
+  setWorld(e: Entity | string, w: Partial<Pose>): void;
   /** 位置の親を変える（null で親なし）。画面の位置・向き・大きさはそのまま（例 ctx.attach(option, player)） */
   attach(child: Entity | string, parent: Entity | string | null): void;
   /** 出来事を出す（例: emit('enemyKilled', { id })）。defineSystem の on で受けたシステムが、その場で呼ばれる。ages run の要約に回数が載る */
@@ -321,6 +323,7 @@ export class Game {
       destroy: (id) => this.world.destroy(id),
       worldOf: (e) => this.world.pose(e),
       setWorldPos: (e, x, y) => this.world.setWorldPos(e, x, y),
+      setWorld: (e, w) => this.world.setWorld(e, w),
       attach: (c, p) => this.world.attach(c, p),
       shake: (amount, id) => {
         for (const e of this.world.query('Camera')) {

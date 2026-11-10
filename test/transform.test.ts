@@ -58,6 +58,9 @@ test('位置の親子: 親と一緒に動く・ctx.worldOf・当たり判定と�
   // 画面のこの位置に置く
   ctx.setWorldPos('gun', 100, 150);
   near(g.world.get('gun')!.c.Transform.x, 20); near(g.world.get('gun')!.c.Transform.y, 0);
+  // 画面の向き・大きさも決めて置く（親は90度回っている）
+  ctx.setWorld('arm', { rot: 0, sx: 3 });
+  near(ctx.worldOf('arm')!.rot, 0); near(ctx.worldOf('arm')!.sx, 3); near(g.world.get('arm')!.c.Transform.rot, -90);
   // 親が消えると子も孫も消える（フレームの終わり）
   ctx.destroy('boss');
   g.world.flush();
