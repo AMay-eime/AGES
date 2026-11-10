@@ -17,5 +17,11 @@
   "editorWindows": [
     "editor/wave-tuner.window.ts",
     "editor/hp-hearts.ext.ts"
-  ]
+  ],
+  "engine": {
+    "compat": 1,
+    "version": "0.1.0",
+    "commit": "247dcb3",
+    "recorded": "2026-11-10"
+  }
 }

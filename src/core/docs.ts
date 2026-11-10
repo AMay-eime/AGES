@@ -48,6 +48,8 @@ export interface ProjectConfig {
   languages?: string[];
   /** セーブ: settings='auto'（既定）なら、キーの割り当て・音量を変えたら自動で保存し、始めるときに戻す。'manual' なら自分で */
   save?: { settings?: 'auto' | 'manual' };
+  /** 合わせてある AGES の版（compat＝互換の番号。docs/MIGRATIONS.md）。ages init と ages version --record が書く */
+  engine?: { compat: number; version: string; commit?: string; recorded?: string };
 }
 
 /**

@@ -44,6 +44,7 @@ node bin/ages.js sheet examples/shooter assets/kenney-pixel-shmup/ships.png  # �
 node bin/ages.js run examples/shooter --frames 600 --watch main#player.Health.hp
 node bin/ages.js log examples/shooter            # 前回からの編集の要約
 node bin/ages.js undo examples/shooter           # 自分（AI）の直前の編集を元に戻す
+node bin/ages.js version examples/shooter        # AGES の版（記録が古ければ直し方。--record で今の版を残す）
 ```
 
 ## MCP（AIのアプリから直接使う）
