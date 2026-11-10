@@ -215,7 +215,7 @@ window.addEventListener('keydown', (e) => {
   if (k === 'z' && !e.shiftKey) { e.preventDefault(); app.undo(); }
   else if ((k === 'z' && e.shiftKey) || k === 'y') { e.preventDefault(); app.undo(true); }
 });
-// シーンの編集: 複製（Ctrl+D）・削除（Delete）・すべて選ぶ（Ctrl+A）・選ぶのをやめる（Esc）・矢印で1px（Shift で格子の目か 10px）ずらす
+// シーンの編集: 複製（Ctrl+D）・削除（Delete）・すべて選ぶ（Ctrl+A）・選ぶのをやめる（Esc）・矢印で1px（Shift で格子の目か 10px）ずらす・取っ手の切り替え（W・E・R）
 window.addEventListener('keydown', (e) => {
   if (typing(e) || inExtension(e) || (e.target as HTMLElement)?.isContentEditable || app.play || document.querySelector('.modal-bg')) return;
   const scene = app.state.scenes[app.scene];
@@ -224,6 +224,8 @@ window.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   if (mod && k === 'a' && scene) { e.preventDefault(); app.selectMany(scene.entities.map((x) => x.id)); return; }
   if (e.key === 'Escape' && app.sel) { app.select(null); return; }
+  // 取っ手の切り替え（Unity と同じ W・E・R）
+  if (!mod && !e.altKey && !e.shiftKey && (k === 'w' || k === 'e' || k === 'r')) { app.setTool(k === 'w' ? 'move' : k === 'e' ? 'rotate' : 'scale'); return; }
   if (!scene || !ids.length) return;
   if (mod && k === 'd') {
     e.preventDefault();

@@ -16,10 +16,13 @@ import { ASSET_MIME, PREFAB_MIME } from './assets.ts';
 import { baseOf, extOf, kindOf } from '../../core/assets.ts';
 import type { ParticleCmd } from '../../core/particles.ts';
 import { drawColliders, makeDraw, visibleRect } from '../stage-draw.ts';
+import { drawGizmo, gizmoFrame, hitGizmo, moveDelta, rotateDelta, scaleFactor, tidyRot, tidyScale, type GizmoFrame, type Handle, type Tool } from '../gizmo.ts';
 
 const SCREENS: [string, number | null][] = [['パネルに合わせる', null], ['16:9', 16 / 9], ['4:3', 4 / 3], ['1:1', 1], ['9:16（スマホ縦）', 9 / 16], ['9:19.5（細長いスマホ縦）', 9 / 19.5], ['19.5:9（細長いスマホ横）', 19.5 / 9]];
 const FIT_LABEL: Record<FitMode, string> = { contain: '全体を入れる', cover: 'はみ出しを切る', stretch: '伸ばす', expand: '広い分だけ周りも見せる', pixel: '整数倍だけ' };
 const MARK = 7;
+/** 出す数（小数2桁まで） */
+const fmt = (v: number) => String(Math.round(v * 100) / 100);
 
 export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
   const canvas = h('canvas', { width: 480, height: 640, tabindex: 0 }) as HTMLCanvasElement;
@@ -61,7 +64,22 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
   fillLang();
   // ゲームの画面だけを全画面に（エディタのパネルとブラウザのバーを隠す）。Esc はゲームに渡し、長押しで抜ける（Keyboard Lock）
   const fullBtn = h('button', { class: 'icon', title: 'ゲームの画面だけを全画面で（再生ボタンは全画面の前に。Esc はゲームに渡る。抜けるのは Esc の長押しか F11）', onclick: () => void toggleFull() }, '⛶');
-  const bar = h('div', { class: 'game-hud' }, hud, resetBtn, viewSel, screenSel, fitSel, hitsBox, snapBox, langSel, saveBtn, fullBtn);
+  // 取っ手（Unity の W・E・R）: 選んだ物に、移動・回転・拡大縮小の取っ手を出す
+  const TOOLS: [Tool, string, string][] = [
+    ['move', '✥', '移動の取っ手（W）: 矢印でその軸だけ、真ん中の四角で自由に動かす（格子があれば目にそろえる。物そのもののドラッグでも動く）'],
+    ['rotate', '⟳', '回転の取っ手（E）: 輪をドラッグして回す（Shift で 15度ごと）'],
+    ['scale', '⤢', '拡大縮小の取っ手（R）: 先の四角で横・縦（物の向き）、真ん中の四角で縦横そろえて（Shift で 0.1 ごと）'],
+  ];
+  const saved = localStorage.getItem('ages.tool');
+  let tool: Tool = TOOLS.some(([t]) => t === saved) ? (saved as Tool) : 'move';
+  const toolBtns = TOOLS.map(([t, icon, title]) => h('button', { class: `icon${t === tool ? ' on' : ''}`, title, onclick: () => app.setTool(t) }, icon));
+  app.setTool = (t) => {
+    tool = t;
+    localStorage.setItem('ages.tool', t);
+    TOOLS.forEach(([x], i) => toolBtns[i].classList.toggle('on', x === t));
+  };
+  const toolBox = h('span', { class: 'row', style: 'gap:2px' }, ...toolBtns);
+  const bar = h('div', { class: 'game-hud' }, hud, toolBox, resetBtn, viewSel, screenSel, fitSel, hitsBox, snapBox, langSel, saveBtn, fullBtn);
   const wrap = h('div', { class: 'game-wrap' }, screen);
   type KeyboardLock = { lock?: (keys?: string[]) => Promise<void>; unlock?: () => void };
   const keyboard = (navigator as unknown as { keyboard?: KeyboardLock }).keyboard;
@@ -319,6 +337,35 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
       return true;
     });
   };
+  /** 物を映しているカメラ（印か、描いた形から） */
+  const camIndexOf = (id: string, ms = markers()) => ms.find((m) => m.id === id)?.cam ?? [...renderer!.shapes].reverse().find((s) => s.id === id && s.cam !== undefined)?.cam ?? 0;
+  // ---------- 取っ手 ----------
+  type Grab = { id: string; x: number; y: number; rot: number; sx: number; sy: number; flip: boolean };
+  let gdrag: { handle: Handle; tool: Tool; cam: CameraView; frame: GizmoFrame; start: [number, number]; prev: [number, number]; startW: [number, number]; turn: number; all: Grab[]; moved: boolean } | null = null;
+  let hover: Handle | null = null;
+  /** 取っ手を出す物（手前に選んでいる物。Transform で動かす物だけ。UI は位置のドラッグと dockUI で） */
+  const gizmoTarget = (): { id: string; cam: CameraView; frame: GizmoFrame } | null => {
+    if (app.play || !renderer || !app.preview || app.sel?.kind !== 'scene') return null;
+    const id = app.sel.id;
+    const e = app.preview.world.get(id);
+    const doc = sceneDoc()?.entities.find((x) => x.id === id);
+    if (!e?.c.Transform || !doc || movable(sceneDoc()!, doc) !== 'Transform') return null;
+    const pose = app.preview.world.pose(e);
+    const cam = renderer.cams[camIndexOf(id)];
+    if (!pose || !cam) return null;
+    const k = canvas.width / (canvas.getBoundingClientRect().width || canvas.width);
+    return { id, cam, frame: gizmoFrame((x, y) => worldToScreen(cam, x, y), pose, k) };
+  };
+  /** 取っ手で一緒に変える物（選んでいる物のうち Transform のもの。位置の親も選んでいれば子は親と一緒に） */
+  const grabs = (): Grab[] => {
+    const w = app.preview!.world;
+    return topMost(app.selectedIds().map(moving).filter((m): m is Moving => !!m && m.what === 'Transform')).map((m) => {
+      const t = w.get(m.id)!.c.Transform;
+      const pe = t.parent ? w.get(String(t.parent)) : undefined;
+      const pp = pe ? w.pose(pe) : null;
+      return { id: m.id, x: m.x, y: m.y, rot: Number(t.rot ?? 0), sx: Number(t.sx ?? 1), sy: Number(t.sy ?? 1), flip: !!pp && (pp.sx < 0) !== (pp.sy < 0) };
+    });
+  };
   /** 画面の点にある物（手前から） */
   const pickAt = (p: { x: number; y: number }) => {
     const ms = markers().filter((m) => Math.abs(m.x - p.x) <= MARK && Math.abs(m.y - p.y) <= MARK);
@@ -346,6 +393,14 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     // 自由な視点では、右・中ボタンのドラッグで動かす（右は動かさなければメニュー）
     if (viewMode === 'free' && (e.button === 1 || e.button === 2)) { e.preventDefault(); pan = { x: p.x, y: p.y, cx: free.x, cy: free.y, moved: false, e }; return; }
     if (e.button !== 0) return;
+    // 取っ手は、物を選ぶより先に
+    const gt = gizmoTarget();
+    const handle = gt ? hitGizmo(tool, gt.frame, [p.x, p.y]) : null;
+    if (gt && handle) {
+      e.preventDefault();
+      gdrag = { handle, tool, cam: gt.cam, frame: gt.frame, start: [p.x, p.y], prev: [p.x, p.y], startW: screenToWorld(gt.cam, p.x, p.y), turn: 0, all: grabs(), moved: false };
+      return;
+    }
     const add = e.shiftKey || e.ctrlKey || e.metaKey;
     const { ms, ids } = pickAt(p);
     if (!ids.length) {
@@ -370,7 +425,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     const lead = moving(hit.id);
     if (!lead) return;
     // 選んだものを映しているカメラで、画面の動きをワールドの動きにする
-    const camIndex = ms.find((m) => m.id === hit.id)?.cam ?? [...renderer.shapes].reverse().find((s) => s.id === hit.id && s.cam !== undefined)?.cam ?? 0;
+    const camIndex = camIndexOf(hit.id, ms);
     const cam = renderer.cams[camIndex];
     const [wx, wy] = screenToWorld(cam, p.x, p.y);
     const all = topMost(app.selectedIds().map(moving).filter((m): m is Moving => !!m));
@@ -386,6 +441,14 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
       return;
     }
     if (band) { const p = toCanvas(e); band.x1 = p.x; band.y1 = p.y; return; }
+    if (gdrag && app.preview) { dragGizmo(e); return; }
+    if (!drag) {
+      // 取っ手を指しているか（太く出す）
+      const gt = e.target === canvas ? gizmoTarget() : null;
+      const p = toCanvas(e);
+      hover = gt ? hitGizmo(tool, gt.frame, [p.x, p.y]) : null;
+      canvas.style.cursor = hover ? (tool === 'rotate' ? 'grab' : 'pointer') : '';
+    }
     if (!drag || !app.preview) return;
     const p = toCanvas(e);
     const [wx, wy] = screenToWorld(drag.cam, p.x, p.y);
@@ -428,6 +491,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
       hint = ids.size ? `${ids.size}体を選びました（ドラッグでまとめて動かす・右クリックで複製や削除）` : '';
       return;
     }
+    if (gdrag) { endGizmo(); return; }
     const d = drag;
     drag = null;
     if (!d?.moved || !app.preview) return;
@@ -442,6 +506,69 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     }
     if (ops.length) app.patch(ops, 'game');
   });
+  /** 取っ手のドラッグ: 下書きの World の値を変える（離したときに1回の編集として書く） */
+  function dragGizmo(e: MouseEvent): void {
+    const gd = gdrag!, w = app.preview!.world;
+    const p = toCanvas(e), now: [number, number] = [p.x, p.y];
+    if (!gd.moved && Math.hypot(now[0] - gd.start[0], now[1] - gd.start[1]) < 2) return; // 押しただけでは変えない
+    gd.moved = true;
+    const selId = app.sel?.kind === 'scene' ? app.sel.id : '';
+    const lead = gd.all.find((g) => g.id === selId) ?? gd.all[0];
+    if (!lead) return;
+    if (gd.tool === 'move') {
+      const [wx, wy] = screenToWorld(gd.cam, p.x, p.y);
+      let [dx, dy] = moveDelta(gd.handle, wx - gd.startW[0], wy - gd.startW[1]);
+      // 先頭の物の行き先を、動かす軸だけ格子の目（なければ 1px）にそろえる
+      const g = app.snap(), fit = (v: number) => (g ? Math.round(v / g) * g : Math.round(v));
+      if (gd.handle !== 'y') dx = fit(lead.x + dx) - lead.x;
+      if (gd.handle !== 'x') dy = fit(lead.y + dy) - lead.y;
+      for (const m of gd.all) w.setWorldPos(m.id, m.x + dx, m.y + dy);
+      hint = `移動 ${fmt(lead.x + dx)}, ${fmt(lead.y + dy)}（画面の位置）`;
+    } else if (gd.tool === 'rotate') {
+      // 少しずつ足して、1周を超えても回せるように
+      gd.turn += rotateDelta(gd.frame, gd.prev, now);
+      gd.prev = now;
+      const d = e.shiftKey ? Math.round(gd.turn / 15) * 15 : gd.turn;
+      for (const m of gd.all) {
+        const t = w.get(m.id)?.c.Transform;
+        if (t) t.rot = tidyRot(m.rot + (m.flip ? -d : d), e.shiftKey ? 0 : 1);
+      }
+      hint = `回転 ${fmt(Number(w.get(lead.id)?.c.Transform?.rot ?? 0))}度（${d >= 0 ? '+' : ''}${fmt(Math.round(d))}。Shift で15度ごと）`;
+    } else {
+      const [fx, fy] = scaleFactor(gd.handle, gd.frame, gd.start, now);
+      const step = e.shiftKey ? 0.1 : 0;
+      for (const m of gd.all) {
+        const t = w.get(m.id)?.c.Transform;
+        if (!t) continue;
+        if (fx !== 1) t.sx = tidyScale(m.sx * fx, step);
+        if (fy !== 1) t.sy = tidyScale(m.sy * fy, step);
+      }
+      const t = w.get(lead.id)?.c.Transform;
+      hint = `倍率 横 ${fmt(Number(t?.sx ?? 1))}・縦 ${fmt(Number(t?.sy ?? 1))}（Shift で 0.1 ごと）`;
+    }
+  }
+  function endGizmo(): void {
+    const gd = gdrag!;
+    gdrag = null;
+    if (!gd.moved || !app.preview) { hint = ''; return; }
+    const ops: Op[] = [];
+    for (const m of gd.all) {
+      const c = app.preview.world.get(m.id)?.c.Transform;
+      if (!c) continue;
+      const base = `${app.scene}#${m.id}.Transform`;
+      const set = (f: string, v: unknown) => ops.push({ op: 'set', path: `${base}.${f}`, value: v });
+      if (gd.tool === 'move') {
+        const r = (v: number) => (c.parent ? Math.round(v * 100) / 100 : v);
+        set('x', r(Number(c.x))); set('y', r(Number(c.y)));
+      } else if (gd.tool === 'rotate') {
+        if (Number(c.rot) !== m.rot) set('rot', c.rot);
+      } else {
+        if (Number(c.sx) !== m.sx) set('sx', c.sx);
+        if (Number(c.sy) !== m.sy) set('sy', c.sy);
+      }
+    }
+    if (ops.length) void app.patch(ops, 'game');
+  }
   canvas.addEventListener('wheel', (e) => {
     if (viewMode !== 'free') return;
     e.preventDefault();
@@ -525,6 +652,9 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
       og.moveTo(m.x, m.y - MARK); og.lineTo(m.x + MARK, m.y); og.lineTo(m.x, m.y + MARK); og.lineTo(m.x - MARK, m.y); og.closePath();
       og.stroke();
     }
+    // 取っ手（動かしている間は、押したときの位置の取っ手を動かしながら出す）
+    const gt = gizmoTarget();
+    if (gt) drawGizmo(og, gdrag?.tool ?? tool, gt.frame, gdrag?.handle ?? hover);
   };
   /** 格子の線（ワールドの座標で gridSize ごと。細かすぎるときは間引く） */
   const drawGrid = () => {
