@@ -2,21 +2,25 @@
 import { resolveEntity } from '../core/variant.ts';
 import type { EntityData, PrefabDoc } from '../core/docs.ts';
 
-/** シーンの物の UI の親（UI.parent。プレハブのインスタンスはプレハブの値も見る）。親がシーンにない・自分なら親なし */
-export function uiParents(ents: EntityData[], prefabs: Record<string, PrefabDoc>): { parent: Map<string, string>; hasUI: Set<string> } {
+/**
+ * 階層の木の親: UI の物は UI.parent、ほかは位置の親（Transform.parent）。プレハブのインスタンスはプレハブの値も見る。
+ * 親がシーンにない・自分なら親なし。kind は親子にできる種類（UI どうし・Transform どうし）
+ */
+export function treeParents(ents: EntityData[], prefabs: Record<string, PrefabDoc>): { parent: Map<string, string>; kind: Map<string, 'UI' | 'Transform'> } {
   const ids = new Set(ents.map((e) => e.id));
   const map = new Map(Object.entries(prefabs));
   const parent = new Map<string, string>();
-  const hasUI = new Set<string>();
+  const kind = new Map<string, 'UI' | 'Transform'>();
   for (const e of ents) {
     let c = e.components;
     if (e.prefab) { try { c = resolveEntity(map, e).components; } catch { /* プレハブがない */ } }
-    const ui = c?.UI as { parent?: unknown } | undefined;
-    if (!ui) continue;
-    hasUI.add(e.id);
-    if (typeof ui.parent === 'string' && ui.parent !== e.id && ids.has(ui.parent)) parent.set(e.id, ui.parent);
+    const k = c?.UI ? 'UI' : c?.Transform ? 'Transform' : null;
+    if (!k) continue;
+    kind.set(e.id, k);
+    const p = (c[k] as { parent?: unknown }).parent;
+    if (typeof p === 'string' && p !== e.id && ids.has(p)) parent.set(e.id, p);
   }
-  return { parent, hasUI };
+  return { parent, kind };
 }
 
 /** 名前の終わりの連番（例 star12 → star・12） */

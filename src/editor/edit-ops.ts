@@ -3,6 +3,7 @@
 import type { Op } from '../core/patch.ts';
 import type { EntityData, PrefabDoc, SceneDoc } from '../core/docs.ts';
 import { resolveEntity } from '../core/variant.ts';
+import { deltaTo, poseOf, type Pose } from '../core/transform.ts';
 
 /** ID の後ろに番号を付けて、まだ使われていない ID にする（enemy → enemy_2） */
 export function freshId(base: string, taken: Set<string>): string {
@@ -38,16 +39,42 @@ export function removeOps(scene: string, ids: string[]): Op[] {
   return ids.map((id) => ({ op: 'removeEntity', scene, id }));
 }
 
-/** 位置（Transform か UI の x・y）を dx・dy だけずらす。Layout で並べている子は動かさない */
+type Tf = Pose & { parent?: string | null };
+/** シーンのデータの Transform（書いていない値は既定値）。scene はプレハブと重ねた形（app.sceneView） */
+function docTransform(scene: SceneDoc, id: string): Tf | undefined {
+  const t = scene.entities.find((e) => e.id === id)?.components.Transform as Partial<Tf> | undefined;
+  return t ? { x: Number(t.x ?? 0), y: Number(t.y ?? 0), rot: Number(t.rot ?? 0), sx: Number(t.sx ?? 1), sy: Number(t.sy ?? 1), parent: t.parent ?? null } : undefined;
+}
+
+/** シーンのデータでの画面の位置・向き・大きさ（位置の親をたどる）。Transform がなければ null */
+export function docPose(scene: SceneDoc, id: string): Pose | null {
+  const t = docTransform(scene, id);
+  return t ? poseOf((x) => docTransform(scene, x), t) : null;
+}
+
+/** 位置の親（Transform.parent）をたどって、ids のどれかの中にあるか（親と一緒に動くので、自分では動かさない） */
+export function insideAny(scene: SceneDoc, id: string, ids: Set<string>): boolean {
+  for (let p = docTransform(scene, id)?.parent, n = 0; p && n < 64; p = docTransform(scene, p)?.parent, n++) if (ids.has(p)) return true;
+  return false;
+}
+
+/** 位置（Transform か UI の x・y）を画面で dx・dy だけずらす。Layout で並べている子は動かさない。位置の親がある物は親から見た値に直す（親も動かすなら動かさない） */
 export function nudgeOps(scene: SceneDoc, ids: string[], dx: number, dy: number): Op[] {
   const ops: Op[] = [];
+  const set = new Set(ids);
   for (const id of ids) {
     const e = scene.entities.find((x) => x.id === id);
     const what = e ? movable(scene, e) : null;
     if (!e || !what) continue;
     const c = e.components[what];
+    let ldx = dx, ldy = dy;
+    if (what === 'Transform' && c.parent) {
+      if (insideAny(scene, id, set)) continue;
+      const pp = docPose(scene, String(c.parent));
+      if (pp) [ldx, ldy] = deltaTo(pp, dx, dy).map((v) => Math.round(v * 100) / 100) as [number, number];
+    }
     const base = `${scene.name}#${id}.${what}`;
-    ops.push({ op: 'set', path: `${base}.x`, value: Number(c.x ?? 0) + dx }, { op: 'set', path: `${base}.y`, value: Number(c.y ?? 0) + dy });
+    ops.push({ op: 'set', path: `${base}.x`, value: Number(c.x ?? 0) + ldx }, { op: 'set', path: `${base}.y`, value: Number(c.y ?? 0) + ldy });
   }
   return ops;
 }

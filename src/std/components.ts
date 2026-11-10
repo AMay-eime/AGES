@@ -6,11 +6,12 @@ export const Transform = defineComponent({
   name: 'Transform',
   desc: '位置・向き・大きさ（標準）',
   fields: {
-    x: { type: 'number', default: 0, desc: '横位置(px)' },
-    y: { type: 'number', default: 0, desc: '縦位置(px。下向きが正)' },
+    x: { type: 'number', default: 0, desc: '横位置(px。parent があれば親から見た位置)' },
+    y: { type: 'number', default: 0, desc: '縦位置(px。下向きが正。parent があれば親から見た位置)' },
     rot: { type: 'number', default: 0, min: -360, max: 360, desc: '回転(度。時計回りが正)' },
     sx: { type: 'number', default: 1, min: -20, max: 20, step: 0.05, desc: '横の倍率' },
     sy: { type: 'number', default: 1, min: -20, max: 20, step: 0.05, desc: '縦の倍率' },
+    parent: { type: 'ref', default: null, desc: '位置の親。あると x・y・rot・sx・sy は親から見た値になり、親と一緒に動く・回る・大きくなる。親が消えると一緒に消える。画面の位置は ctx.worldOf。null なら画面（ワールド）。UI の物は UI.parent を使う' },
   },
 });
 

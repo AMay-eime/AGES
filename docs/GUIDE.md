@@ -42,6 +42,16 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
 - カメラは標準の Camera（`ages schema <dir> Camera`）。追いかけ・範囲の制限・揺れは自分で書かない（標準のシステム std.camera が動かす）。揺らすのは `ctx.shake(0〜1)`
 - 画面の大きさへの合わせ方は `ages.project.json` の `view.fit`。ゲームのロジックは `ctx.view`（設計の大きさ）だけを使う
 
+## transform: 位置の親子（親と一緒に動く・回る）
+部品: Transform
+- 子の `Transform.parent` に親の ID を書くと、子の x・y・rot・sx・sy は親から見た値になり、親と一緒に動く・回る・大きくなる（Unity と同じ）。親が鏡写し（倍率が負）なら子の向きも逆
+- 画面（ワールド）の位置が要るとき（狙う・距離・弾を出す位置）は `ctx.worldOf(物)`（{ x, y, rot, sx, sy }。親がなければ Transform と同じ）。子の `t.x` をそのまま画面の位置として使わない
+- 画面のこの位置に置くのは `ctx.setWorldPos(物, x, y)`。親を変えるのは `ctx.attach(子, 親)`（null で親なし。画面の位置・向き・大きさはそのまま）
+- 実行中に親付きで出すのは `ctx.spawn('part', { Transform: { parent: boss.id, x: 30, y: 0 } })`（x・y は親から見た位置）
+- 親が消えると子も孫も一緒に消える（残したい子は先に `ctx.attach(子, null)`）。見せるか（visible）や描く層は親と別
+- 描画・当たり判定・カメラ・パーティクル・エディタの印とドラッグは画面の位置を使う。エディタの階層では親の中に並び、運んで親を変えても画面の位置はそのまま
+- UI の物は UI.parent（親の四角の中に置く）を使い、Transform.parent は使わない
+
 ## sound: 音
 部品: Sound AudioBus
 - 音は Sound の付いたプレハブ（例 `@se_shot`）を作り、`ctx.sound.play('se_shot')` で鳴らす。音量などの調整値はプレハブに置き、コードに書かない

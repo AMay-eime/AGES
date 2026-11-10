@@ -69,7 +69,7 @@ export interface CameraView {
 export function camerasOf(world: World, canvasW: number, canvasH: number, designW = canvasW, designH = canvasH): CameraView[] {
   const out: CameraView[] = [];
   for (const e of world.query('Camera', 'Transform')) {
-    const c = e.c.Camera, t = e.c.Transform;
+    const c = e.c.Camera, t = world.pose(e)!;
     if (c.enabled === false) continue;
     const [px, py] = c.viewPos ?? [0, 0];
     const [sw, sh] = c.viewSize ?? [1, 1];

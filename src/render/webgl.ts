@@ -116,6 +116,12 @@ export class Renderer {
   private curMat: Mat | null = null;
   /** UI の物の四角（描くたびに求める。ロジックと同じ計算） */
   private uiRects = new Map<string, UiRect>();
+  /** 描いているワールド（位置の親をたどる） */
+  private world: World | null = null;
+  /** 画面の位置・向き・大きさ（位置の親があればたどる） */
+  private pose(e: Entity): TransformLike {
+    return (this.world?.pose(e) ?? e.c.Transform) as TransformLike;
+  }
   /** UI を描いた視点（UI の物がなければ null） */
   uiView: CameraView | null = null;
 
@@ -194,6 +200,7 @@ export class Renderer {
 
   draw(world: World, opts: DrawOptions | string): void {
     this.stats = { draws: 0, quads: 0 };
+    this.world = world;
     const o: DrawOptions = typeof opts === 'string' ? { background: opts } : opts;
     const gl = this.gl;
     const W = this.canvas.width, H = this.canvas.height;
@@ -384,7 +391,7 @@ export class Renderer {
   private gauge(e: Entity): void {
     const g = e.c.Gauge;
     const box = this.uiBox(e);
-    const t = box?.t ?? (e.c.Transform as TransformLike);
+    const t = box?.t ?? (e.c.Transform ? this.pose(e) : undefined);
     const w = box?.w ?? g.w, h = box?.h ?? g.h;
     if (!t || w <= 0 || h <= 0) return;
     const k = Math.max(0, Math.min(1, (g.value ?? 0) / (g.max || 1)));
@@ -400,7 +407,7 @@ export class Renderer {
 
   private sprite(e: Entity): void {
     const s = e.c.Sprite;
-    let t = e.c.Transform as TransformLike;
+    let t = this.pose(e);
     let tex: Tex = this.missing;
     let u0 = 0, v0 = 0, u1 = 1, v1 = 1;
     let w = 16, h = 16, ax = s.anchor?.[0] ?? 0.5, ay = s.anchor?.[1] ?? 0.5;
@@ -501,7 +508,7 @@ export class Renderer {
   private shape(e: Entity): void {
     const s = e.c.Shape;
     const box = this.uiBox(e);
-    const t = box ? box.t : (e.c.Transform as TransformLike);
+    const t = box ? box.t : this.pose(e);
     const color = this.stateColor(e, s.color), alpha = s.alpha ?? 1, mat = this.material(e);
     const blend = s.blend ?? 'normal';
     const [on, off] = (s.dash ?? [0, 0]) as [number, number], dashed = on > 0 && off > 0, offset = s.dashOffset ?? 0;
@@ -562,7 +569,7 @@ export class Renderer {
 
   private text(e: Entity): void {
     const tx = e.c.Text;
-    let t = e.c.Transform as TransformLike;
+    let t = this.pose(e);
     if (!tx.text) return;
     const font = `${tx.bold ? 'bold ' : ''}${Math.round(tx.size)}px ${tx.font ? this.fontFamily(tx.font) : 'system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif'}`;
     const wrap = tx.wrap > 0 ? tx.wrap : 0, lhk = tx.lineHeight || 1.25;

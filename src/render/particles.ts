@@ -36,7 +36,7 @@ export class ParticleSim {
   burst(world: World, id: string, count: number): void {
     const e = world.get(id);
     if (!e?.c.Particles || !e.c.Transform) return;
-    const em = this.emitter(e);
+    const em = this.emitter(e, world);
     for (let i = 0; i < count; i++) this.spawn(em);
   }
 
@@ -44,13 +44,13 @@ export class ParticleSim {
     this.emitters.clear();
   }
 
-  private emitter(e: Entity): Emitter {
+  private emitter(e: Entity, world: World): Emitter {
     let em = this.emitters.get(e.id);
     if (!em) {
-      em = { ghost: snapshot(e), parts: [], acc: 0, t: 0, alive: true };
+      em = { ghost: snapshot(e, world), parts: [], acc: 0, t: 0, alive: true };
       this.emitters.set(e.id, em);
     }
-    em.ghost = snapshot(e);
+    em.ghost = snapshot(e, world);
     return em;
   }
 
@@ -79,7 +79,7 @@ export class ParticleSim {
     for (const e of world.entities.values()) {
       if (!e.c.Particles || !e.c.Transform) continue;
       if (editing && !this.emitters.has(e.id)) continue;
-      this.emitter(e).alive = true;
+      this.emitter(e, world).alive = true;
       live.push(e);
     }
     // 2. 出ている粒を動かす（このフレームに出す粒は、出たばかりなので動かさない）
@@ -114,7 +114,7 @@ export class ParticleSim {
       const e = world.get(id);
       const p = e?.c.Particles;
       if (!e || !p || !e.c.Transform) continue;
-      const em = this.emitter(e);
+      const em = this.emitter(e, world);
       em.alive = true;
       if (p.rate > 0 && !p.burst) {
         em.acc += p.rate * dt;
@@ -154,6 +154,7 @@ export class ParticleSim {
   }
 }
 
-function snapshot(e: Entity): Entity {
-  return { id: e.id, name: e.name, tags: e.tags, c: { Transform: { ...e.c.Transform }, Particles: { ...e.c.Particles }, ...(e.c.Effect ? { Effect: { ...e.c.Effect, params: { ...e.c.Effect.params } } } : {}) } };
+/** 物の写し（消えた後も残りの粒を動かす）。位置は画面の値で（位置の親があっても） */
+function snapshot(e: Entity, world: World): Entity {
+  return { id: e.id, name: e.name, tags: e.tags, c: { Transform: { ...e.c.Transform, ...world.pose(e), parent: null }, Particles: { ...e.c.Particles }, ...(e.c.Effect ? { Effect: { ...e.c.Effect, params: { ...e.c.Effect.params } } } : {}) } };
 }

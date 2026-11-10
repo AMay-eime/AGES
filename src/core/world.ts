@@ -1,6 +1,7 @@
 // 実行中のエンティティの集まり。挿入順で回るので結果は毎回同じになる。
 import type { Registry } from './registry.ts';
 import type { EntityData } from './docs.ts';
+import { poseOf, relativeTo, type Pose } from './transform.ts';
 
 export interface Entity {
   id: string;
@@ -53,8 +54,56 @@ export class World {
   }
 
   flush(): void {
+    if (!this.doomed.size) return;
+    // 位置の親（Transform.parent）が消える子も一緒に消す（孫も）
+    for (let more = true; more;) {
+      more = false;
+      for (const e of this.entities.values()) {
+        const p = e.c.Transform?.parent;
+        if (p && this.doomed.has(p) && !this.doomed.has(e.id)) { this.doomed.add(e.id); more = true; }
+      }
+    }
     for (const id of this.doomed) this.entities.delete(id);
     this.doomed.clear();
+  }
+
+  /**
+   * 画面（ワールド）の位置・向き・大きさ。位置の親（Transform.parent）があれば親をたどって求める。
+   * 親がなければ Transform そのものを返す（作り直さない。書き換えないこと）。Transform がなければ null
+   */
+  pose(e: Entity | string): Pose | null {
+    const x = typeof e === 'string' ? this.entities.get(e) : e;
+    const t = x?.c.Transform as (Pose & { parent?: string | null }) | undefined;
+    if (!t) return null;
+    return t.parent ? poseOf((id) => this.entities.get(id)?.c.Transform as Pose | undefined, t) : t;
+  }
+
+  /** 画面のこの位置に置く（親があれば、親から見た位置に直して書く） */
+  setWorldPos(e: Entity | string, x: number, y: number): void {
+    const ent = typeof e === 'string' ? this.entities.get(e) : e;
+    const t = ent?.c.Transform;
+    if (!t) return;
+    const parent = t.parent ? this.entities.get(t.parent) : undefined;
+    if (!parent?.c.Transform) { t.x = x; t.y = y; return; }
+    const r = relativeTo(this.pose(parent)!, { x, y, rot: 0, sx: 1, sy: 1 });
+    t.x = r.x; t.y = r.y;
+  }
+
+  /** 位置の親を変える（null で親なし）。画面の位置・向き・大きさはそのまま。親の中にある物を親にはできない */
+  attach(child: Entity | string, parent: Entity | string | null): void {
+    const c = typeof child === 'string' ? this.entities.get(child) : child;
+    const t = c?.c.Transform;
+    if (!c || !t) return;
+    const pid = parent === null ? null : typeof parent === 'string' ? parent : parent.id;
+    const p = pid ? this.entities.get(pid) : undefined;
+    if (pid && !p?.c.Transform) throw new Error(`attach: 親 ${pid} がないか、Transform がありません`);
+    for (let a = p, n = 0; a && n < 64; a = a.c.Transform?.parent ? this.entities.get(a.c.Transform.parent) : undefined, n++) {
+      if (a.id === c.id) throw new Error(`attach: ${pid} は ${c.id} の中にあるので、親にできません`);
+    }
+    const w = { ...this.pose(c)! };
+    const local = p ? relativeTo(this.pose(p)!, w) : w;
+    t.parent = pid;
+    t.x = local.x; t.y = local.y; t.rot = local.rot; t.sx = local.sx; t.sy = local.sy;
   }
 
   get(id: string): Entity | undefined {
