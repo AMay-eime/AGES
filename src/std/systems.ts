@@ -37,9 +37,12 @@ export const camera = defineSystem({
   writes: ['Camera', 'Transform'],
   update({ world, dt, frame, view }) {
     for (const e of world.query('Camera', 'Transform')) {
-      const c = e.c.Camera, t = e.c.Transform;
+      const c = e.c.Camera;
       if (c.enabled === false) continue;
-      const target = c.follow ? world.get(c.follow)?.c.Transform : undefined;
+      // 位置の親があっても、画面の位置で追いかけ・範囲の制限をして、最後に書き戻す
+      const own = world.pose(e)!;
+      const t = { x: own.x, y: own.y };
+      const target = c.follow ? world.pose(c.follow) ?? undefined : undefined;
       if (target) {
         const keep = c.lag ?? 0;
         for (const [k, i] of [['x', 0], ['y', 1]] as const) {
@@ -59,6 +62,7 @@ export const camera = defineSystem({
           t[k] = lo > hi ? (c.limitMin[i] + c.limitMax[i]) / 2 : Math.max(lo, Math.min(hi, t[k]));
         }
       }
+      if ((target || c.limit) && (t.x !== own.x || t.y !== own.y)) world.setWorldPos(e, t.x, t.y);
       c.trauma = Math.max(0, (c.trauma ?? 0) - (c.shakeRecover ?? 0) * dt);
       const s = (c.shakeMax ?? 0) * c.trauma * c.trauma;
       c.shakeX = s ? s * shakeNoise(frame, e.id, 0) : 0;

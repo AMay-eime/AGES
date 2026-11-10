@@ -6,7 +6,10 @@ import { PREFAB_MIME, importFiles } from './assets.ts';
 import { kindOf } from '../../core/assets.ts';
 import { menuItemsFor } from '../extensions.ts';
 import type { EntityData } from '../../core/docs.ts';
-import { uiParents, groupNumbered, groupKey, NUMBERED } from '../tree.ts';
+import { treeParents, groupNumbered, groupKey, NUMBERED } from '../tree.ts';
+import { docPose } from '../edit-ops.ts';
+import { relativeTo } from '../../core/transform.ts';
+import type { Op } from '../../core/patch.ts';
 
 // ---------- 階層 ----------
 const ENTITY_MIME = 'application/x-ages-entity';
@@ -18,7 +21,7 @@ export function hierarchyPanel(app: App): Panel {
   const revealSelected = () => {
     const sel = app.sel;
     if (!app.state || app.state.error || sel?.kind !== 'scene') return;
-    const { parent } = uiParents(app.state.scenes[sel.scene]?.entities ?? [], app.state.prefabs);
+    const { parent } = treeParents(app.state.scenes[sel.scene]?.entities ?? [], app.state.prefabs);
     // 連番のまとめも開く（まとめになっていなければ使われない鍵）
     for (let id: string | undefined = sel.id, n = 0; id && n < 64; id = parent.get(id), n++) {
       const m = NUMBERED.exec(id);
@@ -74,7 +77,7 @@ export function hierarchyPanel(app: App): Panel {
     // シーンの物を UI の親子（UI.parent）で木に並べる。兄弟はシーンの順。UI でない物と親のない UI は一番上
     const entityRows = () => {
       const ents = scene?.entities ?? [];
-      const { parent, hasUI } = uiParents(ents, s.prefabs);
+      const { parent, kind } = treeParents(ents, s.prefabs);
       const kids = new Map<string, EntityData[]>();
       const roots: EntityData[] = [];
       for (const e of ents) {
@@ -87,11 +90,27 @@ export function hierarchyPanel(app: App): Panel {
       const ancestorsOf = (id: string) => { const a = new Set<string>(); for (let p = parent.get(id); p && !a.has(p); p = parent.get(p)) a.add(p); return a; };
       const reparent = async (child: string, to: string | null) => {
         if (child === to) return;
-        if (!hasUI.has(child) || (to && !hasUI.has(to))) { toast('親子にできるのは UI の物どうしだけ（UI.parent）', 'warn'); return; }
+        const k = kind.get(child);
+        if (!k || (to && kind.get(to) !== k)) { toast('親子にできるのは UI の物どうし（UI.parent）か、位置のある物どうし（Transform.parent）', 'warn'); return; }
         if (to && ancestorsOf(to).has(child)) { toast(`${to} は ${child} の中にあるので、親にできない`, 'warn'); return; }
         if ((parent.get(child) ?? null) === to) return;
         if (to) open.add(`${app.scene}#${to}`);
-        await app.patch([{ op: 'set', path: `${app.scene}#${child}.UI.parent`, value: to }], 'hierarchy');
+        const base = `${app.scene}#${child}.${k}`;
+        const ops: Op[] = [{ op: 'set', path: `${base}.parent`, value: to }];
+        // 位置の親は、画面の位置・向き・大きさを変えない（親から見た値に直す）
+        const view = app.sceneView(app.scene);
+        const w = k === 'Transform' && view ? docPose(view, child) : null;
+        if (w && view) {
+          const pp = to ? docPose(view, to) : null;
+          const local = pp ? relativeTo(pp, w) : w;
+          const cur = view.entities.find((e) => e.id === child)?.components.Transform ?? {};
+          const r2 = (v: number) => Math.round(v * 100) / 100;
+          for (const [f, d] of [['x', 0], ['y', 0], ['rot', 0], ['sx', 1], ['sy', 1]] as const) {
+            const v = r2(local[f]);
+            if (v !== Number(cur[f] ?? d)) ops.push({ op: 'set', path: `${base}.${f}`, value: v });
+          }
+        }
+        await app.patch(ops, 'hierarchy');
       };
       const dropOn = (target: string | null) => ({
         ondragover: (ev: DragEvent) => { if (ev.dataTransfer?.types.includes(ENTITY_MIME)) { ev.preventDefault(); (ev.currentTarget as HTMLElement).classList.add('drop'); } },
@@ -121,7 +140,7 @@ export function hierarchyPanel(app: App): Panel {
         out.push(h('div', {
           class: `item ${sel?.kind === 'scene' && sel.id === e.id ? 'sel' : app.extra.includes(e.id) ? 'sel2' : ''}`,
           style: `padding-left:${4 + depth * 14}px`,
-          title: 'Shift・Ctrl+クリックで足す・外す。右クリックで複製・削除・プレハブにする。UI の物は、ほかの UI の上へ運ぶとその子に（一番上の行へ運ぶと親なし。位置は親の四角の中になる。Ctrl+Z で戻せる）',
+          title: 'Shift・Ctrl+クリックで足す・外す。右クリックで複製・削除・プレハブにする。ほかの物の上へ運ぶとその子に（UI どうしは UI.parent・位置のある物どうしは Transform.parent。シーン名の行へ運ぶと親なし。Ctrl+Z で戻せる）',
           onclick: (ev: MouseEvent) => app.select({ kind: 'scene', scene: app.scene, id: e.id }, { add: ev.shiftKey || ev.ctrlKey || ev.metaKey }),
           oncontextmenu: (ev: MouseEvent) => {
             ev.preventDefault();
@@ -130,9 +149,9 @@ export function hierarchyPanel(app: App): Panel {
             const items = menuItemsFor(app, 'entity', app.selectedIds().map((id) => `${app.scene}#${id}`));
             if (items.length) menu(ev.clientX, ev.clientY, items);
           },
-          draggable: !app.play && hasUI.has(e.id),
+          draggable: !app.play && kind.has(e.id),
           ondragstart: (ev: DragEvent) => { ev.dataTransfer!.setData(ENTITY_MIME, e.id); ev.dataTransfer!.effectAllowed = 'move'; },
-          ...(app.play || !hasUI.has(e.id) ? {} : dropOn(e.id)),
+          ...(app.play || !kind.has(e.id) ? {} : dropOn(e.id)),
         },
         h('span', { class: 'tw', title: children.length ? '開く・畳む（Alt+クリックで中も全部）' : '', onclick: children.length ? toggle : null }, children.length ? (isOpen ? '▾' : '▸') : ''),
         e.name, h('span', { class: 'muted' }, e.id),

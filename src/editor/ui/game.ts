@@ -229,10 +229,11 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
         out.push({ id: e.id, x, y, cam: renderer.cams.indexOf(v) });
         continue;
       }
-      if (!e.c.Transform) continue;
+      const pose = w.pose(e);
+      if (!pose) continue;
       // その位置が映っている最初のカメラで描く
       for (let i = 0; i < renderer.cams.length; i++) {
-        const [x, y] = worldToScreen(renderer.cams[i], e.c.Transform.x, e.c.Transform.y);
+        const [x, y] = worldToScreen(renderer.cams[i], pose.x, pose.y);
         if (inView(renderer.cams[i], x, y)) { out.push({ id: e.id, x, y, cam: i }); break; }
       }
     }
@@ -304,7 +305,19 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     const doc = sceneDoc()?.entities.find((x) => x.id === id);
     const what = doc ? movable(sceneDoc()!, doc) : null;
     if (!e || !what || !e.c[what]) return null;
-    return { id, what, x: Number(e.c[what].x ?? 0), y: Number(e.c[what].y ?? 0) };
+    // Transform は画面の位置で動かす（位置の親があっても。書くときに親から見た値に直す）
+    const at = what === 'Transform' ? app.preview!.world.pose(e)! : e.c[what];
+    return { id, what, x: Number(at.x ?? 0), y: Number(at.y ?? 0) };
+  };
+  /** まとめて動かす物から、位置の親と一緒に動く物を外す（親も選んでいれば、子は自分では動かさない） */
+  const topMost = (all: Moving[]): Moving[] => {
+    const w = app.preview?.world;
+    if (!w) return all;
+    const ids = new Set(all.map((m) => m.id));
+    return all.filter((m) => {
+      for (let p = w.get(m.id)?.c.Transform?.parent, n = 0; p && n < 64; p = w.get(p)?.c.Transform?.parent, n++) if (ids.has(p)) return false;
+      return true;
+    });
   };
   /** 画面の点にある物（手前から） */
   const pickAt = (p: { x: number; y: number }) => {
@@ -360,7 +373,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     const camIndex = ms.find((m) => m.id === hit.id)?.cam ?? [...renderer.shapes].reverse().find((s) => s.id === hit.id && s.cam !== undefined)?.cam ?? 0;
     const cam = renderer.cams[camIndex];
     const [wx, wy] = screenToWorld(cam, p.x, p.y);
-    const all = app.selectedIds().map(moving).filter((m): m is Moving => !!m);
+    const all = topMost(app.selectedIds().map(moving).filter((m): m is Moving => !!m));
     drag = { lead, cam, wx, wy, all, moved: false };
   });
   window.addEventListener('mousemove', (e) => {
@@ -384,6 +397,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     if (!drag.moved && Math.hypot(wx - drag.wx, wy - drag.wy) < 2) return; // クリックしただけでは動かさない
     const dx = nx - drag.lead.x, dy = ny - drag.lead.y;
     for (const m of drag.all) {
+      if (m.what === 'Transform') { app.preview.world.setWorldPos(m.id, m.x + dx, m.y + dy); continue; }
       const c = app.preview.world.get(m.id)?.c[m.what];
       if (c) { c.x = m.x + dx; c.y = m.y + dy; }
     }
@@ -422,7 +436,9 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
       const c = app.preview.world.get(m.id)?.c[m.what];
       if (!c) continue;
       const base = `${app.scene}#${m.id}.${m.what}`;
-      ops.push({ op: 'set', path: `${base}.x`, value: c.x }, { op: 'set', path: `${base}.y`, value: c.y });
+      // 位置の親から見た値は割り切れないことがある（小数2桁にそろえる）
+      const r = (v: number) => (c.parent ? Math.round(v * 100) / 100 : v);
+      ops.push({ op: 'set', path: `${base}.x`, value: r(c.x) }, { op: 'set', path: `${base}.y`, value: r(c.y) });
     }
     if (ops.length) app.patch(ops, 'game');
   });

@@ -59,6 +59,7 @@
 - 時間で変える演出: `ctx.tween` と表 `$tweens`。自分でフレームを数えない → `tween`
 - 見た目の効果: Effect・PostEffect と `std:flash` などのシェーダー・`.frag` → `shader`
 - HUD・メニュー・ボタン・ゲージ: UI をシーンに置く（コードで画面を組み立てない）。配置の直しは patch の `dockUI` / `attachUI`（座標を計算しない）と `ages ui` → `ui`
+- 位置の親子（親と一緒に動く）: Transform.parent。子の値は親から見た値、画面の位置は `ctx.worldOf` → `transform`
 - 当たり判定: Collider と `ctx.hit`。距離の計算を書かない → `hit`
 - 画面の言葉・多言語: 表 `$text` と `ctx.t`・Text.key。言葉をコードに書かない → `text`
 - 保存: `ctx.save`・`saveWorld`。キー割り当て・音量・言語は自動 → `save`

@@ -11,9 +11,9 @@ export type HitShape =
 /** 軸にそろった外枠（ざっと絞る用） */
 export interface Box { x0: number; y0: number; x1: number; y1: number }
 
-/** 物の当たり判定の形（Collider がない・止めている・消える物は null） */
-export function shapeOf(e: Entity): HitShape | null {
-  const c = e.c.Collider, t = e.c.Transform;
+/** 物の当たり判定の形（Collider がない・止めている・消える物は null）。world を渡すと位置の親（Transform.parent）をたどる */
+export function shapeOf(e: Entity, world?: World): HitShape | null {
+  const c = e.c.Collider, t = e.c.Transform && world && e.c.Transform.parent ? world.pose(e)! : e.c.Transform;
   if (!c || c.enabled === false || !t) return null;
   const sx = Math.abs(t.sx ?? 1), sy = Math.abs(t.sy ?? 1);
   const rad = ((t.rot ?? 0) * Math.PI) / 180;
@@ -118,7 +118,7 @@ export class HitState {
     const all: { e: Entity; s: HitShape; g: string }[] = [];
     // このフレームに消した物も数える（当たって消した弾も「当たった」に入るように）
     for (const e of world.entities.values()) {
-      const s = shapeOf(e);
+      const s = shapeOf(e, world);
       if (!s) continue;
       const g = String(e.c.Collider.group ?? '');
       all.push({ e, s, g });

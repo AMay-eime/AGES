@@ -1,4 +1,5 @@
 // 固定更新のゲームループ。描画は知らない（ロジックだけ）。
+import type { Pose } from './transform.ts';
 import { World, type Entity } from './world.ts';
 import { Rng } from './rng.ts';
 import { Input, actionsFromRows, type FrameInput } from './input.ts';
@@ -35,7 +36,17 @@ export interface Ctx {
   spawn(prefab: string, overrides?: Record<string, Record<string, unknown>>): Entity;
   /** プレハブの中身を読む（派生は元と重ねた形、書いていない値は既定値。ないなら undefined）。読むだけ（凍らせてあり、書き換えるとエラー）。プレハブが変わるまで同じものを返すので、毎フレーム呼んでも軽い */
   prefab(name: string): { name: string; tags: string[]; components: Record<string, Record<string, any>> } | undefined;
+  /** 消す（フレームの終わり）。位置の親（Transform.parent）がこの物の子も一緒に消える */
   destroy(id: string): void;
+  /**
+   * 画面（ワールド）の位置・向き・大きさ { x, y, rot, sx, sy }。位置の親（Transform.parent）がある物の Transform は親から見た値なので、
+   * 画面の位置が要るとき（狙う・距離・当たり）はこれで読む。親がなければ Transform と同じ。Transform がなければ null
+   */
+  worldOf(e: Entity | string): Pose | null;
+  /** 画面のこの位置に置く（親があれば親から見た位置に直して書く） */
+  setWorldPos(e: Entity | string, x: number, y: number): void;
+  /** 位置の親を変える（null で親なし）。画面の位置・向き・大きさはそのまま（例 ctx.attach(option, player)） */
+  attach(child: Entity | string, parent: Entity | string | null): void;
   /** 出来事を出す（例: emit('enemyKilled', { id })）。defineSystem の on で受けたシステムが、その場で呼ばれる。ages run の要約に回数が載る */
   emit(event: string, data?: unknown): void;
   /** カメラを揺らす（強さ 0〜1 を足す。重ねると強くなる）。camera を省くと、使っているカメラすべて */
@@ -308,6 +319,9 @@ export class Game {
         return value;
       },
       destroy: (id) => this.world.destroy(id),
+      worldOf: (e) => this.world.pose(e),
+      setWorldPos: (e, x, y) => this.world.setWorldPos(e, x, y),
+      attach: (c, p) => this.world.attach(c, p),
       shake: (amount, id) => {
         for (const e of this.world.query('Camera')) {
           if ((id && e.id !== id) || e.c.Camera.enabled === false) continue;
@@ -433,7 +447,7 @@ export class Game {
       for (const e of this.world.entities.values()) {
         // 当たりのない物・違うグループを先に外す（形を作るのは候補だけ）
         if (!e.c.Collider || e.id === skip || !inGroup(e, group) || !this.world.isAlive(e.id)) continue;
-        const o = shapeOf(e);
+        const o = shapeOf(e, this.world);
         if (o && overlap(s, o)) out.push(e.id);
       }
       return out;
@@ -442,7 +456,7 @@ export class Game {
       const e = this.world.get(id);
       if (!e) throw new Error(`ctx.hit.${where}: 物 ${id} はありません${suggest(id, [...this.world.entities.keys()].filter((k) => !k.includes('~')))}`);
       if (!e.c.Collider) throw new Error(`ctx.hit.${where}: ${id} に Collider が付いていません（当たり判定の形を付けてください）`);
-      return shapeOf(e);
+      return shapeOf(e, this.world);
     };
     return {
       overlaps: (id, group) => find('overlaps', shapeById('overlaps', id), group, id),
@@ -456,7 +470,7 @@ export class Game {
       },
       point: (x, y, group) => {
         checkGroup('point', group);
-        return [...this.world.entities.values()].filter((e) => this.world.isAlive(e.id) && inGroup(e, group)).filter((e) => { const s = shapeOf(e); return s && contains(s, x, y); }).map((e) => e.id);
+        return [...this.world.entities.values()].filter((e) => this.world.isAlive(e.id) && inGroup(e, group)).filter((e) => { const s = shapeOf(e, this.world); return s && contains(s, x, y); }).map((e) => e.id);
       },
       circle: (x, y, r, group) => find('circle', { kind: 'circle', x, y, r, box: { x0: x - r, y0: y - r, x1: x + r, y1: y + r } }, group),
       rect: (x, y, w, h, group) => find('rect', { kind: 'rect', x, y, hw: w / 2, hh: h / 2, cos: 1, sin: 0, box: { x0: x - w / 2, y0: y - h / 2, x1: x + w / 2, y1: y + h / 2 } }, group),
@@ -465,7 +479,7 @@ export class Game {
         let best: { id: string; t: number } | null = null;
         for (const e of this.world.entities.values()) {
           if (!this.world.isAlive(e.id) || !inGroup(e, group)) continue;
-          const s = shapeOf(e);
+          const s = shapeOf(e, this.world);
           const t = s ? rayHit(s, x0, y0, x1, y1) : null;
           if (t !== null && (!best || t < best.t)) best = { id: e.id, t };
         }

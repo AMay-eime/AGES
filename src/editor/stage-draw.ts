@@ -144,7 +144,7 @@ export function drawColliders(og: Ctx2D, world: World, cams: CameraView[], k = 1
     const at = (x: number, y: number) => { const [sx, sy] = worldToScreen(cam, x, y); return [sx * k, sy * k]; };
     for (const e of world.entities.values()) {
       if (e.c.UI || (e.c.Sprite?.layer ?? 0) < cam.layerMin || (e.c.Sprite?.layer ?? 0) > cam.layerMax) continue;
-      const sh = shapeOf(e);
+      const sh = shapeOf(e, world);
       if (!sh) continue;
       og.strokeStyle = hitColor(String(e.c.Collider.group ?? ''));
       og.beginPath();
