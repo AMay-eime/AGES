@@ -10,6 +10,7 @@ import { treeParents, groupNumbered, groupKey, NUMBERED } from '../tree.ts';
 import { docPose } from '../edit-ops.ts';
 import { relativeTo } from '../../core/transform.ts';
 import type { Op } from '../../core/patch.ts';
+import type { GitFix, GitHelp } from '../git-help.ts';
 
 // ---------- 階層 ----------
 const ENTITY_MIME = 'application/x-ages-entity';
@@ -365,32 +366,111 @@ export function logPanel(app: App): Panel {
 // ---------- Git ----------
 export function gitPanel(app: App): Panel {
   const status = h('pre', { class: 'pad muted' });
+  const who = h('div', { class: 'pad' });
+  const helpBox = h('div', { class: 'pad' });
   const msg = h('textarea', { style: 'width:100%;height:90px;font:var(--mono)', placeholder: 'コミットの説明（操作ログから下書きされます）' }) as HTMLTextAreaElement;
   const out = h('pre', { class: 'pad' });
   let edited = false;
+  /** GitHub のユーザー名の見当（送り先の持ち主） */
+  let owner = '';
   msg.addEventListener('input', () => { edited = true; });
   const render = async () => {
     try {
-      const r = await app.api<{ branch: string; status: string; draft: string }>('/api/git/status');
+      const r = await app.api<{ branch: string; status: string; draft: string; identity?: { name: string; email: string }; owner?: string | null }>('/api/git/status');
       status.textContent = `ブランチ: ${r.branch || '（なし）'}\n${r.status || '変更なし'}`;
       if (!edited) msg.value = r.draft;
+      owner = r.owner ?? '';
+      // コミットに入る名前・アドレス（プッシュすると誰でも見られる）
+      const id = r.identity;
+      clear(who);
+      if (!id?.email) {
+        who.append(h('span', { style: 'color:var(--warn)' }, 'コミットに入れる名前とメールアドレスが決まっていません '), fixButton({ kind: 'identity' }));
+      } else {
+        const hidden = /@users\.noreply\.github\.com$/i.test(id.email);
+        who.append(h('span', { class: 'muted' }, `コミットに入る名前: ${id.name || '（なし）'} <${id.email}>${hidden ? '（GitHub の noreply のアドレス）' : '（プッシュすると誰でも見られます）'} `));
+        if (!hidden) who.append(h('button', { onclick: () => noreplyDialog(), title: 'アドレスを公開したくないときは、GitHub の noreply のアドレスにします' }, 'noreply のアドレスにする'));
+      }
     } catch (e) {
       status.textContent = (e as Error).message;
     }
   };
+  /** よくある失敗の説明と、直すボタン */
+  const showHelp = (helps: GitHelp[] = []) => {
+    clear(helpBox);
+    for (const x of helps) {
+      const color = x.level === 'bad' ? 'var(--bad)' : x.level === 'warn' ? 'var(--warn)' : 'var(--accent)';
+      helpBox.append(h('div', { style: `border-left:3px solid ${color};padding:4px 8px;margin:4px 0` },
+        h('div', { style: `color:${color};font-weight:600` }, x.title),
+        h('div', { class: 'muted' }, x.detail),
+        x.fix ? h('div', { class: 'toolbar' }, fixButton(x.fix)) : null));
+    }
+  };
+  const FIX_LABEL: Record<GitFix['kind'], string> = {
+    noreply: '公開してよいアドレス（noreply）にする', 'set-url': '送り先を新しい場所に直す', pushpull: '取り込んでからプッシュ',
+    'set-upstream': '送り先を決めてプッシュ', identity: '名前とアドレスを決める',
+  };
+  function fixButton(f: GitFix): HTMLElement {
+    const go = () => {
+      if (f.kind === 'noreply') return noreplyDialog();
+      if (f.kind === 'identity') return identityDialog();
+      if (f.kind === 'pushpull') return void sync('pushpull');
+      return void doFix(f);
+    };
+    return h('button', { onclick: go }, FIX_LABEL[f.kind]);
+  }
+  const doFix = async (body: Record<string, unknown>) => {
+    out.textContent = '直しています…';
+    const r = await app.api<{ ok: boolean; out: string }>('/api/git/fix', { body });
+    out.textContent = r.out;
+    toast(r.ok ? r.out.split('\n').slice(-1)[0] : `直せませんでした。Git のパネルに出力があります`, r.ok ? undefined : 'bad', 8000);
+    if (r.ok) showHelp([]);
+    await render();
+    void check(true);
+  };
+  /** GH007: アドレスを GitHub の noreply にして、プッシュしていないコミットを作り直す（確かめてから） */
+  function noreplyDialog(name?: string): void {
+    const login = h('input', { type: 'text', value: owner, placeholder: 'GitHub のユーザー名', style: 'width:16em' }) as HTMLInputElement;
+    modal((close) => h('div', {},
+      h('p', {}, 'コミットに入るメールアドレスを、公開してよい GitHub の noreply のアドレス（番号+ユーザー名@users.noreply.github.com）にします。'),
+      h('p', {}, 'まだプッシュしていないコミットは、新しいアドレスで作り直します（中身は変わりません）。このリポジトリだけの設定です。'),
+      h('div', { class: 'toolbar' }, h('label', {}, 'GitHub のユーザー名 ', login)),
+      h('div', { class: 'toolbar' },
+        h('button', { onclick: () => { close(); void doFix({ kind: 'noreply', login: login.value.trim(), ...(name ? { name } : {}) }); } }, '直す'),
+        h('button', { onclick: close }, 'やめる'))));
+  }
+  function identityDialog(): void {
+    const name = h('input', { type: 'text', placeholder: '名前（ハンドルネームでよい）', style: 'width:16em' }) as HTMLInputElement;
+    const email = h('input', { type: 'text', placeholder: 'メールアドレス', style: 'width:22em' }) as HTMLInputElement;
+    modal((close) => h('div', {},
+      h('p', {}, 'コミットに入れる名前とメールアドレスを決めます（このリポジトリだけ）。GitHub にプッシュすると誰でも見られます。'),
+      h('div', { class: 'toolbar' }, name), h('div', { class: 'toolbar' }, email),
+      h('p', { class: 'muted' }, 'アドレスを公開したくなければ、名前だけ入れて「noreply のアドレスにする」を押します。'),
+      h('div', { class: 'toolbar' },
+        h('button', { onclick: () => { close(); void doFix({ kind: 'identity', name: name.value, email: email.value }); } }, '決める'),
+        h('button', { onclick: () => { close(); noreplyDialog(name.value.trim() || undefined); } }, 'noreply のアドレスにする'),
+        h('button', { onclick: close }, 'やめる'))));
+  }
+  const OP_NAME: Record<string, string> = { pull: '取り込み（プル）', commit: 'コミット', push: 'プッシュ' };
   const run = (op: string) => async () => {
     out.textContent = `${op}…`;
-    const r = await app.api<{ out: string; locks?: { approved: boolean; diff: { added: string[]; removed: string[]; changed: string[] } } | null }>(`/api/git/${op}`, { body: op === 'commit' ? { message: msg.value } : {} });
+    showHelp([]);
+    const r = await app.api<{ ok: boolean; out: string; help?: GitHelp[]; locks?: { approved: boolean; diff: { added: string[]; removed: string[]; changed: string[] } } | null }>(`/api/git/${op}`, { body: op === 'commit' ? { message: msg.value } : {} });
     out.textContent = r.out;
+    showHelp(r.help);
+    // 失敗したら警告を出す（出力の欄だけだと、うまくいったと思ってしまう）
+    const first = r.help?.find((x) => x.level !== 'info');
+    if (!r.ok && !(op === 'commit' && r.help?.some((x) => x.title.startsWith('コミットする変更がありません')))) toast(`${OP_NAME[op] ?? op}できませんでした: ${first?.title ?? 'Git のパネルに出力があります'}`, 'bad', 10000);
+    else if (r.ok && op === 'push') toast('プッシュしました');
     if (r.locks) {
       const d = r.locks.diff;
       const n = `増えたロック ${d.added.length}件・消えたロック ${d.removed.length}件・値が変わったロック ${d.changed.length}件`;
       toast(`チームのロックの変更を取り込みました（${n}）。ロックマネージャーで確かめて承認するまで、AI の編集は止まります`, 'lock', 10000);
       app.openLocks();
     }
-    if (op === 'commit') edited = false;
+    if (op === 'commit' && r.ok) edited = false;
     await app.refresh();
     render();
+    if (op !== 'commit') void check(true);
   };
   // ---- GitHub からの自動の取り込み（エディタを開いて見ている間だけ、1分に1回ほど「変わったか」だけを聞く） ----
   const remoteLine = h('div', { class: 'pad muted' });
@@ -402,11 +482,12 @@ export function gitPanel(app: App): Panel {
   let asked = '';
   let busy = false;
   const sync = async (mode: 'pull' | 'pushpull') => {
-    const r = await app.api<{ ok: boolean; out: string; conflict?: boolean; step: string }>('/api/git/sync', { body: { mode } });
+    const r = await app.api<{ ok: boolean; out: string; conflict?: boolean; step: string; help?: GitHelp[] }>('/api/git/sync', { body: { mode } });
     out.textContent = r.out;
+    showHelp(r.help);
     if (r.ok) toast(mode === 'pull' ? 'GitHub の変更を取り込みました' : '手元の変更をプッシュし、GitHub の変更を取り込みました');
     else if (r.conflict) toast('手元の変更と GitHub の変更が同じ所で食い違ったので、取り込みをやめました（手元の変更はコミット済み・プッシュはしていません）。どちらを残すか決めて合わせる必要があります（AI に頼めます）', 'bad', 15000);
-    else toast(`GitHub との同期が止まりました（${r.step}）。Git のパネルに出力があります`, 'warn', 8000);
+    else toast(`GitHub との同期が止まりました（${r.step}）: ${r.help?.find((x) => x.level !== 'info')?.title ?? 'Git のパネルに出力があります'}`, 'warn', 10000);
     await app.refresh();
     render();
   };
@@ -430,7 +511,9 @@ export function gitPanel(app: App): Panel {
       const at = new Date(s.checked).toLocaleTimeString();
       if (!s.upstream) { remoteLine.textContent = 'GitHub: 上流の枝がないので、自動の取り込みは使えません（git push -u で設定）'; return; }
       if (s.error) { remoteLine.textContent = `GitHub（${s.upstream}）に聞けませんでした: ${s.error}（${at}）`; return; }
-      remoteLine.textContent = s.behind ? `GitHub（${s.upstream}）に新しい変更 ${s.behind}件（${at} に確かめた）` : `GitHub（${s.upstream}）: 最新（${at} に確かめた）${s.ahead ? `・プッシュしていないコミット ${s.ahead}件` : ''}`;
+      remoteLine.textContent = s.behind ? `GitHub（${s.upstream}）に新しい変更 ${s.behind}件（${at} に確かめた）` : `GitHub（${s.upstream}）: 最新（${at} に確かめた）`;
+      // プッシュしていないコミットは目立たせる（プッシュが失敗したままに気づけるように）
+      if (s.ahead) remoteLine.append(h('span', { style: 'color:var(--warn);font-weight:600' }, `　⚠ プッシュしていないコミット ${s.ahead}件`));
       if (!s.behind) return;
       if (!s.dirty && !s.ahead) await sync('pull');
       else if (force || asked !== (s.remoteHead ?? '')) ask(s);
@@ -446,7 +529,7 @@ export function gitPanel(app: App): Panel {
   const el = h('div', {},
     h('div', { class: 'toolbar' }, h('button', { onclick: run('pull') }, 'プル'), h('button', { onclick: run('commit') }, 'コミット'), h('button', { onclick: run('push') }, 'プッシュ'), h('button', { class: 'icon', onclick: render, title: '更新' }, '↻')),
     h('div', { class: 'toolbar' }, h('label', {}, auto, ' GitHub から自動で取り込む（開いている間、1分ごとに確かめる）'), h('button', { onclick: () => void check(true) }, '今すぐ取り込む')),
-    remoteLine, status, h('div', { class: 'pad' }, msg), out);
+    remoteLine, helpBox, who, status, h('div', { class: 'pad' }, msg), out);
   app.on('change', () => { if (el.classList.contains('active')) render(); });
   return { id: 'git', title: 'Git', el, render };
 }
