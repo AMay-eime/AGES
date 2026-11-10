@@ -111,7 +111,7 @@ export async function captureShots(dir: string, cfg: ShotConfig, timeoutMs = 120
   let cdp: Cdp | undefined;
   const profile = await mkdtemp(join(tmpdir(), 'ages-shot-'));
   try {
-    server = spawn(process.execPath, [serverTs, dir, '--port', String(port), '--lock-port', String(lockPort)], { stdio: ['ignore', 'ignore', 'pipe'] });
+    server = spawn(process.execPath, [serverTs, dir, '--port', String(port), '--lock-port', String(lockPort), '--no-open'], { stdio: ['ignore', 'ignore', 'pipe'] });
     let serverErr = '';
     server.stderr?.on('data', (d) => { serverErr += String(d); });
     const base = `http://127.0.0.1:${port}`;

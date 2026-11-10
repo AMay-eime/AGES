@@ -1,2 +1,5 @@
 # 操作ログは追記だけなので、Gitの統合では両方の行を残す
 .ages/oplog.jsonl merge=union
+# ダブルクリックでエディタを開くファイル（Windows は CRLF、mac は LF のまま）
+*.cmd text eol=crlf
+*.command text eol=lf

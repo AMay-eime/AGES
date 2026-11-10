@@ -14,6 +14,7 @@ import { noteRecent, placeOf, readRecent, recentFor, topRecent } from '../projec
 import { eventWarnings } from '../project/events.ts';
 import { focusLine, readFocus, withFocus } from '../project/focus.ts';
 import { exportProject, serveStatic } from '../project/export.ts';
+import { writeLaunchers } from '../project/launchers.ts';
 import { checkExport } from './export-check.ts';
 import { readCursor, readLog, readTouched, summarize, writeCursor, type Actor } from '../project/oplog.ts';
 import { OP_DOCS, getValue, parseLiteral, splitCell, type Op } from '../core/patch.ts';
@@ -206,6 +207,8 @@ export async function cmdPin(dir: string, repo = DEFAULT_REPO, commit?: string, 
   else if (before !== agents) { await writeFile(agentsFile, agents); done.push('AGENTS.md（本体のこの版の手順）'); }
   await writeFile(join(p.dir, '.mcp.json'), JSON.stringify({ mcpServers: { ages: { command: 'node', args: ['ages.mjs', 'mcp'] } } }, null, 2) + '\n');
   done.push('.mcp.json');
+  // ダブルクリックでエディタを開くファイル（印の行が残っていれば、この起動の仕方に作り直す）
+  for (const f of await writeLaunchers(p.dir, 'ages.mjs editor')) done.push(`${f}（ダブルクリックでエディタを開く）`);
   // 型の確かめ（tsconfig）の本体の場所も
   const ts = join(p.dir, 'tsconfig.json');
   if (existsSync(ts)) {
@@ -213,7 +216,7 @@ export async function cmdPin(dir: string, repo = DEFAULT_REPO, commit?: string, 
     const u = t.replace(/"ages":\s*\["[^"]*\/src\/index\.ts"\]/, `"ages": ["./${PINNED_ENGINE}/src/index.ts"]`);
     if (u !== t) { await writeFile(ts, u); done.push('tsconfig.json'); }
   }
-  return [`版だけ同梱の形にしました（AGES ${sha.slice(0, 7)}）:`, ...done.map((d) => `  ${d}`), '使い方: node ages.mjs <命令> . ・node ages.mjs editor ・本体を上げる: node ages.mjs upgrade'].join('\n');
+  return [`版だけ同梱の形にしました（AGES ${sha.slice(0, 7)}）:`, ...done.map((d) => `  ${d}`), '使い方: node ages.mjs <命令> . ・node ages.mjs editor（「エディタを開く」のダブルクリックでも）・本体を上げる: node ages.mjs upgrade'].join('\n');
 }
 
 /** 書き出す（段階3）。Web はそのまま置ける一式、--desktop は Tauri（Steam 向け）の元も。--check は headless の Chrome で動くか確かめる */
@@ -280,6 +283,8 @@ export async function cmdInit(dir: string, name?: string): Promise<string> {
   const mcp = { mcpServers: { ages: { command: 'node', args: [`${engine}/src/mcp/server.ts`] } } };
   await writeFile(join(target, '.mcp.json'), JSON.stringify(mcp, null, 2) + '\n');
   created.push('.mcp.json');
+  // ダブルクリックでエディタを開くファイル（Windows・mac。命令を打たずに使えるように）
+  created.push(...(await writeLaunchers(target, `"${engine}/src/editor/server.ts" .`)));
   // 作ったときの AGES の版を残す（後で本体を上げたとき、どこから直せばよいか分かるように）
   const v = await recordVersion(target);
   return [
