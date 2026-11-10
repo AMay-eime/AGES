@@ -18,3 +18,37 @@ export function uiParents(ents: EntityData[], prefabs: Record<string, PrefabDoc>
   }
   return { parent, hasUI };
 }
+
+/** 名前の終わりの連番（例 star12 → star・12） */
+export const NUMBERED = /^(.*?\D)(\d+)$/;
+
+/** 連番のまとめの開け閉めの鍵（シーン・親・頭の名前） */
+export function groupKey(scene: string, under: string, prefix: string): string {
+  return `${scene}#~${under}~${prefix}`;
+}
+
+/**
+ * 兄弟を並べる順に、連番の名前（ID）で子のない物が5つ以上あれば1つにまとめる（見せ方だけ。データは変えない）。
+ * まとめは最初の物の場所に置き、中は数の順
+ */
+export function groupNumbered(list: EntityData[], hasChildren: (id: string) => boolean, min = 5): Array<EntityData | { prefix: string; members: EntityData[] }> {
+  const by = new Map<string, EntityData[]>();
+  for (const e of list) {
+    const m = NUMBERED.exec(e.id);
+    if (!m || hasChildren(e.id)) continue;
+    if (!by.has(m[1])) by.set(m[1], []);
+    by.get(m[1])!.push(e);
+  }
+  const out: Array<EntityData | { prefix: string; members: EntityData[] }> = [];
+  const done = new Set<string>();
+  for (const e of list) {
+    const m = NUMBERED.exec(e.id);
+    const g = m && !hasChildren(e.id) ? by.get(m[1]) : undefined;
+    if (!g || g.length < min) { out.push(e); continue; }
+    if (done.has(m![1])) continue;
+    done.add(m![1]);
+    const num = (x: EntityData) => Number(x.id.slice(m![1].length));
+    out.push({ prefix: m![1], members: [...g].sort((a, b) => num(a) - num(b)) });
+  }
+  return out;
+}
