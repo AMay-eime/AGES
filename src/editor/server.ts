@@ -1,5 +1,5 @@
 // AGES エディタのサーバー（依存ゼロ）。
-//   node src/editor/server.ts <プロジェクトのフォルダ> [--port 5170]
+//   node src/editor/server.ts <プロジェクトのフォルダ> [--port 5170] [--no-open]（--port がなければ 5170 から空いている所。ブラウザで開く）
 // - TypeScript はその場で型を取り除いてブラウザへ配る（コンパイル待ちなし）
 // - ファイルの変更を監視し、ブラウザへ即座に知らせる（ホットリロード）
 // - 外部（別のエディタやAI）による直接の編集も検出してログに残し、ロックされた値は即座に元に戻す
@@ -18,15 +18,14 @@ import type { Op } from '../core/patch.ts';
 import { dirtyCount, pushAndPull, remoteState, type RemoteState } from './gitsync.ts';
 import { writeFocus, type EditorFocus } from '../project/focus.ts';
 import { EXPORT_MARK } from '../project/export.ts';
+import { DEFAULT_PORT, choosePort, openBrowser, shouldOpen } from './open.ts';
 
 process.removeAllListeners('warning');
 
 const args = process.argv.slice(2);
-const projectDir = resolve(args.find((a) => !a.startsWith('--')) ?? '.');
-const port = Number(args[args.indexOf('--port') + 1]) || 5170;
-/** ロックマネージャー（人だけが使う専用の画面）のポート。エディタとは別のオリジンなので、エディタや拡張のコードからは操作できない */
-const lockPort = Number(args[args.indexOf('--lock-port') + 1]) || port + 1;
-const LOCK_ORIGINS = new Set([`http://localhost:${lockPort}`, `http://127.0.0.1:${lockPort}`]);
+// --port・--lock-port の値は、プロジェクトのフォルダと見間違えない
+const valueOf = (flag: string) => { const i = args.indexOf(flag); return i >= 0 ? args[i + 1] : undefined; };
+const projectDir = resolve(args.find((a, i) => !a.startsWith('--') && !['--port', '--lock-port'].includes(args[i - 1])) ?? '.');
 const SRC_DIR = fileURLToPath(new URL('..', import.meta.url));
 const EDITOR_DIR = fileURLToPath(new URL('.', import.meta.url));
 
@@ -34,6 +33,20 @@ if (!existsSync(join(projectDir, 'ages.project.json'))) {
   console.error(`error: ${projectDir} に ages.project.json がありません`);
   process.exit(1);
 }
+
+// ポート: --port がなければ 5170 から空いている所を選ぶ。同じプロジェクトのエディタがもう動いていれば、それを開いて終わる（二重に起動しない）
+const openIt = shouldOpen(args);
+const chosen = valueOf('--port') ? { port: Number(valueOf('--port')) || DEFAULT_PORT, running: false } : await choosePort(projectDir);
+if (chosen.running) {
+  const url = `http://localhost:${chosen.port}`;
+  console.log(`このプロジェクトのエディタはもう動いています: ${url}${openIt ? '（開きます）' : ''}`);
+  if (openIt) openBrowser(url);
+  process.exit(0);
+}
+const port = chosen.port;
+/** ロックマネージャー（人だけが使う専用の画面）のポート。エディタとは別のオリジンなので、エディタや拡張のコードからは操作できない */
+const lockPort = Number(valueOf('--lock-port')) || port + 1;
+const LOCK_ORIGINS = new Set([`http://localhost:${lockPort}`, `http://127.0.0.1:${lockPort}`]);
 
 // ---------- 作業スレッド ----------
 let version = 1;
@@ -308,6 +321,8 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
   const proj = p.match(/^\/project@\d+\/(.*)$/);
   if (proj) return serveFile(res, inside(projectDir, proj[1]));
 
+  // どのプロジェクトのエディタか（二度目に起動したとき、同じプロジェクトならそれを開くため）
+  if (p === '/api/who') return json(res, { app: 'ages-editor', project: projectDir });
   if (p === '/api/events') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
     res.write(`data: ${JSON.stringify({ type: 'hello', version })}\n\n`);
@@ -516,18 +531,31 @@ async function lockRoute(req: http.IncomingMessage, res: http.ServerResponse): P
   json(res, { error: `見つかりません: ${m} ${p}` }, 404);
 }
 
+/** ポートがほかのものに使われていたら、分かる言葉で止める */
+function busy(p: number) {
+  return (e: NodeJS.ErrnoException) => {
+    console.error(e.code === 'EADDRINUSE' ? `error: ポート ${p} はほかのものが使っています（--port で別の番号にするか、--port を付けずに起動すると空いている所を選ぶ）` : `error: ${e.message}`);
+    process.exit(1);
+  };
+}
+
 await startWorker();
 http
   .createServer((req, res) => {
     route(req, res).catch((e) => json(res, { error: (e as Error).message }, (e as { status?: number }).status ?? 400));
   })
+  .on('error', busy(port))
   .listen(port, () => {
-    console.log(`AGES エディタ: http://localhost:${port}  （プロジェクト: ${relative(process.cwd(), projectDir) || '.'}）`);
+    const url = `http://localhost:${port}`;
+    console.log(`AGES エディタ: ${url}  （プロジェクト: ${relative(process.cwd(), projectDir) || '.'}）`);
+    if (openIt) openBrowser(url);
+    console.log(openIt ? 'ブラウザで開きます（開かなければ、上のアドレスをブラウザに入れる）。止めるには、この窓を閉じるか Ctrl+C' : `ブラウザで ${url} を開く。止めるには Ctrl+C`);
   });
 http
   .createServer((req, res) => {
     lockRoute(req, res).catch((e) => json(res, { error: (e as Error).message }, (e as { status?: number }).status ?? 400));
   })
+  .on('error', busy(lockPort))
   .listen(lockPort, () => {
     console.log(`ロックマネージャー: http://localhost:${lockPort}  （ロックの操作は、ここからだけ）`);
   });
