@@ -21,6 +21,8 @@
 </tr>
 </table>
 
+<p align="center">📦 作ったゲームは <b>Web</b> と <b>Windows（Steam 向け）</b> に書き出せます<br>🚧 いまは開発中です。ゲームジャムで使いながら直しています</p>
+
 <div align="center">
 <img src="docs/images/editor.png" alt="AGES のエディタ。見本のゲームを再生している" width="860">
 </div>
