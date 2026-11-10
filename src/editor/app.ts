@@ -16,6 +16,7 @@ import { shaderMap, type ShaderDef } from '../core/shader.ts';
 import { LocalStore } from '../core/save.ts';
 import { languagesOf } from '../core/i18n.ts';
 import { resolveEntity } from '../core/variant.ts';
+import { T, lang } from './i18n.ts';
 
 export interface LockMark { who: string; t: string; value: unknown; note?: string }
 export interface TouchMark { who: string; t: string }
@@ -108,7 +109,7 @@ export class App {
   async api<T = any>(path: string, init: { method?: string; body?: unknown; raw?: BodyInit } = {}): Promise<T> {
     const res = await fetch(path, {
       method: init.method ?? (init.body !== undefined || init.raw !== undefined ? 'POST' : 'GET'),
-      headers: { 'x-ages-user': encodeURIComponent(this.user), ...(init.body !== undefined ? { 'content-type': 'application/json' } : {}) },
+      headers: { 'x-ages-user': encodeURIComponent(this.user), 'x-ages-lang': lang, ...(init.body !== undefined ? { 'content-type': 'application/json' } : {}) },
       body: init.raw ?? (init.body !== undefined ? JSON.stringify(init.body) : undefined),
     });
     const data = await res.json();
@@ -126,10 +127,10 @@ export class App {
 
   /** 元に戻す（redo ならやり直す）。tx を渡すと、その編集（操作ログから選んだもの。AI の編集も） */
   async undo(redo = false, tx?: string): Promise<void> {
-    if (this.play) { toast('再生中は元に戻せません（止めてから）', 'bad'); return; }
+    if (this.play) { toast(T('再生中は元に戻せません（止めてから）'), 'bad'); return; }
     try {
       const r = await this.api<{ label: string; changes: Change[]; warnings?: string[] }>(redo ? '/api/redo' : '/api/undo', { body: { tx } });
-      toast(`${redo ? 'やり直しました' : '元に戻しました'}: ${r.label}`);
+      toast(T('{0}: {1}', redo ? T('やり直しました') : T('元に戻しました'), r.label));
       for (const w of r.warnings ?? []) toast(`⚠ ${w}`, 'bad', 8000);
     } catch (e) {
       toast((e as Error).message, 'bad', 8000);
@@ -151,7 +152,7 @@ export class App {
         this.registry = Registry.from(mod);
         this.loadedVersion = s.version;
       } catch (e) {
-        toast(`ゲームコードを読み込めません: ${(e as Error).message}`, 'bad', 8000);
+        toast(T('ゲームコードを読み込めません: {0}', (e as Error).message), 'bad', 8000);
       }
     }
     if (this.registry) {
@@ -217,7 +218,8 @@ export class App {
    */
   openLocks(path = ''): void {
     const base = this.state?.lockManager ?? `http://${location.hostname}:${Number(location.port || 80) + 1}`;
-    const url = `${base}/?user=${encodeURIComponent(this.user)}${path ? `&focus=${encodeURIComponent(path)}` : ''}`;
+    // ロックマネージャーは別のオリジンなので、エディタの言葉を渡す（localStorage は別）
+    const url = `${base}/?user=${encodeURIComponent(this.user)}&lang=${lang}${path ? `&focus=${encodeURIComponent(path)}` : ''}`;
     window.open(url, 'ages-locks');
   }
 
@@ -226,8 +228,8 @@ export class App {
     if (!paths.length) return;
     try {
       await this.api('/api/lock', { body: { paths, win } });
-      const label = paths.length === 1 ? paths[0] : `${paths.length}件`;
-      const t = toast(`🔒 ロックしました: ${label}（外すならロックマネージャーで）`, 'lock', 6000);
+      const label = paths.length === 1 ? paths[0] : T('{0}件', paths.length);
+      const t = toast(T('🔒 ロックしました: {0}（外すならロックマネージャーで）', label), 'lock', 6000);
       t?.addEventListener('click', () => this.openLocks(paths[0]));
     } catch (e) {
       toast((e as Error).message, 'bad');
@@ -339,7 +341,7 @@ export class App {
   /** 試しに鳴らす（インスペクタの ▶） */
   previewSound(values: Partial<SoundSettings>, cue = 'preview'): void {
     const s = { ...DEFAULT_SOUND, ...values } as SoundSettings;
-    if (!s.clip) { toast('音のファイルが決まっていません', 'bad'); return; }
+    if (!s.clip) { toast(T('音のファイルが決まっていません'), 'bad'); return; }
     this.audio.ensure();
     const l = this.localAudio;
     this.audio.setLocal(l.volume, l.muted);
@@ -347,7 +349,7 @@ export class App {
     this.audio.stop({ t: 'stop', frame: 0, target: 'preview' });
     // 繰り返す音も、試し聞きは1回だけ（「同時に1つだけ」の区分の曲を止めないよう、区分は通すが切り替えはしない名前で鳴らす）
     this.audio.handle({ ...playCmd(-1, cue, s), loop: false });
-    if (l.muted) toast('ミュート中です（上のバーの 🔇 で解除）');
+    if (l.muted) toast(T('ミュート中です（上のバーの 🔇 で解除）'));
   }
 
   /** 再生の設定（このブラウザ・プロジェクトごと。▶ の横の … で決める）。params は --params と同じ書き方、date は空なら実際の時計 */
@@ -368,7 +370,7 @@ export class App {
     const from = this.scene;
     try {
       if (opts.scene !== undefined) {
-        if (!this.state.scenes[opts.scene]) throw new Error(`シーン ${opts.scene} はありません`);
+        if (!this.state.scenes[opts.scene]) throw new Error(T('シーン {0} はありません', opts.scene));
         this.scene = opts.scene;
       }
       const set = this.playSettings;
@@ -504,7 +506,7 @@ export class App {
     // 始めた日時も残す（ctx.date を使うゲームも、ages run --input で同じ結果になるように）
     const data = { seed: this.state.config.seed, scene, frames, date, ...(params ? { params } : {}), ...(save && Object.keys(save).length ? { save } : {}), events };
     await this.api(`/api/file?path=${encodeURIComponent(path)}`, { method: 'PUT', raw: JSON.stringify(data, null, 2) + '\n' });
-    toast(`入力を記録しました: ${path}\nAIは ages run --input ${path} で同じ操作を再現できます`);
+    toast(T('入力を記録しました: {0}\nAIは ages run --input {1} で同じ操作を再現できます', path, path));
   }
 
   /** 実行中の変更を保存するか選ぶ */
@@ -522,12 +524,12 @@ export class App {
           done();
         };
         return h('div', {},
-          h('h3', {}, '実行中の変更を保存しますか？'),
-          h('div', { class: 'muted', style: 'margin-bottom:8px' }, 'チェックした値だけシーンに保存します。'),
+          h('h3', {}, T('実行中の変更を保存しますか？')),
+          h('div', { class: 'muted', style: 'margin-bottom:8px' }, T('チェックした値だけシーンに保存します。')),
           boxes.map((b) => b.row),
           h('div', { class: 'row', style: 'justify-content:flex-end;margin-top:12px' },
-            h('button', { onclick: () => finish(false) }, '捨てる'),
-            h('button', { class: 'on', onclick: () => finish(true) }, '保存する')));
+            h('button', { onclick: () => finish(false) }, T('捨てる')),
+            h('button', { class: 'on', onclick: () => finish(true) }, T('保存する'))));
       });
     });
   }

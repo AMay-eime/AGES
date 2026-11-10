@@ -17,9 +17,10 @@ import { baseOf, extOf, kindOf } from '../../core/assets.ts';
 import type { ParticleCmd } from '../../core/particles.ts';
 import { drawColliders, makeDraw, visibleRect } from '../stage-draw.ts';
 import { drawGizmo, gizmoFrame, hitGizmo, moveDelta, rotateDelta, scaleFactor, tidyRot, tidyScale, type GizmoFrame, type Handle, type Tool } from '../gizmo.ts';
+import { T } from '../i18n.ts';
 
-const SCREENS: [string, number | null][] = [['パネルに合わせる', null], ['16:9', 16 / 9], ['4:3', 4 / 3], ['1:1', 1], ['9:16（スマホ縦）', 9 / 16], ['9:19.5（細長いスマホ縦）', 9 / 19.5], ['19.5:9（細長いスマホ横）', 19.5 / 9]];
-const FIT_LABEL: Record<FitMode, string> = { contain: '全体を入れる', cover: 'はみ出しを切る', stretch: '伸ばす', expand: '広い分だけ周りも見せる', pixel: '整数倍だけ' };
+const SCREENS: [string, number | null][] = [[T('パネルに合わせる'), null], ['16:9', 16 / 9], ['4:3', 4 / 3], ['1:1', 1], [T('9:16（スマホ縦）'), 9 / 16], [T('9:19.5（細長いスマホ縦）'), 9 / 19.5], [T('19.5:9（細長いスマホ横）'), 19.5 / 9]];
+const FIT_LABEL: Record<FitMode, string> = { contain: T('全体を入れる'), cover: T('はみ出しを切る'), stretch: T('伸ばす'), expand: T('広い分だけ周りも見せる'), pixel: T('整数倍だけ') };
 const MARK = 7;
 /** 出す数（小数2桁まで） */
 const fmt = (v: number) => String(Math.round(v * 100) / 100);
@@ -32,43 +33,43 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
   let viewMode: 'camera' | 'free' = 'camera';
   let screenAspect: number | null = null;
   let fitOverride: FitMode | null = null;
-  const viewSel = h('select', { title: 'カメラ: プレイヤーに見える通り / 自由: ホイールで拡大・右ドラッグで移動（カメラの範囲は枠で見える）', onchange: (e: Event) => { viewMode = (e.target as HTMLSelectElement).value as 'camera' | 'free'; if (viewMode === 'free') resetFree(); layoutScreen(); } },
-    h('option', { value: 'camera' }, '視点: カメラ'), h('option', { value: 'free' }, '視点: 自由')) as HTMLSelectElement;
-  const screenSel = h('select', { title: '試しに見る画面の形', onchange: (e: Event) => { screenAspect = SCREENS[Number((e.target as HTMLSelectElement).value)][1]; layoutScreen(); } },
-    SCREENS.map(([l], i) => h('option', { value: String(i) }, `画面: ${l}`))) as HTMLSelectElement;
-  const fitSel = h('select', { title: '画面の大きさへの合わせ方。ここでの変更は試しに見るだけ（決めるのは ages.project.json の view.fit）', onchange: (e: Event) => { const v = (e.target as HTMLSelectElement).value; fitOverride = v ? (v as FitMode) : null; layoutScreen(); } }) as HTMLSelectElement;
-  const resetBtn = h('button', { title: '自由な視点を、ゲームの画面全体が見える位置に戻す', onclick: () => { resetFree(); }, style: 'display:none' }, '全体');
+  const viewSel = h('select', { title: T('カメラ: プレイヤーに見える通り / 自由: ホイールで拡大・右ドラッグで移動（カメラの範囲は枠で見える）'), onchange: (e: Event) => { viewMode = (e.target as HTMLSelectElement).value as 'camera' | 'free'; if (viewMode === 'free') resetFree(); layoutScreen(); } },
+    h('option', { value: 'camera' }, T('視点: カメラ')), h('option', { value: 'free' }, T('視点: 自由'))) as HTMLSelectElement;
+  const screenSel = h('select', { title: T('試しに見る画面の形'), onchange: (e: Event) => { screenAspect = SCREENS[Number((e.target as HTMLSelectElement).value)][1]; layoutScreen(); } },
+    SCREENS.map(([l], i) => h('option', { value: String(i) }, T('画面: {0}', l)))) as HTMLSelectElement;
+  const fitSel = h('select', { title: T('画面の大きさへの合わせ方。ここでの変更は試しに見るだけ（決めるのは ages.project.json の view.fit）'), onchange: (e: Event) => { const v = (e.target as HTMLSelectElement).value; fitOverride = v ? (v as FitMode) : null; layoutScreen(); } }) as HTMLSelectElement;
+  const resetBtn = h('button', { title: T('自由な視点を、ゲームの画面全体が見える位置に戻す'), onclick: () => { resetFree(); }, style: 'display:none' }, T('全体'));
   // 当たり判定（Collider）の形を重ねて見せる（手元の設定）
   let showHits = localStorage.getItem('ages.showHits') === '1';
-  const hitsBox = h('label', { class: 'row muted', style: 'gap:4px;white-space:nowrap', title: '当たり判定（Collider）の形を重ねて見せる。グループごとに色が変わる' },
-    h('input', { type: 'checkbox', checked: showHits, onchange: (e: Event) => { showHits = (e.target as HTMLInputElement).checked; localStorage.setItem('ages.showHits', showHits ? '1' : '0'); } }), '当たり判定');
+  const hitsBox = h('label', { class: 'row muted', style: 'gap:4px;white-space:nowrap', title: T('当たり判定（Collider）の形を重ねて見せる。グループごとに色が変わる') },
+    h('input', { type: 'checkbox', checked: showHits, onchange: (e: Event) => { showHits = (e.target as HTMLInputElement).checked; localStorage.setItem('ages.showHits', showHits ? '1' : '0'); } }), T('当たり判定'));
   // 格子への吸着（ドラッグ・矢印で動かすとき、位置を格子の目にそろえる。手元の設定）
   let snap = localStorage.getItem('ages.snap') === '1';
   let gridSize = Number(localStorage.getItem('ages.gridSize') ?? 16) || 16;
-  const gridInput = h('input', { type: 'number', min: '1', max: '512', step: '1', value: String(gridSize), style: 'width:48px', title: '格子の目の大きさ(px)',
+  const gridInput = h('input', { type: 'number', min: '1', max: '512', step: '1', value: String(gridSize), style: 'width:48px', title: T('格子の目の大きさ(px)'),
     onchange: (e: Event) => { gridSize = Math.max(1, Number((e.target as HTMLInputElement).value) || 16); localStorage.setItem('ages.gridSize', String(gridSize)); } });
-  const snapBox = h('label', { class: 'row muted', style: 'gap:4px;white-space:nowrap', title: 'ドラッグ・矢印キーで動かすとき、位置を格子の目にそろえる（格子も見える）' },
-    h('input', { type: 'checkbox', checked: snap, onchange: (e: Event) => { snap = (e.target as HTMLInputElement).checked; localStorage.setItem('ages.snap', snap ? '1' : '0'); app.emit('snap'); } }), '格子', gridInput);
+  const snapBox = h('label', { class: 'row muted', style: 'gap:4px;white-space:nowrap', title: T('ドラッグ・矢印キーで動かすとき、位置を格子の目にそろえる（格子も見える）') },
+    h('input', { type: 'checkbox', checked: snap, onchange: (e: Event) => { snap = (e.target as HTMLInputElement).checked; localStorage.setItem('ages.snap', snap ? '1' : '0'); app.emit('snap'); } }), T('格子'), gridInput);
   app.snap = () => (snap ? gridSize : 0);
-  const saveBtn = h('button', { class: 'icon', title: '保存データ（このブラウザに残る。消す・saves/ に書き出す・saves/ から戻す）', onclick: () => saveDialog(app) }, '💾');
+  const saveBtn = h('button', { class: 'icon', title: T('保存データ（このブラウザに残る。消す・saves/ に書き出す・saves/ から戻す）'), onclick: () => saveDialog(app) }, '💾');
   // 言語（2つ以上あるとき）: 止めている画面と再生の言語を選ぶ
-  const langSel = h('select', { title: '見る言語（表 $text の列。「設定のまま」なら保存の設定か既定の言語）' }) as HTMLSelectElement;
+  const langSel = h('select', { title: T('見る言語（表 $text の列。「設定のまま」なら保存の設定か既定の言語）') }) as HTMLSelectElement;
   const fillLang = () => {
     const langs = app.state.config.languages ?? [];
     langSel.style.display = langs.length > 1 ? '' : 'none';
     const cur = app.previewLang;
-    langSel.replaceChildren(h('option', { value: '', selected: cur === '' }, '言語: 設定のまま'), ...langs.map((l) => h('option', { value: l, selected: cur === l }, `言語: ${l}`)));
+    langSel.replaceChildren(h('option', { value: '', selected: cur === '' }, T('言語: 設定のまま')), ...langs.map((l) => h('option', { value: l, selected: cur === l }, T('言語: {0}', l))));
   };
   langSel.addEventListener('change', () => { app.previewLang = langSel.value; });
   app.on('change', fillLang);
   fillLang();
   // ゲームの画面だけを全画面に（エディタのパネルとブラウザのバーを隠す）。Esc はゲームに渡し、長押しで抜ける（Keyboard Lock）
-  const fullBtn = h('button', { class: 'icon', title: 'ゲームの画面だけを全画面で（再生ボタンは全画面の前に。Esc はゲームに渡る。抜けるのは Esc の長押しか F11）', onclick: () => void toggleFull() }, '⛶');
+  const fullBtn = h('button', { class: 'icon', title: T('ゲームの画面だけを全画面で（再生ボタンは全画面の前に。Esc はゲームに渡る。抜けるのは Esc の長押しか F11）'), onclick: () => void toggleFull() }, '⛶');
   // 取っ手（Unity の W・E・R）: 選んだ物に、移動・回転・拡大縮小の取っ手を出す
   const TOOLS: [Tool, string, string][] = [
-    ['move', '✥', '移動の取っ手（W）: 矢印でその軸だけ、真ん中の四角で自由に動かす（格子があれば目にそろえる。物そのもののドラッグでも動く）'],
-    ['rotate', '⟳', '回転の取っ手（E）: 輪をドラッグして回す（Shift で 15度ごと）'],
-    ['scale', '⤢', '拡大縮小の取っ手（R）: 先の四角で横・縦（物の向き）、真ん中の四角で縦横そろえて（Shift で 0.1 ごと）'],
+    ['move', '✥', T('移動の取っ手（W）: 矢印でその軸だけ、真ん中の四角で自由に動かす（格子があれば目にそろえる。物そのもののドラッグでも動く）')],
+    ['rotate', '⟳', T('回転の取っ手（E）: 輪をドラッグして回す（Shift で 15度ごと）')],
+    ['scale', '⤢', T('拡大縮小の取っ手（R）: 先の四角で横・縦（物の向き）、真ん中の四角で縦横そろえて（Shift で 0.1 ごと）')],
   ];
   const saved = localStorage.getItem('ages.tool');
   let tool: Tool = TOOLS.some(([t]) => t === saved) ? (saved as Tool) : 'move';
@@ -89,7 +90,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
       await wrap.requestFullscreen({ navigationUI: 'hide' });
       await keyboard?.lock?.(['Escape']).catch(() => {});
       canvas.focus();
-    } catch (e) { toast(`全画面にできませんでした: ${(e as Error).message}`, 'warn'); }
+    } catch (e) { toast(T('全画面にできませんでした: {0}', (e as Error).message), 'warn'); }
   };
   document.addEventListener('fullscreenchange', () => {
     if (!document.fullscreenElement) keyboard?.unlock?.();
@@ -118,7 +119,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
         urlOf: (p) => app.assetUrl(p), sheets: app.registry?.sheets ?? new Map(), filter: app.state.config.view.filter,
         // シェーダーのコンパイルの結果: エラーはここで知らせ、サーバーに渡して ages check で AI が読めるようにする
         onShaderResult: (path, hash, error) => {
-          if (error) toast(`シェーダーのエラー\n${error}`, 'bad', 10000);
+          if (error) toast(T('シェーダーのエラー\n{0}', error), 'bad', 10000);
           void fetch('/api/shader-result', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path, hash, error }) }).catch(() => {});
         },
       });
@@ -137,8 +138,8 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
   const renderFitSel = () => {
     const proj = app.state?.config?.view?.fit ?? 'contain';
     fitSel.replaceChildren(
-      h('option', { value: '' }, `合わせ方: ${FIT_LABEL[proj] ?? proj}（設定）`),
-      ...FIT_MODES.filter((m) => m !== proj).map((m) => h('option', { value: m, selected: m === fitOverride }, `試す: ${FIT_LABEL[m]}`)));
+      h('option', { value: '' }, T('合わせ方: {0}（設定）', FIT_LABEL[proj] ?? proj)),
+      ...FIT_MODES.filter((m) => m !== proj).map((m) => h('option', { value: m, selected: m === fitOverride }, T('試す: {0}', FIT_LABEL[m]))));
   };
   app.on('change', () => {
     syncFiles();
@@ -270,7 +271,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     if (prefab && renderer) {
       // プレハブ: 落とした所に、プレハブとつながったインスタンスを置く（位置だけが物の値）
       e.preventDefault();
-      if (app.play) return toast('停止してから置いてください', 'bad');
+      if (app.play) return toast(T('停止してから置いてください'), 'bad');
       const scene = app.state.scenes[app.scene];
       if (!scene) return;
       const p = toCanvas(e);
@@ -291,7 +292,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     const kind = path ? kindOf(path) : null;
     if (!path || !kind || !renderer) return;
     e.preventDefault();
-    if (app.play) return toast('停止してから置いてください', 'bad');
+    if (app.play) return toast(T('停止してから置いてください'), 'bad');
     const scene = app.state.scenes[app.scene];
     if (!scene) return;
     const p = toCanvas(e);
@@ -304,7 +305,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     const pos = { x: Math.round(wx), y: Math.round(wy) };
     const components: Record<string, Record<string, unknown>> = kind === 'image' ? { Transform: pos, Sprite: { image: path } }
       : kind === 'sound' ? { Sound: { clip: path } }
-      : { Transform: pos, Text: { text: 'テキスト', font: path } };
+      : { Transform: pos, Text: { text: T('テキスト'), font: path } };
     const r = await app.patch([{ op: 'addEntity', scene: app.scene, entity: { id, name: baseOf(path).slice(0, -extOf(path).length) || id, components } }], 'game');
     if (r) app.select({ kind: 'scene', scene: app.scene, id });
   });
@@ -420,7 +421,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     if (add) app.select({ kind: 'scene', scene: app.scene, id: hit.id }, { add: true });
     else if (!already || app.selectedIds().length === 1) app.select({ kind: 'scene', scene: app.scene, id: hit.id });
     else if (app.sel?.kind === 'scene' && app.sel.id !== hit.id) app.selectMany([hit.id, ...app.selectedIds().filter((x) => x !== hit.id)]);
-    hint = ids.length > 1 ? `重なり ${i + 1}/${ids.length}（同じ場所をもう一度クリックで奥へ）` : '';
+    hint = ids.length > 1 ? T('重なり {0}/{1}（同じ場所をもう一度クリックで奥へ）', i + 1, ids.length) : '';
     if (app.play || !app.selectedIds().includes(hit.id)) return;
     const lead = moving(hit.id);
     if (!lead) return;
@@ -488,7 +489,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
       }
       for (const m of markers()) if (inside(m.x, m.y)) ids.add(m.id);
       app.selectMany([...ids], b.add);
-      hint = ids.size ? `${ids.size}体を選びました（ドラッグでまとめて動かす・右クリックで複製や削除）` : '';
+      hint = ids.size ? T('{0}体を選びました（ドラッグでまとめて動かす・右クリックで複製や削除）', ids.size) : '';
       return;
     }
     if (gdrag) { endGizmo(); return; }
@@ -523,7 +524,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
       if (gd.handle !== 'y') dx = fit(lead.x + dx) - lead.x;
       if (gd.handle !== 'x') dy = fit(lead.y + dy) - lead.y;
       for (const m of gd.all) w.setWorldPos(m.id, m.x + dx, m.y + dy);
-      hint = `移動 ${fmt(lead.x + dx)}, ${fmt(lead.y + dy)}（画面の位置）`;
+      hint = T('移動 {0}, {1}（画面の位置）', fmt(lead.x + dx), fmt(lead.y + dy));
     } else if (gd.tool === 'rotate') {
       // 少しずつ足して、1周を超えても回せるように
       gd.turn += rotateDelta(gd.frame, gd.prev, now);
@@ -533,7 +534,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
         const t = w.get(m.id)?.c.Transform;
         if (t) t.rot = tidyRot(m.rot + (m.flip ? -d : d), e.shiftKey ? 0 : 1);
       }
-      hint = `回転 ${fmt(Number(w.get(lead.id)?.c.Transform?.rot ?? 0))}度（${d >= 0 ? '+' : ''}${fmt(Math.round(d))}。Shift で15度ごと）`;
+      hint = T('回転 {0}度（{1}{2}。Shift で15度ごと）', fmt(Number(w.get(lead.id)?.c.Transform?.rot ?? 0)), d >= 0 ? '+' : '', fmt(Math.round(d)));
     } else {
       const [fx, fy] = scaleFactor(gd.handle, gd.frame, gd.start, now);
       const step = e.shiftKey ? 0.1 : 0;
@@ -544,7 +545,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
         if (fy !== 1) t.sy = tidyScale(m.sy * fy, step);
       }
       const t = w.get(lead.id)?.c.Transform;
-      hint = `倍率 横 ${fmt(Number(t?.sx ?? 1))}・縦 ${fmt(Number(t?.sy ?? 1))}（Shift で 0.1 ごと）`;
+      hint = T('倍率 横 {0}・縦 {1}（Shift で 0.1 ごと）', fmt(Number(t?.sx ?? 1)), fmt(Number(t?.sy ?? 1)));
     }
   }
   function endGizmo(): void {
@@ -611,7 +612,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
         og.strokeStyle = c.id === sel ? '#ffb02e' : 'rgba(126,231,135,0.85)';
         poly(q, [6, 4]);
         og.fillStyle = og.strokeStyle;
-        og.fillText(c.id ? `カメラ ${c.id}` : 'カメラ（既定: 画面全体）', q[0] + 4, q[1] + 13);
+        og.fillText(c.id ? T('カメラ {0}', c.id) : T('カメラ（既定: 画面全体）'), q[0] + 4, q[1] + 13);
       }
     }
     if (showHits) drawHits(w);
@@ -728,19 +729,19 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     app.perf.fps = dt > 0 ? app.perf.fps * 0.9 + (1 / dt) * 0.1 : app.perf.fps;
     drawOverlay(w);
     const cams = renderer.cams.filter((c) => c.id).length;
-    const where = viewMode === 'free' ? `自由な視点 ${Math.round(free.zoom * 100)}%（ホイールで拡大・右ドラッグで移動）` : cams ? `カメラ ${cams}台` : '';
-    const mouse = gameHasMouse() ? 'マウスはゲームへ（選ぶには一時停止）' : '';
+    const where = viewMode === 'free' ? T('自由な視点 {0}%（ホイールで拡大・右ドラッグで移動）', Math.round(free.zoom * 100)) : cams ? T('カメラ {0}台', cams) : '';
+    const mouse = gameHasMouse() ? T('マウスはゲームへ（選ぶには一時停止）') : '';
     const tail = [where, mouse, hint].filter(Boolean).join('  ');
     const tr = p?.game.transition;
-    const sceneText = p ? `シーン ${p.game.sceneName}${tr ? `（${tr.phase === 'out' ? `→ ${tr.to}` : '入るところ'}）` : ''}${p.loading ? `  読み込み中 ${p.loading.done}/${p.loading.total}` : ''}` : '';
+    const sceneText = p ? T('シーン {0}{1}{2}', p.game.sceneName, tr ? T('（{0}）', tr.phase === 'out' ? `→ ${tr.to}` : T('入るところ')) : '', p.loading ? T('  読み込み中 {0}/{1}', p.loading.done, p.loading.total) : '') : '';
     hud.textContent = p
-      ? `${p.paused ? '⏸' : '▶'} f${p.game.frame}  ${(p.game.frame / app.state.config.fps).toFixed(1)}s  ${sceneText}  ${w.entities.size}体${p.recorder ? '  ●REC' : ''}  ${tail}`
-      : `編集中  ${w.entities.size}体  クリックで選択・ドラッグで移動  ${tail}`;
+      ? T('{0} f{1}  {2}s  {3}  {4}体{5}  {6}', p.paused ? '⏸' : '▶', p.game.frame, (p.game.frame / app.state.config.fps).toFixed(1), sceneText, w.entities.size, p.recorder ? '  ●REC' : '', tail)
+      : T('編集中  {0}体  クリックで選択・ドラッグで移動  {1}', w.entities.size, tail);
   };
   requestAnimationFrame(loop);
   renderFitSel();
 
-  return { id: 'game', title: 'ゲーム', el, fill: true, canvas, render: layoutScreen };
+  return { id: 'game', title: T('ゲーム'), el, fill: true, canvas, render: layoutScreen };
 }
 
 /** 保存データの窓: 中身を見る・消す・saves/ に書き出す・saves/ から戻す */
@@ -752,32 +753,32 @@ function saveDialog(app: App): void {
       body.replaceChildren();
       const data = store.load();
       const keys = Object.keys(data).sort();
-      body.append(h('div', { style: 'font-weight:600' }, `保存データ（このブラウザ・${app.state.config.name}）`),
-        h('div', { class: 'muted' }, 'ゲームの ctx.save で書いた値。設定（キーの割り当て・音量）は $settings に自動で入る。変えると次の再生から効く'));
-      if (!keys.length) body.append(h('div', { class: 'muted', style: 'padding:6px 0' }, '空（初めて遊ぶ状態）'));
+      body.append(h('div', { style: 'font-weight:600' }, T('保存データ（このブラウザ・{0}）', app.state.config.name)),
+        h('div', { class: 'muted' }, T('ゲームの ctx.save で書いた値。設定（キーの割り当て・音量）は $settings に自動で入る。変えると次の再生から効く')));
+      if (!keys.length) body.append(h('div', { class: 'muted', style: 'padding:6px 0' }, T('空（初めて遊ぶ状態）')));
       for (const k of keys) {
         const text = data[k];
         body.append(h('div', { class: 'row', style: 'gap:6px;align-items:flex-start' },
           h('code', { style: 'min-width:120px' }, k),
           h('code', { class: 'muted', style: 'flex:1;white-space:pre-wrap;word-break:break-all;max-height:5.5em;overflow:auto' }, text.length > 400 ? text.slice(0, 400) + '…' : text),
-          h('button', { class: 'icon', title: `${k} を消す`, onclick: () => { store.write(k, null); render(); } }, '×')));
+          h('button', { class: 'icon', title: T('{0} を消す', k), onclick: () => { store.write(k, null); render(); } }, '×')));
       }
       const name = h('input', { type: 'text', value: 'save1', style: 'width:120px' }) as HTMLInputElement;
-      const pick = h('select', {}, [h('option', { value: '' }, '（saves/ のファイル）'), ...(app.state.saves ?? []).map((p) => h('option', { value: p }, p))]) as HTMLSelectElement;
+      const pick = h('select', {}, [h('option', { value: '' }, T('（saves/ のファイル）')), ...(app.state.saves ?? []).map((p) => h('option', { value: p }, p))]) as HTMLSelectElement;
       body.append(
         h('div', { class: 'row', style: 'gap:6px;margin-top:6px' },
-          h('button', { onclick: () => { store.clear(); render(); toast('保存データを消しました（次の再生は初めて遊ぶ状態）'); } }, 'すべて消す'),
+          h('button', { onclick: () => { store.clear(); render(); toast(T('保存データを消しました（次の再生は初めて遊ぶ状態）')); } }, T('すべて消す')),
           h('span', { style: 'flex:1' }),
           'saves/', name, '.save.json',
-          h('button', { title: 'AI が ages run --save で同じ状態から確かめられる', onclick: async () => {
+          h('button', { title: T('AI が ages run --save で同じ状態から確かめられる'), onclick: async () => {
             const n = name.value.trim().replace(/[^\w.-]/g, '_');
             if (!n) return;
             const values = Object.fromEntries(Object.entries(store.load()).map(([k, v]) => [k, JSON.parse(v)]));
             await fetch(`/api/file?path=${encodeURIComponent(`saves/${n}.save.json`)}`, { method: 'PUT', body: JSON.stringify(values, null, 2) + '\n' });
-            toast(`saves/${n}.save.json に書き出しました\nAIは ages run --save saves/${n}.save.json でこの状態から確かめられます`);
-          } }, '書き出す')),
+            toast(T('saves/{0}.save.json に書き出しました\nAIは ages run --save saves/{1}.save.json でこの状態から確かめられます', n, n));
+          } }, T('書き出す'))),
         h('div', { class: 'row', style: 'gap:6px' },
-          h('span', { class: 'muted' }, 'この保存データにする:'), pick,
+          h('span', { class: 'muted' }, T('この保存データにする:')), pick,
           h('button', { onclick: async () => {
             if (!pick.value) return;
             const r = await (await fetch(`/api/file?path=${encodeURIComponent(pick.value)}`)).json() as { text: string };
@@ -785,9 +786,9 @@ function saveDialog(app: App): void {
             store.clear();
             for (const [k, v] of Object.entries(values)) store.write(k, JSON.stringify(v));
             render();
-            toast(`${pick.value} の状態にしました（次の再生から）`);
-          } }, '読む')),
-        h('div', { class: 'row', style: 'justify-content:flex-end' }, h('button', { onclick: close }, '閉じる')));
+            toast(T('{0} の状態にしました（次の再生から）', pick.value));
+          } }, T('読む'))),
+        h('div', { class: 'row', style: 'justify-content:flex-end' }, h('button', { onclick: close }, T('閉じる'))));
     };
     render();
     return body;

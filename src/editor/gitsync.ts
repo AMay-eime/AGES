@@ -2,6 +2,8 @@
 // （git ls-remote で枝の先のコミットだけ。変わっていたときだけ取ってくる）。手元にプッシュしていない変更があれば、
 // 勝手に取り込まず、プッシュしてから取り込むかを人に聞く。GitHub の利用規定（過剰な自動のアクセスをしない）に合わせる
 
+import { noTr, type Tr } from './i18n-node.ts';
+
 /** git を動かす（終わりのコードと出力） */
 export type Git = (args: string[]) => Promise<{ code: number; out: string }>;
 
@@ -55,7 +57,7 @@ export async function dirtyCount(git: Git): Promise<number> {
  * GitHub に新しいコミットがあると先にプッシュできないので、コミット → 取り込み（合わせる）→ プッシュ の順。
  * 食い違い（同じ所を両方で変えた）があれば、取り込みをやめて元に戻し、プッシュしない
  */
-export async function pushAndPull(git: Git, message: string, pull: (args: string[]) => Promise<{ code: number; out: string }> = git): Promise<{ ok: boolean; out: string; conflict?: boolean; step: string }> {
+export async function pushAndPull(git: Git, message: string, pull: (args: string[]) => Promise<{ code: number; out: string }> = git, tr: Tr = noTr): Promise<{ ok: boolean; out: string; conflict?: boolean; step: string }> {
   const log: string[] = [];
   if (await dirtyCount(git)) {
     const add = await git(['add', '-A', '--', '.']);
@@ -68,7 +70,7 @@ export async function pushAndPull(git: Git, message: string, pull: (args: string
   if (p.code !== 0) {
     const conflict = /CONFLICT|Automatic merge failed|自動マージに失敗/.test(p.out);
     // 食い違いの印（<<<<<<<）が入ったままだと、JSON が読めずエディタも AI も止まるので、取り込みをやめて元に戻す（手元のコミットは残る）
-    if (conflict) log.push((await git(['merge', '--abort'])).out, '（食い違ったので取り込みをやめました。手元の変更はコミット済みで、プッシュはしていません）');
+    if (conflict) log.push((await git(['merge', '--abort'])).out, tr('（食い違ったので取り込みをやめました。手元の変更はコミット済みで、プッシュはしていません）'));
     return { ok: false, out: log.filter(Boolean).join('\n'), conflict, step: 'pull' };
   }
   const push = await git(['push']);

@@ -5,6 +5,7 @@ import type { Panel } from './layout.ts';
 import { clear, h, menu, modal, toast } from './dom.ts';
 import { assetRefs, baseOf, checkAssetPath, dirOf, extOf, isUnder, kindOf, RESERVED_DIRS } from '../../core/assets.ts';
 import { ASSET_LABEL, brief, type AssetKind } from '../../core/schema.ts';
+import { T } from '../i18n.ts';
 
 /** ドラッグで運ぶアセットの場所（ゲームの画面・インスペクタ・フォルダへ落とせる） */
 export const ASSET_MIME = 'application/x-ages-asset';
@@ -13,7 +14,9 @@ export const PREFAB_MIME = 'application/x-ages-prefab';
 
 type Asset = App['state']['assets'][number];
 
-const KIND_LABEL: Record<AssetKind, string> = ASSET_LABEL;
+/** アセットの種類の名前（エディタの言葉で） */
+export const assetLabel = (k: AssetKind): string => ({ image: T('画像'), sound: T('音'), font: T('フォント'), shader: T('シェーダー') })[k] ?? ASSET_LABEL[k];
+const KIND_LABEL: Record<AssetKind, string> = { image: assetLabel('image'), sound: assetLabel('sound'), font: assetLabel('font'), shader: assetLabel('shader') };
 const kb = (n: number) => (n < 1024 ? `${n}B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)}KB` : `${(n / 1024 / 1024).toFixed(1)}MB`);
 
 /** フォントを画面で使える名前にする（見本の表示用） */
@@ -47,21 +50,21 @@ export async function importFiles(app: App, files: File[], folder: string): Prom
         modal((close) => {
           const pick = (v: 'replace' | 'keep' | null) => { if (rest.checked && v) all = v; close(); ok(v); };
           return h('div', {},
-            h('h3', {}, '同じ名前のファイルがあります'),
+            h('h3', {}, T('同じ名前のファイルがあります')),
             h('p', {}, path),
-            h('p', { class: 'muted' }, '差し替えると、使っている所はそのまま新しい中身になります。'),
-            files.length > 1 ? h('label', { class: 'row' }, rest, '残りも同じようにする') : null,
+            h('p', { class: 'muted' }, T('差し替えると、使っている所はそのまま新しい中身になります。')),
+            files.length > 1 ? h('label', { class: 'row' }, rest, T('残りも同じようにする')) : null,
             h('div', { class: 'row', style: 'justify-content:flex-end;gap:6px;margin-top:12px' },
-              h('button', { onclick: () => pick(null) }, 'やめる'),
-              h('button', { onclick: () => pick('keep') }, `両方残す（${baseOf(data.free ?? '')}）`),
-              h('button', { class: 'primary', onclick: () => pick('replace') }, '差し替える')));
+              h('button', { onclick: () => pick(null) }, T('やめる')),
+              h('button', { onclick: () => pick('keep') }, T('両方残す（{0}）', baseOf(data.free ?? ''))),
+              h('button', { class: 'primary', onclick: () => pick('replace') }, T('差し替える'))));
         });
       });
       if (!choice) continue;
       try { done.push((await send(choice)).path); } catch (e2) { toast((e2 as Error).message, 'bad', 6000); }
     }
   }
-  if (done.length) toast(`取り込みました: ${done.map(baseOf).join(', ')}`);
+  if (done.length) toast(T('取り込みました: {0}', done.map(baseOf).join(', ')));
   await app.refresh();
   return done;
 }
@@ -81,7 +84,7 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
     if (!app.registry) return new Map();
     const docs = { scenes: new Map(Object.entries(s.scenes)), prefabs: new Map(Object.entries(s.prefabs)), tables: new Map(Object.entries(s.tables)) };
     const refs = assetRefs(docs, app.registry);
-    for (const [k, v] of Object.entries(s.codeRefs ?? {})) refs.set(k, [...(refs.get(k) ?? []), ...v.map((c) => `${c}（コード）`)]);
+    for (const [k, v] of Object.entries(s.codeRefs ?? {})) refs.set(k, [...(refs.get(k) ?? []), ...v.map((c) => T('{0}（コード）', c))]);
     return refs;
   };
   /** アセットを置けるフォルダ（空のものも）。決まった置き場所（scenes/ など）は出さない */
@@ -100,7 +103,7 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
     const r = await app.patch([{ op: 'moveAsset', from, to }], 'assets');
     if (!r) return;
     const fixed = r.filter((c) => c.auto).length;
-    toast(`${baseOf(from)} → ${to}${fixed ? `（使っている値 ${fixed}か所も直しました）` : ''}`);
+    toast(T('{0} → {1}{2}', baseOf(from), to, fixed ? T('（使っている値 {0}か所も直しました）', fixed) : ''));
     if (selected === from) selected = to;
     else if (isUnder(selected, from)) selected = to + selected.slice(from.length);
     if (folder === from || isUnder(folder, from)) folder = to + folder.slice(from.length);
@@ -114,39 +117,39 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
       const go = () => { const v = input.value.trim(); close(); if (v && v !== stem) move(path, (dirOf(path) ? dirOf(path) + '/' : '') + v + ext); };
       input.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
       setTimeout(() => { input.focus(); input.select(); }, 0);
-      return h('div', {}, h('h3', {}, dir ? 'フォルダの名前を変える' : '名前を変える'),
+      return h('div', {}, h('h3', {}, dir ? T('フォルダの名前を変える') : T('名前を変える')),
         h('div', { class: 'row' }, input, ext ? h('span', { class: 'muted' }, ext) : null),
-        h('p', { class: 'muted' }, '使っている値と画像の切り方も一緒に直ります。'),
-        h('div', { class: 'row', style: 'justify-content:flex-end;gap:6px;margin-top:12px' }, h('button', { onclick: close }, 'やめる'), h('button', { class: 'primary', onclick: go }, '変える')));
+        h('p', { class: 'muted' }, T('使っている値と画像の切り方も一緒に直ります。')),
+        h('div', { class: 'row', style: 'justify-content:flex-end;gap:6px;margin-top:12px' }, h('button', { onclick: close }, T('やめる')), h('button', { class: 'primary', onclick: go }, T('変える'))));
     });
   };
   const moveTo = (path: string, dir: boolean) => {
     modal((close) => {
       const options = ['', ...folders()].filter((d) => !dir || (d !== path && !isUnder(d, path)));
-      const sel = h('select', { style: 'flex:1' }, options.map((d) => h('option', { value: d, selected: d === dirOf(path) }, d ? d + '/' : '（プロジェクトの直下）'))) as HTMLSelectElement;
+      const sel = h('select', { style: 'flex:1' }, options.map((d) => h('option', { value: d, selected: d === dirOf(path) }, d ? d + '/' : T('（プロジェクトの直下）')))) as HTMLSelectElement;
       const go = () => { close(); move(path, (sel.value ? sel.value + '/' : '') + baseOf(path)); };
-      return h('div', {}, h('h3', {}, `${baseOf(path)} を動かす`), h('div', { class: 'row' }, sel),
-        h('p', { class: 'muted' }, 'フォルダへのドラッグでも動かせます。'),
-        h('div', { class: 'row', style: 'justify-content:flex-end;gap:6px;margin-top:12px' }, h('button', { onclick: close }, 'やめる'), h('button', { class: 'primary', onclick: go }, '動かす')));
+      return h('div', {}, h('h3', {}, T('{0} を動かす', baseOf(path))), h('div', { class: 'row' }, sel),
+        h('p', { class: 'muted' }, T('フォルダへのドラッグでも動かせます。')),
+        h('div', { class: 'row', style: 'justify-content:flex-end;gap:6px;margin-top:12px' }, h('button', { onclick: close }, T('やめる')), h('button', { class: 'primary', onclick: go }, T('動かす'))));
     });
   };
   const remove = (path: string, dir: boolean) => {
     const refs = refsOf();
     const used = dir ? app.state.assets.filter((a) => isUnder(a.path, path)).flatMap((a) => (refs.get(a.path) ?? []).map((r) => `${baseOf(a.path)}: ${r}`)) : refs.get(path) ?? [];
     modal((close) => used.length
-      ? h('div', {}, h('h3', {}, `${baseOf(path)} は使われています`),
-        h('p', { class: 'muted' }, '使われているものは消せません。先にその指定を変えてください。'),
-        h('ul', { class: 'refs' }, used.slice(0, 12).map((r) => h('li', {}, r))), used.length > 12 ? h('p', { class: 'muted' }, `ほか ${used.length - 12}か所`) : null,
-        h('div', { class: 'row', style: 'justify-content:flex-end;margin-top:12px' }, h('button', { onclick: close }, '閉じる')))
-      : h('div', {}, h('h3', {}, `${dir ? 'フォルダ ' : ''}${path} を消しますか？`),
-        dir ? h('p', { class: 'muted' }, '中のファイルもすべて消えます。') : null,
-        h('p', { class: 'muted' }, 'Git で共有していれば、コミット前なら戻せます。'),
-        h('div', { class: 'row', style: 'justify-content:flex-end;gap:6px;margin-top:12px' }, h('button', { onclick: close }, 'やめる'),
-          h('button', { class: 'danger', onclick: async () => { close(); if (await app.patch([{ op: 'removeAsset', path }], 'assets')) { toast(`消しました: ${path}`); if (selected === path || isUnder(selected, path)) selected = ''; if (folder === path || isUnder(folder, path)) folder = dirOf(path); render(); } } }, '消す'))));
+      ? h('div', {}, h('h3', {}, T('{0} は使われています', baseOf(path))),
+        h('p', { class: 'muted' }, T('使われているものは消せません。先にその指定を変えてください。')),
+        h('ul', { class: 'refs' }, used.slice(0, 12).map((r) => h('li', {}, r))), used.length > 12 ? h('p', { class: 'muted' }, T('ほか {0}か所', used.length - 12)) : null,
+        h('div', { class: 'row', style: 'justify-content:flex-end;margin-top:12px' }, h('button', { onclick: close }, T('閉じる'))))
+      : h('div', {}, h('h3', {}, T('{0}{1} を消しますか？', dir ? T('フォルダ ') : '', path)),
+        dir ? h('p', { class: 'muted' }, T('中のファイルもすべて消えます。')) : null,
+        h('p', { class: 'muted' }, T('Git で共有していれば、コミット前なら戻せます。')),
+        h('div', { class: 'row', style: 'justify-content:flex-end;gap:6px;margin-top:12px' }, h('button', { onclick: close }, T('やめる')),
+          h('button', { class: 'danger', onclick: async () => { close(); if (await app.patch([{ op: 'removeAsset', path }], 'assets')) { toast(T('消しました: {0}', path)); if (selected === path || isUnder(selected, path)) selected = ''; if (folder === path || isUnder(folder, path)) folder = dirOf(path); render(); } } }, T('消す')))));
   };
   const newFolder = () => {
     modal((close) => {
-      const input = h('input', { type: 'text', value: '', placeholder: '例 enemies', style: 'flex:1' }) as HTMLInputElement;
+      const input = h('input', { type: 'text', value: '', placeholder: T('例 enemies'), style: 'flex:1' }) as HTMLInputElement;
       const go = async () => {
         const name = input.value.trim();
         if (!name) return;
@@ -156,8 +159,8 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
       };
       input.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
       setTimeout(() => input.focus(), 0);
-      return h('div', {}, h('h3', {}, `新しいフォルダ（${folder || 'プロジェクトの直下'} の中）`), h('div', { class: 'row' }, input),
-        h('div', { class: 'row', style: 'justify-content:flex-end;gap:6px;margin-top:12px' }, h('button', { onclick: close }, 'やめる'), h('button', { class: 'primary', onclick: go }, '作る')));
+      return h('div', {}, h('h3', {}, T('新しいフォルダ（{0} の中）', folder || T('プロジェクトの直下'))), h('div', { class: 'row' }, input),
+        h('div', { class: 'row', style: 'justify-content:flex-end;gap:6px;margin-top:12px' }, h('button', { onclick: close }, T('やめる')), h('button', { class: 'primary', onclick: go }, T('作る'))));
     });
   };
   const open = (a: Asset) => {
@@ -170,22 +173,22 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
     selected = a.path;
     render();
     menu(e.clientX, e.clientY, [
-      ...(a.kind === 'image' ? [['切り方を開く', () => open(a)] as [string, () => void]] : a.kind === 'sound' ? [['鳴らす', () => open(a)] as [string, () => void]] : []),
-      ['名前を変える（F2）', () => rename(a.path, false)],
-      ['別のフォルダへ', () => moveTo(a.path, false)],
-      ['場所をコピー', () => { navigator.clipboard?.writeText(a.path); toast(`コピーしました: ${a.path}`); }],
-      [app.state.locks[`file:${a.path}`] ? '🔒 ロック中（ロックマネージャーで外す）' : '🔒 ロックする', () => (app.state.locks[`file:${a.path}`] ? app.openLocks(`file:${a.path}`) : app.lock([`file:${a.path}`], 'assets'))],
-      ['消す（Delete）', () => remove(a.path, false)],
+      ...(a.kind === 'image' ? [[T('切り方を開く'), () => open(a)] as [string, () => void]] : a.kind === 'sound' ? [[T('鳴らす'), () => open(a)] as [string, () => void]] : []),
+      [T('名前を変える（F2）'), () => rename(a.path, false)],
+      [T('別のフォルダへ'), () => moveTo(a.path, false)],
+      [T('場所をコピー'), () => { navigator.clipboard?.writeText(a.path); toast(T('コピーしました: {0}', a.path)); }],
+      [app.state.locks[`file:${a.path}`] ? T('🔒 ロック中（ロックマネージャーで外す）') : T('🔒 ロックする'), () => (app.state.locks[`file:${a.path}`] ? app.openLocks(`file:${a.path}`) : app.lock([`file:${a.path}`], 'assets'))],
+      [T('消す（Delete）'), () => remove(a.path, false)],
     ]);
   };
   const folderMenu = (e: MouseEvent, d: string) => {
     e.preventDefault();
     e.stopPropagation();
     menu(e.clientX, e.clientY, [
-      ['新しいフォルダ', () => { folder = d; newFolder(); }],
-      ['名前を変える', () => rename(d, true)],
-      ['別のフォルダへ', () => moveTo(d, true)],
-      ['消す', () => remove(d, true)],
+      [T('新しいフォルダ'), () => { folder = d; newFolder(); }],
+      [T('名前を変える'), () => rename(d, true)],
+      [T('別のフォルダへ'), () => moveTo(d, true)],
+      [T('消す'), () => remove(d, true)],
     ]);
   };
 
@@ -210,7 +213,7 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
       e.stopPropagation();
       if (path) {
         if (path === dest || dirOf(path) === dest) return;
-        if (isUnder(dest, path)) return toast('フォルダを自分の中へは動かせません', 'bad');
+        if (isUnder(dest, path)) return toast(T('フォルダを自分の中へは動かせません'), 'bad');
         await move(path, (dest ? dest + '/' : '') + baseOf(path));
       } else {
         const done = await importFiles(app, files, dest);
@@ -231,9 +234,9 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
   const tree = h('div', { class: 'asset-tree' });
   const grid = h('div', { class: 'asset-grid' });
   const side = h('div', { class: 'asset-side' });
-  const searchBox = h('input', { type: 'search', placeholder: '🔍 名前で探す', style: 'width:140px' }) as HTMLInputElement;
+  const searchBox = h('input', { type: 'search', placeholder: T('🔍 名前で探す'), style: 'width:140px' }) as HTMLInputElement;
   searchBox.addEventListener('input', () => { search = searchBox.value.trim().toLowerCase(); renderGrid(); });
-  const kindSel = h('select', { title: '種類' }, h('option', { value: '' }, 'すべて'), (Object.keys(KIND_LABEL) as AssetKind[]).map((k) => h('option', { value: k }, KIND_LABEL[k]))) as HTMLSelectElement;
+  const kindSel = h('select', { title: T('種類') }, h('option', { value: '' }, T('すべて')), (Object.keys(KIND_LABEL) as AssetKind[]).map((k) => h('option', { value: k }, KIND_LABEL[k]))) as HTMLSelectElement;
   kindSel.addEventListener('change', () => { kind = kindSel.value as AssetKind | ''; renderGrid(); });
   const unusedBox = h('input', { type: 'checkbox' }) as HTMLInputElement;
   unusedBox.addEventListener('change', () => { unusedOnly = unusedBox.checked; renderGrid(); });
@@ -245,9 +248,9 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
   });
   const crumbs = h('span', { class: 'crumbs' });
   const bar = h('div', { class: 'toolbar' }, crumbs, h('span', { class: 'spacer' }), searchBox, kindSel,
-    h('label', { class: 'row', title: 'どこからも使われていないものだけ' }, unusedBox, '未使用'),
-    h('button', { title: 'ファイルを選んで、このフォルダに取り込む（ドロップでも可）', onclick: () => picker.click() }, '＋ 取り込む'),
-    h('button', { class: 'icon', title: 'このフォルダの中に新しいフォルダ', onclick: newFolder }, '📁+'), picker);
+    h('label', { class: 'row', title: T('どこからも使われていないものだけ') }, unusedBox, T('未使用')),
+    h('button', { title: T('ファイルを選んで、このフォルダに取り込む（ドロップでも可）'), onclick: () => picker.click() }, T('＋ 取り込む')),
+    h('button', { class: 'icon', title: T('このフォルダの中に新しいフォルダ'), onclick: newFolder }, '📁+'), picker);
   el.append(bar, h('div', { class: 'asset-body' }, tree, grid, side));
   dropTarget(grid, () => folder);
 
@@ -264,10 +267,10 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
     const node = (d: string, depth: number): HTMLElement[] => {
       const kids = all.filter((x) => dirOf(x) === d);
       const shut = closed.has(d);
-      const row = h('div', { class: `tree-item${d === folder ? ' on' : ''}`, style: `padding-left:${4 + depth * 12}px`, title: d || 'プロジェクトの直下',
+      const row = h('div', { class: `tree-item${d === folder ? ' on' : ''}`, style: `padding-left:${4 + depth * 12}px`, title: d || T('プロジェクトの直下'),
         onclick: () => { folder = d; render(); } },
         h('span', { class: 'twisty', onclick: (e: Event) => { e.stopPropagation(); if (shut) closed.delete(d); else closed.add(d); renderTree(); } }, kids.length ? (shut ? '▸' : '▾') : ' '),
-        `📁 ${d ? baseOf(d) : '（直下）'}`, counts.get(d) ? h('span', { class: 'muted' }, ` ${counts.get(d)}`) : null);
+        T('📁 {0}', d ? baseOf(d) : T('（直下）')), counts.get(d) ? h('span', { class: 'muted' }, ` ${counts.get(d)}`) : null);
       if (d) row.addEventListener('contextmenu', (e) => folderMenu(e, d));
       if (d) draggable(row, d);
       dropTarget(row, d);
@@ -282,17 +285,17 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
     const n = refs.get(a.path)?.length ?? 0;
     const pixel = app.state.config.view.filter === 'nearest';
     const pic = a.kind === 'image' ? h('img', { src: app.assetUrl(a.path), loading: 'lazy', alt: '', style: pixel ? 'image-rendering:pixelated' : '' })
-      : a.kind === 'sound' ? h('div', { class: 'tile-icon' }, '🔊', h('button', { class: 'icon tile-play', title: '鳴らす', onclick: (e: Event) => { e.stopPropagation(); open(a); } }, '▶'))
+      : a.kind === 'sound' ? h('div', { class: 'tile-icon' }, '🔊', h('button', { class: 'icon tile-play', title: T('鳴らす'), onclick: (e: Event) => { e.stopPropagation(); open(a); } }, '▶'))
       : a.kind === 'shader' ? h('div', { class: 'tile-icon', title: a.shader?.desc ?? '' }, a.shader?.errors.length ? '⚠' : '✦')
-      : h('div', { class: 'tile-icon', style: `font-family:${fontFamily(app, a.path)}` }, 'Aaあ');
-    const meta = a.kind === 'image' ? `${a.w ?? '?'}×${a.h ?? '?'}` : a.kind === 'sound' ? (a.sec !== undefined ? `${a.sec}秒` : kb(a.bytes)) : kb(a.bytes);
+      : h('div', { class: 'tile-icon', style: `font-family:${fontFamily(app, a.path)}` }, T('Aaあ'));
+    const meta = a.kind === 'image' ? `${a.w ?? '?'}×${a.h ?? '?'}` : a.kind === 'sound' ? (a.sec !== undefined ? T('{0}秒', a.sec) : kb(a.bytes)) : kb(a.bytes);
     const locked = !!app.state.locks[`file:${a.path}`];
-    const t = h('div', { class: `tile${a.path === selected ? ' on' : ''}${n ? '' : ' unused'}`, title: `${a.path}\n${KIND_LABEL[a.kind]} ${meta} ${kb(a.bytes)}\n${n ? `${n}か所で使用` : '未使用'}${locked ? '\n🔒 ロック中（差し替え・移動・削除はできません）' : ''}`,
+    const t = h('div', { class: `tile${a.path === selected ? ' on' : ''}${n ? '' : ' unused'}`, title: T('{0}\n{1} {2} {3}\n{4}{5}', a.path, KIND_LABEL[a.kind], meta, kb(a.bytes), n ? T('{0}か所で使用', n) : T('未使用'), locked ? T('\n🔒 ロック中（差し替え・移動・削除はできません）') : ''),
       onclick: () => { selected = a.path; renderGrid(); renderSide(); el.focus(); },
       ondblclick: () => open(a) },
       h('div', { class: 'tile-pic' }, pic),
       h('div', { class: 'tile-name' }, locked ? '🔒' : '', baseOf(a.path)),
-      h('div', { class: 'tile-meta muted' }, showDir ? dirOf(a.path) : `${meta}${n ? '' : ' ・未使用'}`));
+      h('div', { class: 'tile-meta muted' }, showDir ? dirOf(a.path) : T('{0}{1}', meta, n ? '' : T(' ・未使用'))));
     t.addEventListener('contextmenu', (e) => fileMenu(e, a));
     draggable(t, a.path);
     return t;
@@ -314,21 +317,21 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
       });
       items = [...subs, ...app.state.assets.filter((a) => dirOf(a.path) === folder && match(a)).map((a) => tile(a, refs, false))];
     }
-    clear(grid, items.length ? items : h('div', { class: 'muted empty' }, search ? '見つかりません' : 'ここにファイルをドロップすると、このフォルダに取り込みます'));
+    clear(grid, items.length ? items : h('div', { class: 'muted empty' }, search ? T('見つかりません') : T('ここにファイルをドロップすると、このフォルダに取り込みます')));
   };
 
   const renderSide = () => {
     const a = app.state.assets.find((x) => x.path === selected);
-    if (!a) return clear(side, h('div', { class: 'muted' }, 'アセットを選ぶと、ここに詳しく出ます。ゲームの画面へドラッグすると置けます'));
+    if (!a) return clear(side, h('div', { class: 'muted' }, T('アセットを選ぶと、ここに詳しく出ます。ゲームの画面へドラッグすると置けます')));
     const refs = refsOf().get(a.path) ?? [];
     const preview = a.kind === 'image' ? h('div', { class: 'side-pic' }, h('img', { src: app.assetUrl(a.path), alt: '', style: app.state.config.view.filter === 'nearest' ? 'image-rendering:pixelated' : '' }))
-      : a.kind === 'sound' ? h('div', { class: 'row' }, h('button', { onclick: () => open(a) }, '▶ 鳴らす'), h('button', { onclick: () => app.audio.stopAll() }, '■'))
+      : a.kind === 'sound' ? h('div', { class: 'row' }, h('button', { onclick: () => open(a) }, T('▶ 鳴らす')), h('button', { onclick: () => app.audio.stopAll() }, '■'))
       : a.kind === 'shader' ? h('div', { class: 'shader-info' },
-        h('div', {}, a.shader?.desc || '（説明なし: 先頭の // コメントに書く）'),
+        h('div', {}, a.shader?.desc || T('（説明なし: 先頭の // コメントに書く）')),
         ...Object.entries(a.shader?.uniforms ?? {}).map(([k, f]) => h('div', { class: 'muted', style: 'font:var(--mono)' }, `${k}: ${brief(f)}${f.desc ? ' — ' + f.desc : ''}`)),
         ...(a.shader?.errors ?? []).map((e) => h('div', { style: 'color:var(--bad)' }, e)),
-        h('button', { onclick: () => open(a) }, '中身を開く'))
-      : h('div', { class: 'font-sample', contenteditable: 'true', style: `font-family:${fontFamily(app, a.path)}` }, 'あいうえお 漢字 ABC abc 123');
+        h('button', { onclick: () => open(a) }, T('中身を開く')))
+      : h('div', { class: 'font-sample', contenteditable: 'true', style: `font-family:${fontFamily(app, a.path)}` }, T('あいうえお 漢字 ABC abc 123'));
     const sheet = app.state.sheets[a.path];
     const go = (r: string) => {
       const m = r.match(/^([^#@$]+)#([^.]+)/);
@@ -341,18 +344,18 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
     clear(side,
       preview,
       h('div', { class: 'side-path' }, a.path),
-      app.state.locks[`file:${a.path}`] ? h('div', { style: 'color:var(--lock);margin:2px 0' }, '🔒 ロック中（差し替え・移動・削除はできません） ', h('a', { style: 'cursor:pointer;text-decoration:underline', onclick: () => app.openLocks(`file:${a.path}`) }, 'ロックマネージャー')) : null,
-      h('div', { class: 'muted' }, [KIND_LABEL[a.kind], a.kind === 'image' ? `${a.w}×${a.h}` : '', a.sec !== undefined ? `${a.sec}秒` : '', kb(a.bytes), sheet ? (sheet.frames ? `コマ${sheet.frames.length}（自由）` : sheet.frame ? `コマ ${sheet.frame[0]}×${sheet.frame[1]}` : '') : ''].filter(Boolean).join('・')),
+      app.state.locks[`file:${a.path}`] ? h('div', { style: 'color:var(--lock);margin:2px 0' }, T('🔒 ロック中（差し替え・移動・削除はできません） '), h('a', { style: 'cursor:pointer;text-decoration:underline', onclick: () => app.openLocks(`file:${a.path}`) }, T('ロックマネージャー'))) : null,
+      h('div', { class: 'muted' }, [KIND_LABEL[a.kind], a.kind === 'image' ? `${a.w}×${a.h}` : '', a.sec !== undefined ? T('{0}秒', a.sec) : '', kb(a.bytes), sheet ? (sheet.frames ? T('コマ{0}（自由）', sheet.frames.length) : sheet.frame ? T('コマ {0}×{1}', sheet.frame[0], sheet.frame[1]) : '') : ''].filter(Boolean).join(T('・'))),
       h('div', { class: 'row', style: 'flex-wrap:wrap;gap:4px;margin:6px 0' },
-        a.kind === 'image' ? h('button', { onclick: () => open(a) }, '✂ 切り方') : null,
-        h('button', { onclick: () => rename(a.path, false) }, '名前'),
-        h('button', { onclick: () => moveTo(a.path, false) }, '移動'),
-        h('button', { onclick: () => remove(a.path, false), title: refs.length ? '使われているので消せません' : '' }, '消す'),
+        a.kind === 'image' ? h('button', { onclick: () => open(a) }, T('✂ 切り方')) : null,
+        h('button', { onclick: () => rename(a.path, false) }, T('名前')),
+        h('button', { onclick: () => moveTo(a.path, false) }, T('移動')),
+        h('button', { onclick: () => remove(a.path, false), title: refs.length ? T('使われているので消せません') : '' }, T('消す')),
         app.state.locks[`file:${a.path}`]
-          ? h('button', { onclick: () => app.openLocks(`file:${a.path}`), title: 'ロックを見る・外す（ロックマネージャーで）' }, '🔒')
-          : h('button', { onclick: () => app.lock([`file:${a.path}`], 'assets'), title: 'このファイルそのものをロックする（差し替え・移動・削除ができなくなります。外すのはロックマネージャーで）' }, '🔓')),
-      h('div', { class: 'muted' }, refs.length ? `使っている所 ${refs.length}` : '使っている所はありません'),
-      h('ul', { class: 'refs' }, refs.map((r) => h('li', {}, r.endsWith('（コード）') ? h('span', {}, r) : h('a', { onclick: () => go(r) }, r)))));
+          ? h('button', { onclick: () => app.openLocks(`file:${a.path}`), title: T('ロックを見る・外す（ロックマネージャーで）') }, '🔒')
+          : h('button', { onclick: () => app.lock([`file:${a.path}`], 'assets'), title: T('このファイルそのものをロックする（差し替え・移動・削除ができなくなります。外すのはロックマネージャーで）') }, '🔓')),
+      h('div', { class: 'muted' }, refs.length ? T('使っている所 {0}', refs.length) : T('使っている所はありません')),
+      h('ul', { class: 'refs' }, refs.map((r) => h('li', {}, r.endsWith('（コード）') ? h('span', {}, r.replace(/（コード）$/, T('（コード）'))) : h('a', { onclick: () => go(r) }, r)))));
   };
 
   const render = () => {
@@ -374,7 +377,7 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
   });
   app.on('change', render);
   return {
-    id: 'assets', title: 'アセット', el, fill: true, area: 'bottom', render,
+    id: 'assets', title: T('アセット'), el, fill: true, area: 'bottom', render,
     reveal(path: string) {
       folder = kindOf(path) ? dirOf(path) : path;
       selected = path;

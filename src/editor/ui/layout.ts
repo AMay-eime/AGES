@@ -1,10 +1,11 @@
 // ウインドウの配置。左・中央・下・右の4エリアにタブで並べる。
 // タブはドラッグで別エリアへ移せ、境界線で大きさを変えられる。配置は .ages/layout.json に保存される。
 import { h, menu } from './dom.ts';
+import { T } from '../i18n.ts';
 
 export type AreaName = 'left' | 'center' | 'bottom' | 'right';
 const AREAS: AreaName[] = ['left', 'center', 'bottom', 'right'];
-const AREA_LABEL: Record<AreaName, string> = { left: '左', center: '中央', bottom: '下', right: '右' };
+const AREA_LABEL: Record<AreaName, string> = { left: T('左'), center: T('中央'), bottom: T('下'), right: T('右') };
 
 export interface Panel {
   id: string;
@@ -105,14 +106,14 @@ export class Layout {
       return h('div', {
         class: `tab ${this.data.active[name] === id ? 'active' : ''}`,
         draggable: true,
-        title: 'ドラッグで別の場所へ移動 / 右クリックでメニュー',
+        title: T('ドラッグで別の場所へ移動 / 右クリックでメニュー'),
         onclick: () => this.show(id),
         ondragstart: (e: DragEvent) => e.dataTransfer!.setData('text/ages-panel', id),
         oncontextmenu: (e: MouseEvent) => {
           e.preventDefault();
-          menu(e.clientX, e.clientY, [...AREAS.filter((a) => a !== name).map((a): [string, () => void] => [`${AREA_LABEL[a]}へ移動`, () => this.move(id, a)]), ...(p.detach ? [['別のウインドウで開く', () => p.detach!()] as [string, () => void]] : [])]);
+          menu(e.clientX, e.clientY, [...AREAS.filter((a) => a !== name).map((a): [string, () => void] => [T('{0}へ移動', AREA_LABEL[a]), () => this.move(id, a)]), ...(p.detach ? [[T('別のウインドウで開く'), () => p.detach!()] as [string, () => void]] : [])]);
         },
-      }, p.title, p.detach && this.data.active[name] === id ? h('span', { class: 'tab-detach', title: '別のウインドウで開く', onclick: (e: MouseEvent) => { e.stopPropagation(); p.detach!(); } }, ' ↗') : null);
+      }, p.title, p.detach && this.data.active[name] === id ? h('span', { class: 'tab-detach', title: T('別のウインドウで開く'), onclick: (e: MouseEvent) => { e.stopPropagation(); p.detach!(); } }, ' ↗') : null);
     }));
     tabs.addEventListener('dragover', (e) => { e.preventDefault(); tabs.classList.add('drop'); });
     tabs.addEventListener('dragleave', () => tabs.classList.remove('drop'));

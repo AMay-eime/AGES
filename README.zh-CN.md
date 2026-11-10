@@ -4,7 +4,7 @@
 
 ### 和 AI 商量着，从编辑器开始做游戏的游戏引擎
 
-[日本語](README.md) | [English](README.en.md) | **简体中文**
+[日本語](README.md) | [English](README.en.md) | **简体中文** | [繁體中文](README.zh-TW.md) | [Deutsch](README.de.md) | [Français](README.fr.md)
 
 </div>
 
@@ -23,10 +23,10 @@
 </tr>
 </table>
 
-<p align="center">📦 做好的游戏可以导出为 <b>Web</b> 和 <b>Windows（面向 Steam）</b><br>🚧 目前仍在开发中，编辑器界面暂时只有日语。欢迎通过 <a href="https://github.com/AMay-eime/AGES/issues/new/choose">Issue</a> 协助我们</p>
+<p align="center">📦 做好的游戏可以导出为 <b>Web</b> 和 <b>Windows（面向 Steam）</b><br>🌐 编辑器支持简体中文、繁體中文、日本語、English、Deutsch、Français（在 ⚙ 设置中切换）<br>🚧 目前仍在开发中，部分引擎提示暂时只有日语。欢迎通过 <a href="https://github.com/AMay-eime/AGES/issues/new/choose">Issue</a> 协助我们</p>
 
 <div align="center">
-<img src="docs/images/editor.png" alt="AGES 的编辑器，正在运行示例游戏" width="860">
+<img src="docs/images/editor.zh-Hans.png" alt="AGES 的编辑器，正在运行示例游戏" width="860">
 </div>
 
 ## 请求协助

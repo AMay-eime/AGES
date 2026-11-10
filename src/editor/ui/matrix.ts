@@ -7,6 +7,7 @@ import { parseAddress } from '../../core/docs.ts';
 import type { Op } from '../../core/patch.ts';
 import { h, clear, toast, time } from './dom.ts';
 import type { Panel } from './layout.ts';
+import { T } from '../i18n.ts';
 
 export function matrixPanel(app: App): Panel & { open(path: string): void } {
   const el = h('div', {});
@@ -20,7 +21,7 @@ export function matrixPanel(app: App): Panel & { open(path: string): void } {
   let errBox: HTMLElement | null = null;
   const status = () => {
     const f = fieldOf();
-    if (saveBtn) { saveBtn.disabled = !dirty || !!app.play; saveBtn.className = dirty ? 'on' : ''; saveBtn.textContent = dirty ? '保存 ●' : '保存'; }
+    if (saveBtn) { saveBtn.disabled = !dirty || !!app.play; saveBtn.className = dirty ? 'on' : ''; saveBtn.textContent = dirty ? T('保存 ●') : T('保存'); }
     if (revertBtn) revertBtn.disabled = !dirty;
     if (errBox && f) {
       const a = parseAddress(path);
@@ -69,13 +70,13 @@ export function matrixPanel(app: App): Panel & { open(path: string): void } {
     }
     if (!ops.length) { dirty = false; return render(); }
     const r = await app.patch(ops, 'matrix');
-    if (r) { load(); render(); toast(`保存しました（${r.length}か所）`); }
+    if (r) { load(); render(); toast(T('保存しました（{0}か所）', r.length)); }
   };
 
   const render = () => {
-    if (!path) return clear(el, h('div', { class: 'pad muted' }, 'インスペクタで行列のパラメータの「開く」を押すと、ここで確認・編集できます。'));
+    if (!path) return clear(el, h('div', { class: 'pad muted' }, T('インスペクタで行列のパラメータの「開く」を押すと、ここで確認・編集できます。')));
     const f = fieldOf();
-    if (!f) return clear(el, h('div', { class: 'pad muted' }, `${path} は行列ではありません`));
+    if (!f) return clear(el, h('div', { class: 'pad muted' }, T('{0} は行列ではありません', path)));
     const lock = app.state.locks[path];
     const readonly = !!app.play;
     const fixedRows = f.rows !== undefined;
@@ -152,7 +153,7 @@ export function matrixPanel(app: App): Panel & { open(path: string): void } {
             }));
             dirty = true;
             render();
-            toast(`${rows.length}行を貼り付けました`);
+            toast(T('{0}行を貼り付けました', rows.length));
           });
           inputs[r][c] = input;
           td.append(input);
@@ -161,24 +162,24 @@ export function matrixPanel(app: App): Panel & { open(path: string): void } {
       }));
 
     const popout = () => window.open(`/?solo=matrix&path=${encodeURIComponent(path)}`, `ages-matrix-${path}`, 'width=900,height=640');
-    revertBtn = h('button', { onclick: () => { load(); render(); } }, '元に戻す') as HTMLButtonElement;
-    saveBtn = h('button', { onclick: save, title: 'Ctrl+S' }, '保存') as HTMLButtonElement;
+    revertBtn = h('button', { onclick: () => { load(); render(); } }, T('元に戻す')) as HTMLButtonElement;
+    saveBtn = h('button', { onclick: save, title: 'Ctrl+S' }, T('保存')) as HTMLButtonElement;
     errBox = h('div', { class: 'issues' });
     clear(el,
       h('div', { class: 'toolbar' },
         h('span', { style: 'font:var(--mono)' }, path),
-        h('span', { class: 'muted' }, `${matrixSize(draft)} ${cell}${f.min !== undefined || f.max !== undefined ? ` ${f.min ?? ''}..${f.max ?? ''}` : ''}${fixedRows && fixedCols ? '（大きさ固定）' : fixedRows ? '（行数固定）' : fixedCols ? '（列数固定）' : ''}`),
-        lock ? h('span', { style: 'color:var(--lock)', title: `${lock.who} ${time(lock.t)}` }, '🔒 ロック中（AIは変更不可）') : null,
+        h('span', { class: 'muted' }, T('{0} {1}{2}{3}', matrixSize(draft), cell, f.min !== undefined || f.max !== undefined ? ` ${f.min ?? ''}..${f.max ?? ''}` : '', fixedRows && fixedCols ? T('（大きさ固定）') : fixedRows ? T('（行数固定）') : fixedCols ? T('（列数固定）') : '')),
+        lock ? h('span', { style: 'color:var(--lock)', title: `${lock.who} ${time(lock.t)}` }, T('🔒 ロック中（AIは変更不可）')) : null,
         h('span', { style: 'flex:1' }),
-        !readonly && !fixedRows ? [h('button', { onclick: () => resize(1, 0), title: '行を追加' }, '＋行'), h('button', { onclick: () => resize(-1, 0), title: '最後の行を削除' }, '−行')] : null,
-        !readonly && !fixedCols ? [h('button', { onclick: () => resize(0, 1), title: '列を追加' }, '＋列'), h('button', { onclick: () => resize(0, -1), title: '最後の列を削除' }, '−列')] : null,
+        !readonly && !fixedRows ? [h('button', { onclick: () => resize(1, 0), title: T('行を追加') }, T('＋行')), h('button', { onclick: () => resize(-1, 0), title: T('最後の行を削除') }, T('−行'))] : null,
+        !readonly && !fixedCols ? [h('button', { onclick: () => resize(0, 1), title: T('列を追加') }, T('＋列')), h('button', { onclick: () => resize(0, -1), title: T('最後の列を削除') }, T('−列'))] : null,
         revertBtn,
         saveBtn,
-        new URLSearchParams(location.search).get('solo') ? null : h('button', { class: 'icon', title: '別のウインドウで開く', onclick: popout }, '↗')),
-      readonly ? h('div', { class: 'pad muted' }, '再生中は表示のみです。停止すると編集できます。') : null,
+        new URLSearchParams(location.search).get('solo') ? null : h('button', { class: 'icon', title: T('別のウインドウで開く'), onclick: popout }, '↗')),
+      readonly ? h('div', { class: 'pad muted' }, T('再生中は表示のみです。停止すると編集できます。')) : null,
       errBox,
-      h('div', { class: 'pad', style: 'overflow:auto' }, draft.length ? table : h('div', { class: 'muted' }, '空の行列です。＋行・＋列で作るか、表計算ソフトから貼り付けてください。')),
-      h('div', { class: 'pad muted', style: 'font-size:12px' }, '↑↓・Enterで上下に移動、Tabで右へ。表計算ソフトからコピーしたセル範囲は、そのまま貼り付けられます。'));
+      h('div', { class: 'pad', style: 'overflow:auto' }, draft.length ? table : h('div', { class: 'muted' }, T('空の行列です。＋行・＋列で作るか、表計算ソフトから貼り付けてください。'))),
+      h('div', { class: 'pad muted', style: 'font-size:12px' }, T('↑↓・Enterで上下に移動、Tabで右へ。表計算ソフトからコピーしたセル範囲は、そのまま貼り付けられます。')));
     status();
   };
 
@@ -189,9 +190,9 @@ export function matrixPanel(app: App): Panel & { open(path: string): void } {
   app.on('play', render);
 
   return {
-    id: 'matrix', title: '行列', el, render,
+    id: 'matrix', title: T('行列'), el, render,
     open(p: string) {
-      if (dirty && path !== p && !confirm(`${path} の未保存の変更を捨てて ${p} を開きますか？`)) return;
+      if (dirty && path !== p && !confirm(T('{0} の未保存の変更を捨てて {1} を開きますか？', path, p))) return;
       path = p;
       load();
       render();
