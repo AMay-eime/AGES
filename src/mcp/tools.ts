@@ -33,7 +33,7 @@ export function makeTools(defaultProject: string): Tool[] {
   return [
     {
       name: 'ages_map',
-      description: 'プロジェクトの地図。コンポーネント、システム（実行順・読み書き）、表、プレハブ、シーン、🔒★の印。作業のたびに最初に読む。大きなプロジェクトでは目次になり、section（components systems tables prefabs scenes など）で中身を引く',
+      description: 'プロジェクトの地図。コンポーネント、システム（実行順・読み書き）、表、プレハブ、シーン、🔒★の印。作業のたびに最初に読む。大きなプロジェクトでは目次になり、section（components systems tables prefabs scenes など。まとめ 名前/(数) は 節/名前 で、例 prefabs/se）で中身を引く',
       inputSchema: { type: 'object', properties: { ...dirProp, section: { type: 'string' } } },
       run: (a, dir) => cmdMap(dir, a.section),
     },

@@ -9,6 +9,13 @@ import { instanceOverrides, overridesOf } from '../core/variant.ts';
 import { tagCounts, type WindowInfo } from './windows.ts';
 import type { LockMark, TouchMark } from './oplog.ts';
 import { RECENT_WINDOW } from './recent.ts';
+import type { ComponentDef } from '../core/schema.ts';
+import type { ShaderDef } from '../core/shader.ts';
+import type { SystemDef } from '../core/registry.ts';
+import type { TableDef } from '../core/table.ts';
+import type { PrefabDoc, SceneDoc } from '../core/docs.ts';
+import { treeParents, NUMBERED } from '../editor/tree.ts';
+import { buildTree, commonDir, fileKeys, findNode, isNode, keysOf, topLine, treePage, type TreeItem, type TreeNode } from './map-tree.ts';
 
 
 /** 地図の大きさの上限（文字）。超えるプロジェクトでは細かいところを省いた要約の地図、それでも超えるなら目次の地図にする（中身は節ごと・名前で引く） */
@@ -28,12 +35,14 @@ export interface MapInputs {
   gotos?: Map<string, string[]>;
   /** 最近の作業の場所（.ages/recent.json の上位。目次の地図に出す） */
   recent?: { place: string; hits: number }[];
+  /** 最近の作業の場所を数えた長さ（操作の回数。既定 RECENT_WINDOW） */
+  recentWindow?: number;
   /** コードの中の宣言の場所（codeDefs。システムの行に出す） */
   defs?: Map<string, string>;
 }
 
-export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, locks: Record<string, LockMark> = {}, code = new Map<string, string[]>(), windows: WindowInfo[] = [], gotos = new Map<string, string[]>(), budget = MAP_BUDGET, recent: MapInputs['recent'] = [], defs: MapInputs['defs'] = new Map()): string {
-  const ins: MapInputs = { touched, locks, code, windows, gotos, recent, defs };
+export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, locks: Record<string, LockMark> = {}, code = new Map<string, string[]>(), windows: WindowInfo[] = [], gotos = new Map<string, string[]>(), budget = MAP_BUDGET, recent: MapInputs['recent'] = [], defs: MapInputs['defs'] = new Map(), recentWindow?: number): string {
+  const ins: MapInputs = { touched, locks, code, windows, gotos, recent, defs, recentWindow };
   const full = buildMap(p, ins, 'full');
   if (full.length <= budget) return full;
   const compact = buildMap(p, ins, 'compact');
@@ -42,10 +51,13 @@ export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, l
 
 /** 節を1つだけ（目次の地図から引く）。大きなプロジェクトでは要約の形、小さければ詳しい形 */
 export function renderMapSection(p: Project, section: string, ins: MapInputs = {}, budget = MAP_BUDGET): string {
-  const name = section.toLowerCase() as MapSection;
-  if (!MAP_SECTIONS.includes(name)) throw new Error(`地図の節 ${section} はありません${suggest(section, [...MAP_SECTIONS])}（${MAP_SECTIONS.join(' ')}）`);
-  const mode: MapMode = buildMap(p, ins, 'full').length <= budget ? 'full' : 'compact';
-  const lines = sectionLines(p, withDefaults(ins), mode)[name];
+  const [head, ...path] = section.split('/').filter(Boolean);
+  const name = (head ?? '').toLowerCase() as MapSection;
+  if (!MAP_SECTIONS.includes(name)) throw new Error(`地図の節 ${section} はありません${suggest(head ?? '', [...MAP_SECTIONS])}（${MAP_SECTIONS.join(' ')}）`);
+  const mode: MapMode = buildMap(p, ins, 'full').length <= budget ? 'full' : buildMap(p, ins, 'compact').length <= budget ? 'compact' : 'index';
+  // とても大きなプロジェクト（目次の地図）では、まとめの木から1枚（節/まとめ/…）
+  if (mode === 'index' && name !== 'assets') return treeSectionPage(p, withDefaults(ins), name, path);
+  const lines = sectionLines(p, withDefaults(ins), mode === 'full' ? 'full' : 'compact')[name];
   return lines.length ? lines.join('\n') : `（${name} はありません）`;
 }
 
@@ -57,7 +69,7 @@ const firstSentence = (s: string | undefined, max = 40): string => {
 };
 
 type Ins = Required<MapInputs>;
-const withDefaults = (i: MapInputs): Ins => ({ touched: i.touched ?? {}, locks: i.locks ?? {}, code: i.code ?? new Map(), windows: i.windows ?? [], gotos: i.gotos ?? new Map(), recent: i.recent ?? [], defs: i.defs ?? new Map() });
+const withDefaults = (i: MapInputs): Ins => ({ touched: i.touched ?? {}, locks: i.locks ?? {}, code: i.code ?? new Map(), windows: i.windows ?? [], gotos: i.gotos ?? new Map(), recent: i.recent ?? [], recentWindow: i.recentWindow ?? RECENT_WINDOW, defs: i.defs ?? new Map() });
 
 export function buildMap(p: Project, inputs: MapInputs, mode: MapMode): string {
   const ins = withDefaults(inputs);
@@ -65,12 +77,12 @@ export function buildMap(p: Project, inputs: MapInputs, mode: MapMode): string {
   const out: string[] = [];
   out.push(`# ${c.name}  fps${c.fps} seed${c.seed} view${c.view.width}x${c.view.height} start:${c.startScene} code:${c.game}`);
   if (mode === 'compact') out.push(`（大きなプロジェクトなので要約の地図。型・範囲・既定値・説明は ages schema <dir> 名前,名前、物・プレハブの中身は ages get <dir> 住所）`);
-  if (mode === 'index') out.push(`（とても大きなプロジェクトなので目次の地図。節の中身は ages map <dir> 節（${MAP_SECTIONS.join(' ')}）、名前・説明から探すのは ages find <dir> 語、型・範囲・説明は ages schema <dir> 名前、値は ages get <dir> 住所）`);
+  if (mode === 'index') out.push(`（とても大きなプロジェクトなので目次の地図。名前/(数) はまとめで、中身は ages map <dir> 節/名前（例 ${indexExample(p, ins)}）、節の全体は ages map <dir> 節。名前・説明から探すのは ages find <dir> 語、型・範囲・説明は ages schema <dir> 名前、値は ages get <dir> 住所）`);
   const sec = mode === 'index' ? indexLines(p, ins) : sectionLines(p, ins, mode);
   out.push(...sec.components, ...sec.shaders, ...notes(p), ...sec.systems, ...sec.tables, ...sec.prefabs, ...sec.scenes, ...sec.assets, ...sec.extensions);
   if (mode === 'index') out.push(...markRoots(ins));
   // 最近の作業の場所（目次の地図だけ。続けて同じ辺りを触るなら探さずに済む）
-  if (mode === 'index' && ins.recent.length) out.push(`最近の作業の場所（直近${RECENT_WINDOW}回の探す・見る・変えるで使った所。多い順）: ${ins.recent.map((r) => (r.hits > 1 ? `${r.place}(${r.hits})` : r.place)).join('  ')}`);
+  if (mode === 'index' && ins.recent.length) out.push(`最近の作業の場所（直近${ins.recentWindow}回の探す・見る・変えるで使った所。多い順。map: は ages map <dir> で引いたまとめ）: ${ins.recent.map((r) => (r.hits > 1 ? `${r.place}(${r.hits})` : r.place)).join('  ')}`);
   const nl = Object.keys(ins.locks).length, nt = Object.keys(ins.touched).length;
   if (nl || nt) out.push(`## 🔒ロック ${nl}件（AIは変更不可。理由があれば人に提案する） / ★人が調整 ${nt}件（変更前に人へ確認）`);
   return out.join('\n');
@@ -104,30 +116,14 @@ function sectionLines(p: Project, ins: Ins, mode: 'full' | 'compact'): Record<Ma
 
   // 毎回読む1枚なので、使っていないものの行は出さない（標準の部品・シェーダー・表の説明は ages schema で引く）
   const own = ownComponents(p);
-  if (own.length && compact) {
-    r.components.push('## components（名前 説明の初め | フィールドの名前 | 自動:実行中に変わる値）');
-    for (const def of own) {
-      const all = Object.entries(def.fields);
-      const auto = all.filter(([, f]) => isAutoField(f)).map(([k]) => k);
-      const fields = all.filter(([, f]) => !isAutoField(f)).map(([k]) => k).join(' ');
-      r.components.push(`${def.name} ${firstSentence(def.desc)} | ${fields || '（フィールドなし）'}${auto.length ? ` | 自動:${auto.join(',')}` : ''}`);
-    }
-  } else if (own.length) {
-    r.components.push('## components（名前 説明 | フィールド:型 範囲=既定値 | 自動:実行中に変わる値）');
-    for (const def of own) {
-      // 実行中に変わる値（desc に「自動で変化」）は人もAIも書かないので、型と範囲を省いて名前だけ（ages schema で引ける）
-      const all = Object.entries(def.fields);
-      const auto = all.filter(([, f]) => isAutoField(f)).map(([k]) => k);
-      const fields = all.filter(([, f]) => !isAutoField(f)).map(([k, f]) => `${k}:${brief(f)}`).join(' ');
-      r.components.push(`${def.name} ${def.desc} | ${fields || '（フィールドなし）'}${auto.length ? ` | 自動:${auto.join(',')}` : ''}`);
-    }
-  }
+  if (own.length) r.components.push(compact ? '## components（名前 説明の初め | フィールドの名前 | 自動:実行中に変わる値）' : '## components（名前 説明 | フィールド:型 範囲=既定値 | 自動:実行中に変わる値）');
+  for (const def of own) r.components.push(componentLine(def, compact));
 
   // シェーダー: 自分のシェーダーと、使っている標準のものだけ（調整できる値を1行で）
   const { own: ownShaders, std: stdUsed } = shadersOf(p);
   if (ownShaders.length || stdUsed.length) {
     r.shaders.push('## shaders（Effect・PostEffect の shader で選ぶ。値は params.名前）');
-    for (const d of ownShaders) r.shaders.push(`${d.path} ${d.desc} | ${Object.entries(d.uniforms).map(([k, f]) => `${k}:${brief(f)}`).join(' ') || '（値なし）'}${d.errors.length ? ` ⚠ ${d.errors.length}件の問題（ages check）` : ''}`);
+    for (const d of ownShaders) r.shaders.push(shaderLine(d));
     if (stdUsed.length) r.shaders.push(`標準: ${stdUsed.map((d) => `${d.path}(${Object.keys(d.uniforms).join(',')})`).join(' ')}`);
   }
 
@@ -143,25 +139,12 @@ function sectionLines(p: Project, ins: Ins, mode: 'full' | 'compact'): Record<Ma
       i = j;
       continue;
     }
-    const rw = [s.reads?.length ? `r:${s.reads.join(',')}` : '', s.writes?.length ? `w:${s.writes.join(',')}` : ''].filter(Boolean).join(' ');
-    const at = ins.defs.get(`system:${s.name}`);
-    const on = s.on ? Object.keys(s.on) : [];
-    r.systems.push(`${i + 1} ${s.name}${at ? `（${at}）` : ''} ${compact ? firstSentence(s.desc, 30) : s.desc}${rw ? ' ' + rw : ''}${on.length ? ` 受ける:${on.join(',')}` : ''}${s.scenes ? ` シーン:${s.scenes.join(',')}だけ` : ''}`);
+    r.systems.push(systemLine(s, i, ins, compact));
   }
 
   if (p.registry.tables.size) {
     r.tables.push('## tables（$表.行.列 で参照。中身は ages table <dir> <表>）');
-    for (const def of p.registry.tables.values()) {
-      const rows = p.docs.tables.get(def.name)?.rows ?? [];
-      const std = p.registry.stdTables.has(def.name);
-      if (std && !rows.length) continue;
-      const ids = rows.map((r) => r.id);
-      // 標準の表は列が決まっているので、説明と列を省く（ages schema <dir> $表 で引ける）
-      const head = std ? '（標準）' : compact
-        ? `${def.desc ? ' ' + firstSentence(def.desc) : ''} | ${Object.keys(def.columns).join(' ')}`
-        : `${def.desc ? ' ' + def.desc : ''} | ${Object.entries(def.columns).map(([k, f]) => `${k}:${brief(f)}`).join(' ')}`;
-      r.tables.push(`$${def.name} ${rows.length}行${head} | 行: ${ids.slice(0, 8).join(' ')}${ids.length > 8 ? ' …' : ''}${tableMarks(ins, def.name)}`);
-    }
+    for (const def of shownTables(p)) r.tables.push(tableLine(p, def, ins, compact));
   }
 
   if (p.docs.prefabs.size && compact) {
@@ -170,13 +153,7 @@ function sectionLines(p: Project, ins: Ins, mode: 'full' | 'compact'): Record<Ma
     for (const [key, names] of prefabGroups(p, ins)) r.prefabs.push(`[${key || '部品なし'}] ${names.length}: ${names.join(' ')}`);
   }
   if (p.docs.prefabs.size && !compact) r.prefabs.push(`## prefabs（@名前 で参照${[...p.docs.prefabs.values()].some((x) => x.base) ? '。← は派生の元、変: は元から変えた所' : ''}）`);
-  for (const raw of compact ? [] : p.docs.prefabs.values()) {
-    const pf = p.registry.findPrefab(raw.name) ?? raw;
-    const tags = pf.tags?.length ? ` tags:${pf.tags.join(',')}` : '';
-    const ov = raw.base ? overridesOf(p.docs.prefabs, raw.name) : [];
-    const variant = raw.base ? ` ← @${raw.base}` : '';
-    r.prefabs.push(`@${pf.name}${variant}${raw.desc ? ' ' + raw.desc : ''} [${Object.keys(pf.components).join(' ')}]${tags}${ov.length ? ` 変:${ov.join(',')}` : ''}${marks(touched, locks, `@${pf.name}`)}`);
-  }
+  for (const raw of compact ? [] : p.docs.prefabs.values()) r.prefabs.push(prefabLine(p, raw, ins, false));
 
   r.scenes.push(`## scenes（シーン#ID "名前" [コンポーネント]）${gotos.size ? `\ngoto の行き先（コード）: ${[...gotos.keys()].join(' ')}` : ''}`);
   // 要約の地図では、前のシーンと同じ物（同じ ID・同じ部品）を繰り返さない
@@ -211,17 +188,218 @@ function sectionLines(p: Project, ins: Ins, mode: 'full' | 'compact'): Record<Ma
   return r;
 }
 
-/** エディタ拡張の行（目次の地図でも省かない。作る前に見るため）。目次の地図では名前・説明の最初の一文・ファイルだけ（変える値・欄は ages map <dir> extensions） */
-function extensionLines(p: Project, windows: WindowInfo[], short = false): string[] {
+/** コンポーネントの1行。compact: 説明の初めとフィールドの名前だけ。at: コードの場所 */
+function componentLine(def: ComponentDef, compact: boolean, at?: string): string {
+  // 実行中に変わる値（desc に「自動で変化」）は人もAIも書かないので、型と範囲を省いて名前だけ（ages schema で引ける）
+  const all = Object.entries(def.fields);
+  const auto = all.filter(([, f]) => isAutoField(f)).map(([k]) => k);
+  const fields = all.filter(([, f]) => !isAutoField(f)).map(([k, f]) => (compact ? k : `${k}:${brief(f)}`)).join(' ');
+  return `${def.name}${at ? `（${at}）` : ''} ${compact ? firstSentence(def.desc) : def.desc} | ${fields || '（フィールドなし）'}${auto.length ? ` | 自動:${auto.join(',')}` : ''}`;
+}
+
+function shaderLine(d: ShaderDef): string {
+  return `${d.path} ${d.desc} | ${Object.entries(d.uniforms).map(([k, f]) => `${k}:${brief(f)}`).join(' ') || '（値なし）'}${d.errors.length ? ` ⚠ ${d.errors.length}件の問題（ages check）` : ''}`;
+}
+
+function systemLine(s: SystemDef, i: number, ins: Ins, compact: boolean): string {
+  const rw = [s.reads?.length ? `r:${s.reads.join(',')}` : '', s.writes?.length ? `w:${s.writes.join(',')}` : ''].filter(Boolean).join(' ');
+  const at = ins.defs.get(`system:${s.name}`);
+  const on = s.on ? Object.keys(s.on) : [];
+  return `${i + 1} ${s.name}${at ? `（${at}）` : ''} ${compact ? firstSentence(s.desc, 30) : s.desc}${rw ? ' ' + rw : ''}${on.length ? ` 受ける:${on.join(',')}` : ''}${s.scenes ? ` シーン:${s.scenes.join(',')}だけ` : ''}`;
+}
+
+/** 地図に出す表（標準の表は行があるときだけ） */
+const shownTables = (p: Project): TableDef[] => [...p.registry.tables.values()].filter((d) => (p.docs.tables.get(d.name)?.rows.length ?? 0) || !p.registry.stdTables.has(d.name));
+
+function tableLine(p: Project, def: TableDef, ins: Ins, compact: boolean): string {
+  const rows = p.docs.tables.get(def.name)?.rows ?? [];
+  const ids = rows.map((r) => r.id);
+  // 標準の表は列が決まっているので、説明と列を省く（ages schema <dir> $表 で引ける）
+  const head = p.registry.stdTables.has(def.name) ? '（標準）' : compact
+    ? `${def.desc ? ' ' + firstSentence(def.desc) : ''} | ${Object.keys(def.columns).join(' ')}`
+    : `${def.desc ? ' ' + def.desc : ''} | ${Object.entries(def.columns).map(([k, f]) => `${k}:${brief(f)}`).join(' ')}`;
+  return `$${def.name} ${rows.length}行${head} | 行: ${ids.slice(0, 8).join(' ')}${ids.length > 8 ? ' …' : ''}${tableMarks(ins, def.name)}`;
+}
+
+/** プレハブの1行。short: 説明は最初の一文だけ */
+function prefabLine(p: Project, raw: PrefabDoc, ins: Ins, short: boolean): string {
+  const pf = p.registry.findPrefab(raw.name) ?? raw;
+  const tags = pf.tags?.length ? ` tags:${pf.tags.join(',')}` : '';
+  const ov = raw.base ? overridesOf(p.docs.prefabs, raw.name) : [];
+  const variant = raw.base ? ` ← @${raw.base}` : '';
+  const desc = short ? firstSentence(raw.desc) : raw.desc;
+  return `@${pf.name}${variant}${desc ? ' ' + desc : ''} [${Object.keys(pf.components).join(' ')}]${tags}${ov.length ? ` 変:${ov.join(',')}` : ''}${marks(ins.touched, ins.locks, `@${pf.name}`)}`;
+}
+
+// ---- 入れ子の目次（とても大きなプロジェクト） ----
+
+/** 目次の地図の1行の長さの上限（これより長いと、名前を並べずにまとめと数にする） */
+export const INDEX_LINE_MAX = 400;
+/** 目次から引く1枚（節/まとめ）の大きさの上限（文字）。超えると下のまとめは1行ずつ */
+export const MAP_PAGE_BUDGET = 4000;
+
+/** 名前の頭の並び（weapon_gatling → weapon。se_ZzFX_Hit → se, se_ZzFX。区切りがなければ大文字の境目） */
+export function nameKeys(name: string): string[] {
+  const parts = /[_\-.]/.test(name) ? name.split(/[_\-.]/) : name.split(/(?<=[a-z0-9])(?=[A-Z])/);
+  const sep = /[_\-.]/.exec(name)?.[0] ?? '';
+  const out: string[] = [];
+  for (let i = 1; i < parts.length; i++) out.push(parts.slice(0, i).join(sep));
+  return out.filter(Boolean);
+}
+
+/** コードで宣言したもの（defs の 種類:名前 → ファイル:行）をファイルの木に */
+function codeTree<T>(list: T[], kind: string, nameOf: (x: T) => string, item: (x: T, at: string | undefined) => Omit<TreeItem, 'keys'>, keysOverride: (x: T) => string[] | null, ins: Ins): TreeNode {
+  const at = (x: T) => ins.defs.get(`${kind}:${nameOf(x)}`);
+  const root = commonDir(list.map((x) => at(x)?.split(':')[0]).filter((f): f is string => !!f));
+  return buildTree(list.map((x) => {
+    const a = at(x);
+    return { ...item(x, a), keys: keysOverride(x) ?? (a ? fileKeys(a.split(':')[0], root) : ['その他']) };
+  }));
+}
+
+type TreeSection = Exclude<MapSection, 'assets'>;
+
+/** 節の木（目次の地図と ages map <dir> 節/まとめ） */
+function sectionTree(p: Project, ins: Ins, sec: TreeSection): TreeNode {
+  switch (sec) {
+    case 'components':
+      return codeTree(ownComponents(p), 'component', (d) => d.name, (d, at) => ({ name: d.name, line: componentLine(d, true, at) }), () => null, ins);
+    case 'systems':
+      return codeTree(p.registry.systems.map((s, i) => ({ s, i })), 'system', (x) => x.s.name,
+        ({ s, i }) => ({ name: s.name, label: `${i + 1}.${s.name}`, line: s.name.startsWith('std.') ? `${i + 1} 標準 ${s.name}` : systemLine(s, i, ins, true) }),
+        ({ s }) => (s.name.startsWith('std.') ? ['標準'] : null), ins);
+    case 'tables':
+      return codeTree(shownTables(p), 'table', (d) => d.name,
+        (d) => ({ name: d.name, label: `$${d.name}(${p.docs.tables.get(d.name)?.rows.length ?? 0}行)${tableMarks(ins, d.name)}`, line: tableLine(p, d, ins, true) }),
+        (d) => (p.registry.stdTables.has(d.name) ? ['標準'] : null), ins);
+    case 'prefabs':
+      return buildTree([...p.docs.prefabs.values()].map((raw) => ({ name: raw.name, label: `${raw.name}${marks(ins.touched, ins.locks, `@${raw.name}`)}`, keys: nameKeys(raw.name), line: prefabLine(p, raw, ins, true) })));
+    case 'scenes':
+      return buildTree([...p.docs.scenes.values()].map((s) => {
+        const start = s.name === p.config.startScene;
+        return { name: s.name, label: `${s.name}(${s.entities.length}体${start ? '・開始' : ''})`, keys: nameKeys(s.name), line: `${s.name}（${s.entities.length}体）${start ? ' 開始' : ''}${s.desc ? ' ' + firstSentence(s.desc) : ''}` };
+      }));
+    case 'shaders': {
+      const { own, std } = shadersOf(p);
+      const root = commonDir(own.map((d) => d.path));
+      return buildTree([
+        ...own.map((d) => ({ name: d.path, label: d.path.slice(root.length), keys: fileKeys(d.path, root, false), line: shaderLine(d) })),
+        ...std.map((d) => ({ name: d.path, keys: ['標準'], line: `${d.path} ${d.desc} | ${Object.keys(d.uniforms).join(' ') || '（値なし）'}` })),
+      ]);
+    }
+    case 'extensions': {
+      const list = ins.windows.length ? ins.windows : (p.config.editorWindows ?? []).map((path) => ({ path }) as WindowInfo);
+      const root = commonDir(list.map((w) => w.path));
+      const full = extensionLines(p, list).slice(1);
+      return buildTree(list.map((w, i) => ({ name: w.id ?? w.path, label: `${w.id ?? w.path}${w.title ? `「${w.title}」` : ''}`, keys: fileKeys(w.path, root, false), line: full[i] })));
+    }
+  }
+}
+
+/** シーンの物の木（UI.parent・Transform.parent の親子。連番の名前で子のない物が5つ以上ならまとめる） */
+function entityTree(p: Project, raw: SceneDoc, ins: Ins): TreeNode {
+  const s = p.resolvedScene(raw);
+  const { parent } = treeParents(raw.entities, Object.fromEntries(p.docs.prefabs));
+  const hasKids = new Set(parent.values());
+  const chain = (id: string): string[] => {
+    const out: string[] = [];
+    const seen = new Set([id]);
+    for (let q = parent.get(id); q && !seen.has(q); q = parent.get(q)) { out.unshift(q); seen.add(q); }
+    return out;
+  };
+  // 兄弟の中の連番（子のない物が5つ以上）
+  const sib = new Map<string, number>();
+  const numKey = (id: string) => { const m = NUMBERED.exec(id); return m && !hasKids.has(id) ? `${parent.get(id) ?? ''}~${m[1]}` : null; };
+  for (const e of s.entities) { const k = numKey(e.id); if (k) sib.set(k, (sib.get(k) ?? 0) + 1); }
+  return buildTree(s.entities.map((e, i) => {
+    const k = numKey(e.id);
+    const keys = [...chain(e.id), ...(k && sib.get(k)! >= 5 ? [NUMBERED.exec(e.id)![1] + '*'] : [])];
+    const ov = e.prefab ? instanceOverrides(p.docs.prefabs, raw.entities[i]) : [];
+    const inst = e.prefab ? ` ←@${e.prefab}${ov.length ? ` 変:${ov.join(',')}` : ''}` : '';
+    const tags = e.tags?.length ? ` tags:${e.tags.join(',')}` : '';
+    const nm = e.name && e.name !== e.id ? ` "${e.name}"` : '';
+    return { name: e.id, keys, line: `#${e.id}${nm}${inst} [${Object.keys(e.components).join(' ')}]${tags}${marks(ins.touched, ins.locks, `${s.name}#${e.id}`)}` };
+  }));
+}
+
+/** 節ごとの列の見方（引いた1枚の見出しに） */
+const PAGE_LEGEND: Record<TreeSection, string> = {
+  components: '名前（コードの場所） 説明の初め | フィールドの名前 | 自動:実行中に変わる値。型・範囲・説明は ages schema <dir> 名前',
+  systems: '番号=実行順 名前（コードの場所） 説明の初め r=読む w=書く 受ける=on で受ける出来事',
+  tables: '$表.行.列 で参照。中身は ages table <dir> <表>',
+  prefabs: '@名前 で参照。← は派生の元、変: は元から変えた所。中身は ages get <dir> @名前',
+  scenes: 'シーン（物の数）。物は ages map <dir> scenes/シーン',
+  shaders: 'Effect・PostEffect の shader で選ぶ。値は params.名前',
+  extensions: 'プロジェクト独自のエディタ拡張。作る前にここを見て、近いものがあれば直す。変える値は edits と、見せている欄・部品・行だけ',
+};
+
+/** 目次の地図の節の行（1段目だけ。名前が短く収まるなら全部） */
+function indexTreeLine(p: Project, ins: Ins, sec: TreeSection): string | null {
+  const t = sectionTree(p, ins, sec);
+  if (!t.n) return null;
+  const head: Record<TreeSection, string> = {
+    components: `## components ${t.n}個`,
+    shaders: `## shaders ${t.n}個`,
+    systems: `## systems ${t.n}個（番号.名前 の番号は実行順）`,
+    tables: `## tables ${t.n}個（$表.行.列）`,
+    prefabs: `## prefabs ${t.n}個（@名前）`,
+    scenes: `## scenes ${t.n}個`,
+    extensions: `## editor extensions ${t.n}個（作る前にここを見て、近いものがあれば直す）`,
+  };
+  return `${head[sec]}: ${topLine(t, INDEX_LINE_MAX)}`;
+}
+
+/** 目次の入れ子の深さ（節の木のまとめの段の数のいちばん深いもの。シーンの中の物の木は数えない）。目次でない地図は 0 */
+export function indexDepth(p: Project, inputs: MapInputs = {}, budget = MAP_BUDGET): number {
+  if (buildMap(p, inputs, 'compact').length <= budget) return 0;
+  const ins = withDefaults(inputs);
+  const depth = (n: TreeNode): number => Math.max(0, ...n.entries.filter(isNode).map((k) => 1 + depth(k)));
+  return Math.max(0, ...MAP_SECTIONS.filter((s): s is TreeSection => s !== 'assets').map((s) => depth(sectionTree(p, ins, s))));
+}
+
+/** 目次の地図の見出しの例（いちばん大きなまとめ） */
+function indexExample(p: Project, ins: Ins): string {
+  // いちばん大きなまとめ
+  let best: [string, number] = ['prefabs', 0];
+  for (const sec of ['components', 'prefabs', 'systems', 'tables'] as const) {
+    const t = sectionTree(p, ins, sec);
+    if (!topLine(t, INDEX_LINE_MAX).includes('/(')) continue;
+    for (const g of t.entries.filter(isNode)) if (g.n > best[1]) best = [`${sec}/${g.key}`, g.n];
+  }
+  return best[0];
+}
+
+/** 目次から1枚引く（ages map <dir> 節/まとめ/…） */
+function treeSectionPage(p: Project, ins: Ins, sec: TreeSection, path: string[]): string {
+  // シーンの中: scenes/シーン/物…
+  if (sec === 'scenes' && path.length && p.docs.scenes.has(path[0])) {
+    const raw = p.docs.scenes.get(path[0])!;
+    return pageOf(entityTree(p, raw, ins), path.slice(1), `scenes/${path[0]}`, `${raw.name}#ID "名前" ←@プレハブ [コンポーネント]。### は親（UI.parent・Transform.parent）の下の物、名前* は連番のまとめ`);
+  }
+  const t = sectionTree(p, ins, sec);
+  if (!t.n) return `（${sec} はありません）`;
+  const pre = sec === 'scenes' && !path.length && ins.gotos.size ? [`goto の行き先（コード）: ${[...ins.gotos.keys()].join(' ')}`] : [];
+  return [...pre, pageOf(t, path, sec, PAGE_LEGEND[sec])].join('\n');
+}
+
+function pageOf(t: TreeNode, path: string[], at: string, legend: string): string {
+  const hit = path.length ? findNode(t, path) : t;
+  const where = [at, ...path].join('/');
+  if (!hit) throw new Error(`地図の ${where} はありません${suggest(path[path.length - 1], keysOf(t))}（${at} の中のまとめ: ${keysOf(t).slice(0, 30).join(' ')}）`);
+  if (!isNode(hit)) return `## ${where}（${legend}）\n${hit.line}`;
+  const lines = treePage(hit, MAP_PAGE_BUDGET);
+  const more = lines.some((l) => /^\S+\/ \d+個: /.test(l)) ? `\n（名前/ はまとめ。中身は ages map <dir> ${where}/名前）` : '';
+  return `## ${where} ${hit.n}個（${legend}）\n${lines.join('\n')}${more}`;
+}
+
+/** エディタ拡張の行（目次の地図では名前と見出しだけ。中身は ages map <dir> extensions） */
+function extensionLines(p: Project, windows: WindowInfo[]): string[] {
   const c = p.config;
   if (!c.editorWindows?.length) return [];
   const list = windows.length ? windows : c.editorWindows.map((path) => ({ path }) as WindowInfo);
-  const out = [short
-    ? `## editor extensions ${list.length}個（作る前にここを見て、近いものがあれば直す。変える値・欄は ages map <dir> extensions）`
-    : '## editor extensions（プロジェクト独自のエディタ拡張。作る前にここを見て、近いものがあれば直す。変える値は edits と、見せている欄・部品・行だけ）'];
+  const out = ['## editor extensions（プロジェクト独自のエディタ拡張。作る前にここを見て、近いものがあれば直す。変える値は edits と、見せている欄・部品・行だけ）'];
   for (const w of list) {
     if (w.error) { out.push(`${w.path} ⚠ ${w.error}`); continue; }
-    if (short) { out.push(`${w.id ?? '?'}${w.title ? `「${w.title}」` : ''}${w.desc ? ' ' + firstSentence(w.desc) : ''}${w.edits || !w.panel ? '' : ' ⚠ 宣言なし'} | ${w.path}`); continue; }
     const edits = w.edits ? (w.edits.length ? withTagCounts(compactPaths(w.edits), p) : 'なし（見るだけ）') : w.panel ? '⚠ 宣言なし' : '';
     const parts = [w.panel ? 'パネル' : '', w.fields?.length ? `欄:${w.fields.join(',')}` : '', w.components?.length ? `部品:${w.components.join(',')}` : '', w.rows?.length ? `行:${w.rows.map((t) => '$' + t).join(',')}` : '', w.menus?.length ? `メニュー:${w.menus.join(',')}` : ''].filter(Boolean).join(' ');
     out.push(`${w.id ?? '?'}${w.title ? `「${w.title}」` : ''}${w.desc ? ' ' + w.desc : ''}${edits ? ` | 変える: ${edits}` : ''}${parts && parts !== 'パネル' ? ` | ${parts}` : ''} | ${w.path}`);
@@ -260,37 +438,14 @@ function prefabGroups(p: Project, ins: Ins): Map<string, string[]> {
   return groups;
 }
 
-/** 目次の地図: 節ごとに数と名前だけ。中身は ages map <dir> 節・ages find で引く */
+/** 目次の地図: 節ごとに1行（名前が短く収まるなら全部、収まらなければまとめと数）。中身は ages map <dir> 節/まとめ・ages find で引く */
 function indexLines(p: Project, ins: Ins): Record<MapSection, string[]> {
   const r: Record<MapSection, string[]> = { components: [], shaders: [], systems: [], tables: [], prefabs: [], scenes: [], assets: [], extensions: [] };
-  const own = ownComponents(p);
-  if (own.length) r.components.push(`## components ${own.length}個: ${own.map((d) => d.name).join(' ')}`);
-  const { own: ownShaders, std: stdUsed } = shadersOf(p);
-  if (ownShaders.length || stdUsed.length) r.shaders.push(`## shaders: ${[...ownShaders, ...stdUsed].map((d) => d.path).join(' ')}`);
-  // システムは実行順の名前だけ（標準の続きは1つにまとめる）
-  const names: string[] = [];
-  const systems = p.registry.systems;
-  for (let i = 0; i < systems.length; i++) {
-    if (systems[i].name.startsWith('std.')) {
-      let j = i;
-      while (j + 1 < systems.length && systems[j + 1].name.startsWith('std.')) j++;
-      names.push(`(標準${j - i + 1})`);
-      i = j;
-    } else names.push(systems[i].name);
+  for (const sec of MAP_SECTIONS) {
+    if (sec === 'assets') continue;
+    const line = indexTreeLine(p, ins, sec);
+    if (line) r[sec].push(line);
   }
-  if (systems.length) r.systems.push(`## systems 実行順: ${names.join(' ')}`);
-  const tables = [...p.registry.tables.values()].filter((d) => (p.docs.tables.get(d.name)?.rows.length ?? 0) || !p.registry.stdTables.has(d.name));
-  if (tables.length) r.tables.push(`## tables（$表.行.列）: ${tables.map((d) => `$${d.name} ${p.docs.tables.get(d.name)?.rows.length ?? 0}行${tableMarks(ins, d.name)}`).join('  ')}`);
-  if (p.docs.prefabs.size) {
-    // 部品の組ごとに、いちばん後ろの部品（ふつう、いちばん特有のもの）で数える。1つだけの組は名前も
-    const kinds = new Map<string, string[]>();
-    for (const [key, list] of prefabGroups(p, ins)) {
-      const label = key.split(' ').filter(Boolean).pop() ?? '部品なし';
-      kinds.set(label, [...(kinds.get(label) ?? []), ...list]);
-    }
-    r.prefabs.push(`## prefabs ${p.docs.prefabs.size}個（主な部品ごとの数）: ${[...kinds].map(([k, l]) => (l.length === 1 ? `${k}(${l[0]})` : `${k} ${l.length}`)).join('  ')}`);
-  }
-  if (p.docs.scenes.size) r.scenes.push(`## scenes: ${[...p.docs.scenes.values()].map((s) => `${s.name}(${s.entities.length}体${s.name === p.config.startScene ? '・開始' : ''})`).join(' ')}${ins.gotos.size ? `  goto の行き先（コード）: ${[...ins.gotos.keys()].join(' ')}` : ''}`);
   if (p.assets.length) {
     const n = { image: 0, sheet: 0, sound: 0, font: 0 };
     for (const a of p.assets) {
@@ -298,7 +453,6 @@ function indexLines(p: Project, ins: Ins): Record<MapSection, string[]> {
     }
     r.assets.push(`## assets ${p.assets.length}個: 画像${n.image}（シート${n.sheet}） 音${n.sound}${n.font ? ` フォント${n.font}` : ''}（1つずつは ages assets <dir> [フォルダ]）`);
   }
-  r.extensions.push(...extensionLines(p, ins.windows, true));
   return r;
 }
 
