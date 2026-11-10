@@ -1,0 +1,45 @@
+name: 機能の要望（Feature request）
+description: AGES にほしい機能・使いにくい所
+title: "[要望] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        要望ありがとうございます。何を作っていて、どこで困ったかが分かると、合う形を考えやすくなります。ここは誰でも読める場所なので、**公開していないゲームの中身は書かないでください。**
+        AGES の本体には「どのゲームでもほぼ必ず要るもの」だけを入れます。特定のゲームにだけ要るもの（タイルマップ・経路探索など）は、プロジェクトの中に作る（使う人の AI と作れる）ほうが早いことがあります。そのときは作り方をお返事します。
+        アイデアの相談や使い方の質問は [Discussions](https://github.com/AMay-eime/AGES/discussions) へどうぞ。
+  - type: textarea
+    id: want
+    attributes:
+      label: やりたいこと
+      description: どんなゲームを作っていて、何をしたいか
+      placeholder: 横スクロールのアクションで、足場をたくさん並べたい
+    validations:
+      required: true
+  - type: textarea
+    id: now
+    attributes:
+      label: 今はどうしているか（回り道）
+      description: 今の AGES でどうやっているか・どこで手間がかかるか。できないなら、そう書いてください
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: どんな形だとうれしいか
+      description: エディタの画面・CLI の命令・ゲームのコードの書き方など。ほかのエンジン（Unity・Godot など）の似た機能があれば名前も
+  - type: dropdown
+    id: who
+    attributes:
+      label: 主に使うのは
+      options:
+        - 人（エディタ）
+        - AI（CLI・MCP）
+        - 両方
+  - type: textarea
+    id: version
+    attributes:
+      label: AGES の版（分かれば）
+      description: "`ages version <フォルダ>` の出力"
+      render: text
