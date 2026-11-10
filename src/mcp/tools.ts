@@ -12,7 +12,7 @@ export function makeInstructions(defaultProject: string): string {
 - 同じ形の行が並ぶデータ（武器・敵・カードなど）は表にする（住所は $表.行.列、中身は ages_table）
 - 🔒ロックされた値は絶対に変えない（変えられない）。変えるべき理由があれば人に提案する。★人が調整した値は、人に確認してから force
 - 間違えた編集は ages_undo で戻す（逆の操作を考えなくてよい）
-- 変更後は ages_run で確かめる（keys で入力、twice で再現性）。画面・画像・音を開かずに、要約の行（sounds: hits: ui: など）と ⚠ で確かめる
+- 確かめは作業の重さに合わせて最小で（調べるだけ→なし、値・データ→ages_check、部分をつなぐコード→ages_run を短く1回。詳しくは AGENTS.md）。画面・画像・音を開かずに、要約の行（sounds: hits: ui: など）と ⚠ で確かめる
 - 機能を使う前に ages_schema で guide（機能ごとの手順の目次）を見て、guide:項目 で手順を引く。標準の部品と表（Sprite・Camera・Sound・UI・Collider・Particles・$actions・$tweens・$text など）を作り直さない
 - ゲームのコードは、乱数を ctx.rng、入力を操作の名前（ctx.input.isDown('fire')）、画面の言葉を ctx.t('名前') で扱う。手触りの数字はコードに書かずデータに置く
 - 面白さの核・手触り・個性は人が決める。AIが出すものは「案」と明記する
