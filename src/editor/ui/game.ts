@@ -59,8 +59,25 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
   langSel.addEventListener('change', () => { app.previewLang = langSel.value; });
   app.on('change', fillLang);
   fillLang();
-  const bar = h('div', { class: 'game-hud' }, hud, resetBtn, viewSel, screenSel, fitSel, hitsBox, snapBox, langSel, saveBtn);
+  // ゲームの画面だけを全画面に（エディタのパネルとブラウザのバーを隠す）。Esc はゲームに渡し、長押しで抜ける（Keyboard Lock）
+  const fullBtn = h('button', { class: 'icon', title: 'ゲームの画面だけを全画面で（再生ボタンは全画面の前に。Esc はゲームに渡る。抜けるのは Esc の長押しか F11）', onclick: () => void toggleFull() }, '⛶');
+  const bar = h('div', { class: 'game-hud' }, hud, resetBtn, viewSel, screenSel, fitSel, hitsBox, snapBox, langSel, saveBtn, fullBtn);
   const wrap = h('div', { class: 'game-wrap' }, screen);
+  type KeyboardLock = { lock?: (keys?: string[]) => Promise<void>; unlock?: () => void };
+  const keyboard = (navigator as unknown as { keyboard?: KeyboardLock }).keyboard;
+  const toggleFull = async () => {
+    if (document.fullscreenElement) { await document.exitFullscreen().catch(() => {}); return; }
+    try {
+      await wrap.requestFullscreen({ navigationUI: 'hide' });
+      await keyboard?.lock?.(['Escape']).catch(() => {});
+      canvas.focus();
+    } catch (e) { toast(`全画面にできませんでした: ${(e as Error).message}`, 'warn'); }
+  };
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement) keyboard?.unlock?.();
+    wrap.classList.toggle('full', document.fullscreenElement === wrap);
+    layoutScreen();
+  });
   // 状態の表示はゲーム画面の外（上の帯）に出す。画面の左上はゲームの HUD が来やすいので重ねない
   const el = h('div', {}, bar, wrap);
   const og = overlay.getContext('2d')!;
@@ -124,7 +141,8 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     if (!app.state || app.state.error) return;
     const d = design();
     const r = wrap.getBoundingClientRect();
-    const availW = Math.max(40, r.width - 16), availH = Math.max(40, r.height - 16);
+    const pad = document.fullscreenElement === wrap ? 0 : 16;
+    const availW = Math.max(40, r.width - pad), availH = Math.max(40, r.height - pad);
     // 試しに見る画面の形（パネルに入る一番大きな形）
     let sw = availW, sh = availH;
     if (screenAspect) { if (availW / availH > screenAspect) sw = availH * screenAspect; else sh = availW / screenAspect; }

@@ -155,9 +155,7 @@ export function hierarchyPanel(app: App): Panel {
             style: `padding-left:${4 + depth * 14}px`,
             title: `連番の ${ids.length}個をまとめた行（見せ方だけ）。クリックで全部を選ぶ。▸ で開く`,
             onclick: () => {
-              app.select({ kind: 'scene', scene: app.scene, id: ids[0] });
-              app.extra = ids.slice(1);
-              app.emit('select');
+              app.selectMany(ids);
               // まとめを選んだだけでは開かない（選んだ物の親を開く働きを戻す）
               if (!isOpen && open.delete(key)) render();
             },

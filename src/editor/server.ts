@@ -226,6 +226,16 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
   const m = req.method ?? 'GET';
 
   if (p === '/' || p === '/index.html') return serveFile(res, join(EDITOR_DIR, 'index.html'));
+  // アプリとしてインストール（Edge・Chrome。ブラウザのバーのない窓で開く）
+  if (p === '/manifest.webmanifest') {
+    res.writeHead(200, { 'content-type': 'application/manifest+json; charset=utf-8', 'cache-control': 'no-store' });
+    res.end(JSON.stringify({
+      name: 'AGES エディタ', short_name: 'AGES', id: '/', start_url: '/', scope: '/', display: 'standalone',
+      background_color: '#1b1d23', theme_color: '#1b1d23', lang: 'ja',
+      icons: [192, 512].map((n) => ({ src: `/editor/icon-${n}.png`, sizes: `${n}x${n}`, type: 'image/png', purpose: 'any' })),
+    }));
+    return;
+  }
   // 決まったフレームの画面を撮るページ（ages run --shot が headless の Chrome で開く）
   if (p === '/shot.html') return serveFile(res, join(EDITOR_DIR, 'shot.html'));
   if (p.startsWith('/editor/')) return serveFile(res, inside(EDITOR_DIR, p.slice('/editor/'.length)));
