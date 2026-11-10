@@ -12,6 +12,8 @@ let project: Project;
 let loadError = '';
 try {
   project = await Project.load(workerData.dir);
+  // この後に増えた操作ログの行（CLI・Git の取り込み）の変更を、外からの編集として二重に記録しない
+  await project.rememberLog();
 } catch (e) {
   loadError = (e as Error).message;
 }
