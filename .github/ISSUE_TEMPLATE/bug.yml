@@ -1,0 +1,58 @@
+name: 不具合の報告（Bug report）
+description: AGES（エンジン・エディタ・CLI・MCP）が思ったとおりに動かない
+title: "[不具合] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        報告ありがとうございます。ここは誰でも読める場所です。**公開していないゲームの中身（ストーリー・データ・画像）、パスワードやトークン、個人の情報は書かないでください。** 再現に要るなら、小さな見本（`ages init` で作った空のプロジェクトに足したもの）でお願いします。
+  - type: textarea
+    id: what
+    attributes:
+      label: 何が起きたか
+      description: 出たエラーの文は、そのまま貼ってください
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 起こし方
+      description: どの画面で・どの操作を・どの順に。CLI なら打った命令
+      placeholder: |
+        1. エディタでシーン main を開く
+        2. 敵を選んで R で拡大縮小の取っ手にする
+        3. …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: どうなると思っていたか
+  - type: textarea
+    id: version
+    attributes:
+      label: AGES の版
+      description: プロジェクトで `ages version <フォルダ>`（版だけ同梱なら `node ages.mjs version .`）の出力
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: 使っている環境
+      description: OS・ブラウザ・Node の版（`node -v`）
+      placeholder: Windows 11・Chrome 131・Node 22.18
+  - type: dropdown
+    id: who
+    attributes:
+      label: 誰の操作で起きたか
+      options:
+        - 人（エディタ）
+        - AI（CLI・MCP）
+        - 両方・分からない
+  - type: textarea
+    id: more
+    attributes:
+      label: そのほか（画面の写真・ログ）
+      description: 画像はここに貼れます。操作ログは `ages log <フォルダ>` で見られます

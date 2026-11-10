@@ -119,6 +119,12 @@ node bin/ages.js export my-game --desktop --id com.自分の名前.ゲーム   #
 - 書き出し: Web の一式とデスクトップ（Tauri）の元を dist/ に作り、書き出したものをそのまま新しいタブで開ける
 - Git: エディタからプル・コミット・プッシュ。コミットの説明は操作ログから下書き。GitHub から自動で取り込む（エディタを開いて見ている間だけ、1分ごとに変わったかだけを聞く。手元にプッシュしていない変更があれば、プッシュしてから取り込むかを聞く。Git パネルで切れる・「今すぐ取り込む」）
 
+## 要望・不具合・質問
+
+- 不具合と機能の要望は [Issue](https://github.com/AMay-eime/AGES/issues/new/choose) へ（書く欄の書式があります）
+- 使い方の質問・アイデアの相談・作ったゲームの見せ合いは [Discussions](https://github.com/AMay-eime/AGES/discussions) へ
+- どちらも誰でも読める場所です。公開していないゲームの中身は書かないでください
+
 ## ライセンス
 
 [MIT](LICENSE)
