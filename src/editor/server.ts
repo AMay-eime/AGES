@@ -17,6 +17,7 @@ import { writeShaderResult } from '../project/shader-status.ts';
 import type { Op } from '../core/patch.ts';
 import { dirtyCount, pushAndPull, remoteState, type RemoteState } from './gitsync.ts';
 import { writeFocus, type EditorFocus } from '../project/focus.ts';
+import { EXPORT_MARK } from '../project/export.ts';
 
 process.removeAllListeners('warning');
 
@@ -78,7 +79,19 @@ function broadcast(ev: Record<string, unknown>): void {
 // ---------- ファイルの監視 ----------
 const changed = new Set<string>();
 let timer: NodeJS.Timeout | undefined;
-watch(projectDir, { recursive: true }, (_ev, name) => {
+/**
+ * フォルダの中を見張る。消えたフォルダを見張り直せずに止まることがある（Linux の recursive は Node が中のフォルダを1つずつ見張るので、
+ * ages export が dist/web を消して作り直す・git が枝を変えるなど、フォルダがまとめて消えると ENOENT）。止まったら少し待って見張り直す
+ */
+function startWatch(): void {
+  const w = watch(projectDir, { recursive: true }, onFileEvent);
+  w.on('error', () => {
+    w.close();
+    setTimeout(startWatch, 300);
+  });
+}
+startWatch();
+function onFileEvent(_ev: string, name: string | null): void {
   if (!name) return;
   const rel = name.split(sep).join('/');
   // ロックの記録は外から書き換えられたら検査し直す（それ以外の .ages/ は無視）
@@ -87,11 +100,11 @@ watch(projectDir, { recursive: true }, (_ev, name) => {
     lockTimer = setTimeout(recheckLocks, 150);
     return;
   }
-  if (rel.startsWith('.git/') || rel.startsWith('.ages/') || rel.includes('node_modules/')) return;
+  if (rel.startsWith('.git/') || rel.startsWith('.ages/') || rel.startsWith('dist/') || rel.includes('node_modules/')) return;
   changed.add(rel);
   clearTimeout(timer);
   timer = setTimeout(flushChanges, 120);
-});
+}
 
 let lockTimer: NodeJS.Timeout | undefined;
 let lastLockOk = true;
@@ -187,7 +200,7 @@ const human = (req: http.IncomingMessage, win: string) => ({
 async function listFiles(dir = projectDir, base = ''): Promise<{ path: string; size: number; mtime: number }[]> {
   const out: { path: string; size: number; mtime: number }[] = [];
   for (const name of (await readdir(dir)).sort()) {
-    if (name === '.git' || name === 'node_modules' || name === '.ages') continue;
+    if (name === '.git' || name === 'node_modules' || name === '.ages' || (!base && name === 'dist')) continue;
     const abs = join(dir, name);
     const rel = base ? `${base}/${name}` : name;
     const s = await stat(abs);
@@ -201,11 +214,22 @@ async function listFiles(dir = projectDir, base = ''): Promise<{ path: string; s
 async function listDirs(dir = projectDir, base = ''): Promise<string[]> {
   const out: string[] = [];
   for (const d of (await readdir(dir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
-    if (!d.isDirectory() || d.name === '.git' || d.name === 'node_modules' || d.name === '.ages') continue;
+    if (!d.isDirectory() || d.name === '.git' || d.name === 'node_modules' || d.name === '.ages' || (!base && d.name === 'dist')) continue;
     const rel = base ? `${base}/${d.name}` : d.name;
     out.push(rel, ...(await listDirs(join(dir, d.name), rel)));
   }
   return out;
+}
+
+/** 前の書き出し（いつ・デスクトップの元があるか・アプリの ID） */
+async function exportStatus(): Promise<{ web: string | null; desktop: boolean; id: string | null }> {
+  const mark = await readFile(join(projectDir, 'dist', 'web', EXPORT_MARK), 'utf8').catch(() => null);
+  const conf = await readFile(join(projectDir, 'dist', 'desktop', 'src-tauri', 'tauri.conf.json'), 'utf8').catch(() => null);
+  let at: string | null = null;
+  try { at = mark ? String(JSON.parse(mark).at) : null; } catch { /* 印が壊れていれば、書き出していないことに */ }
+  let id: string | null = null;
+  try { id = conf ? String(JSON.parse(conf).identifier ?? '') || null : null; } catch { /* 手で直して壊れていても止めない */ }
+  return { web: at, desktop: conf !== null, id };
 }
 
 function git(a: string[]): Promise<string> {
@@ -386,6 +410,28 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
     const f = JSON.parse((await body(req)).toString('utf8') || '{}') as Omit<EditorFocus, 'at'> & { closed?: boolean };
     await writeFocus(projectDir, f.closed ? null : f);
     return json(res, { ok: true });
+  }
+  // 書き出し（ages export を別のプロセスで。エディタのサーバーは止めない）と、書き出したものを試しに開く /play/
+  if (p === '/api/export') {
+    if (m === 'POST') {
+      const o = JSON.parse((await body(req)).toString('utf8') || '{}') as { desktop?: boolean; id?: string; fullscreen?: boolean };
+      const a = [join(SRC_DIR, 'cli', 'ages.ts'), 'export', projectDir];
+      if (o.desktop) a.push('--desktop', ...(o.id ? ['--id', o.id] : []), ...(o.fullscreen ? ['--fullscreen'] : []));
+      const r = await new Promise<{ ok: boolean; out: string }>((ok) => {
+        execFile(process.execPath, a, { cwd: projectDir, maxBuffer: 1 << 24 }, (err, stdout, stderr) => {
+          ok({ ok: !err, out: (stdout + stderr.split('\n').filter((l) => !/ExperimentalWarning|--trace-warnings/.test(l)).join('\n')).trim() || (err ? err.message : '') });
+        });
+      });
+      return json(res, r);
+    }
+    return json(res, await exportStatus());
+  }
+  if (p === '/play' || p.startsWith('/play/')) {
+    const rel = p.slice('/play/'.length) || 'index.html';
+    const web = join(projectDir, 'dist', 'web');
+    if (!existsSync(join(web, 'index.html'))) { res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' }).end('まだ書き出していません（エディタの「書き出し」か ages export）'); return; }
+    if (p === '/play') { res.writeHead(302, { location: '/play/' }).end(); return; }
+    return serveFile(res, inside(web, rel));
   }
   if (p.startsWith('/api/git/')) {
     const op = p.slice('/api/git/'.length);

@@ -36,7 +36,7 @@ export function findChrome(): string | null {
 }
 
 /** 空いているポート（すぐ閉じて番号だけ使う） */
-function freePort(): Promise<number> {
+export function freePort(): Promise<number> {
   return new Promise((ok, ng) => {
     const s = createServer();
     s.once('error', ng);
@@ -47,7 +47,7 @@ function freePort(): Promise<number> {
   });
 }
 
-async function waitFor<T>(what: string, ms: number, f: () => Promise<T | undefined>): Promise<T> {
+export async function waitFor<T>(what: string, ms: number, f: () => Promise<T | undefined>): Promise<T> {
   const end = Date.now() + ms;
   let last: unknown;
   while (Date.now() < end) {
@@ -63,7 +63,7 @@ async function waitFor<T>(what: string, ms: number, f: () => Promise<T | undefin
 }
 
 /** CDP（DevTools の決まり）で1つのページを動かす最小の口 */
-class Cdp {
+export class Cdp {
   private id = 0;
   private wait = new Map<number, { ok: (v: any) => void; ng: (e: Error) => void }>();
   private ws: WebSocket;
@@ -94,7 +94,7 @@ class Cdp {
   }
 }
 
-const kill = (p: ChildProcess | undefined) => { try { p?.kill(); } catch { /* もう止まっている */ } };
+export const kill = (p: ChildProcess | undefined) => { try { p?.kill(); } catch { /* もう止まっている */ } };
 
 /**
  * プロジェクトをエディタのサーバーで開き、headless の Chrome で /shot.html を開いて、決まったフレームの画面を撮る。

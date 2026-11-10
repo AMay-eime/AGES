@@ -13,6 +13,8 @@ import { codeDefs } from '../project/codedefs.ts';
 import { noteRecent, placeOf, readRecent, recentFor, topRecent } from '../project/recent.ts';
 import { eventWarnings } from '../project/events.ts';
 import { focusLine, readFocus, withFocus } from '../project/focus.ts';
+import { exportProject, serveStatic } from '../project/export.ts';
+import { checkExport } from './export-check.ts';
 import { readCursor, readLog, readTouched, summarize, writeCursor, type Actor } from '../project/oplog.ts';
 import { OP_DOCS, getValue, parseLiteral, splitCell, type Op } from '../core/patch.ts';
 import { readGuide } from '../project/guide.ts';
@@ -58,6 +60,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   undo   <dir> [--tx id] [--force]   自分（AI）の直前の編集を元に戻す（その後で変えられた所があれば止まる）。redo <dir> でやり直す
   check  <dir>                       全データの検証とロックの検査
   version <dir> [--record]           AGES の版（記録が古ければ直し方を出す）。--record で今の版を残す
+  export <dir> [--out 先] [--check] [--serve [ポート]] [--desktop [--id com.名前.ゲーム] [--fullscreen]]  書き出す（ゲームだけ。dist/web は Web にそのまま置ける。--desktop は Tauri の元 dist/desktop。--check は headless の Chrome で動くか確かめる）
   pin    <dir> [--repo URL] [--commit SHA] [--force]  版だけ同梱の形に（ages.mjs が本体を .ages/engine に取ってくる。GitHub との連携用）。AGENTS.md は手で直されていなければ本体の版に合わせる（--force で直されていても）
   ui     <dir> [シーン]               UI の配置（四角・置き方）と、重なり・はみ出し。直すのは patch の dockUI / attachUI
   assets <dir> [フォルダ] [--kind image|sound|font] [--unused] [--refs 場所]   アセットの一覧（使っている所の数）・使っている所
@@ -211,6 +214,37 @@ export async function cmdPin(dir: string, repo = DEFAULT_REPO, commit?: string, 
     if (u !== t) { await writeFile(ts, u); done.push('tsconfig.json'); }
   }
   return [`版だけ同梱の形にしました（AGES ${sha.slice(0, 7)}）:`, ...done.map((d) => `  ${d}`), '使い方: node ages.mjs <命令> . ・node ages.mjs editor ・本体を上げる: node ages.mjs upgrade'].join('\n');
+}
+
+/** 書き出す（段階3）。Web はそのまま置ける一式、--desktop は Tauri（Steam 向け）の元も。--check は headless の Chrome で動くか確かめる */
+export async function cmdExport(dir: string, flags: Record<string, string | boolean>): Promise<string> {
+  // 型を消す Node の機能（stripTypeScriptTypes）の「試しの機能です」の知らせを出さない（エディタのサーバーと同じ）
+  process.removeAllListeners('warning');
+  const p = await Project.load(dir);
+  const r = await exportProject(p, {
+    ...(typeof flags.out === 'string' ? { out: resolve(flags.out) } : {}),
+    desktop: flags.desktop === true,
+    ...(typeof flags.id === 'string' ? { id: flags.id } : {}),
+    fullscreen: flags.fullscreen === true,
+  });
+  const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)}MB`;
+  const lines = [`書き出しました: ${relative(process.cwd(), r.web) || r.web}（${r.files}ファイル・${mb(r.bytes)}）`,
+    '  Web: このフォルダを丸ごと置けば遊べる（itch.io なら zip にして HTML のゲームとして上げる）。手元で試すなら --serve'];
+  if (r.desktop) lines.push(`  デスクトップ: ${relative(process.cwd(), r.desktop) || r.desktop}（exe の作り方は中の README.md。Rust と Tauri の道具が要る）`);
+  lines.push(...r.notes.map((n) => `  ${n}`));
+  if (flags.check) {
+    const fps = p.config.fps;
+    const c = await checkExport(r.web, fps * 3);
+    lines.push(c.ok ? `確かめました: headless の Chrome で ${c.frame}フレーム（約${Math.round(c.frame / fps)}秒）進み、エラーなし（シーン ${c.scene}）` : `⚠ 書き出したものが動きません: ${c.error || `${c.frame}フレームで止まった`}（シーン ${c.scene || '?'}）`);
+  }
+  if (flags.serve !== undefined && flags.serve !== false) {
+    const port = typeof flags.serve === 'string' ? Number(flags.serve) : 5180;
+    await serveStatic(r.web, port, 'localhost');
+    lines.push(`試しに開く: http://localhost:${port}/ （止めるには Ctrl+C）`);
+    console.log(lines.join('\n'));
+    await new Promise(() => {});
+  }
+  return lines.join('\n');
 }
 
 /** 新しいプロジェクトを作る。AIへの手順書とエディタ計画書のひな形も入れる。 */
@@ -861,6 +895,7 @@ async function main(argv: string[]): Promise<void> {
     case 'log': out = await cmdLog(dir, a.flags); break;
     case 'check': out = await cmdCheck(dir); break;
     case 'version': out = await cmdVersion(dir, a.flags.record === true); break;
+    case 'export': out = await cmdExport(dir, a.flags); break;
     case 'pin': out = await cmdPin(dir, typeof a.flags.repo === 'string' ? a.flags.repo : undefined, typeof a.flags.commit === 'string' ? a.flags.commit : undefined, a.flags.force === true); break;
     case 'assets': out = await cmdAssets(dir, a.pos[1], a.flags); break;
     case 'ui': out = await cmdUi(dir, a.pos[1]); break;
