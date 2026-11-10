@@ -3,7 +3,7 @@ import { App } from './app.ts';
 import { Layout, type LayoutData, type Panel } from './ui/layout.ts';
 import { h, clear, toast, modal } from './ui/dom.ts';
 import { inspectorPanel } from './ui/inspector.ts';
-import { hierarchyPanel, projectPanel, textPanel, logPanel, gitPanel } from './ui/panels.ts';
+import { hierarchyPanel, projectPanel, textPanel, logPanel, gitPanel, exportPanel } from './ui/panels.ts';
 import { gamePanel } from './ui/game.ts';
 import { matrixPanel } from './ui/matrix.ts';
 import { spritePanel } from './ui/sprite.ts';
@@ -75,7 +75,7 @@ const matrix = matrixPanel(app);
 const sprite = spritePanel(app);
 const table = tablePanel(app);
 const assets = assetsPanel(app);
-for (const p of [hierarchyPanel(app), projectPanel(app, (path) => text.open(path)), game, matrix, sprite, table, text, assets, logPanel(app), gitPanel(app), inspectorPanel(app)]) layout.add(p);
+for (const p of [hierarchyPanel(app), projectPanel(app, (path) => text.open(path)), game, matrix, sprite, table, text, assets, logPanel(app), gitPanel(app), exportPanel(app), inspectorPanel(app)]) layout.add(p);
 app.on('openText', (path) => text.open(String(path)));
 
 // エディタで人が見ている所を、AI の地図に出すために知らせる（選びが変わったら少し待って、開いている間は1分ごと。閉じたら消す）

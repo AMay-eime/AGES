@@ -168,3 +168,12 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
 - 画面なしで動かして中を読むのは `await api.run({ scene, params, values か spawn, frames, keys, onFrame(game), until(game), signal })`。少しずつ回すので画面は固まらない。結果は frames・stopped・events・warnings・error・game で、ages run と同じ結果（速さも同じくらい。240秒×120fps で数秒〜十秒）
 - モジュールの一番外では `document` などのブラウザの物を使わない（地図を作るときに Node で読むため）
 - 作ったら `ages check` で、宣言の誤り（ない住所・ない型や部品・書き忘れ・登録し忘れ）を確かめる
+
+## export: 書き出し（Web・デスクトップの exe）
+- `ages export <dir>` で `dist/web` に、エディタを含まないゲームだけの一式を作る（`ages check` にエラーがあれば書き出さない）。動くかは `--check`（headless の Chrome で約3秒進め、エラーがないかを見る）。人が手元で試すなら `--serve`、エディタなら「書き出し」パネルの「書き出したものを開く」
+- Web はフォルダごと置けば遊べる。itch.io なら `dist/web` の中身を zip にして、HTML のゲームとして上げる
+- 書き出すのは、ゲームのコード（`game` の入り口から import でたどれるもの）・シーン・プレハブ・表・切り方・設定・アセットすべて。ゲームのコードは `ages` とプロジェクトの中のファイルだけを import する（npm の部品・プロジェクトの外のファイルは入らない。⚠ が出る）。読み込むファイルの名前を式で組み立てない（たどれない）
+- デスクトップ（Steam 向け）は `--desktop --id com.名前.ゲーム`。`dist/desktop/src-tauri`（Tauri v2）は初めの1回だけ作り、上書きしない。ID はセーブの置き場所を決めるので、出した後は変えない。初めから全画面なら `--fullscreen`
+- exe を作るのは人のパソコン（Windows に Rust・C++ のビルドの道具・Tauri の道具。手順は `dist/desktop/README.md`）。`cargo tauri build` の前に、毎回 `ages export --desktop` で Web を新しくする
+- 遊ぶ側の全画面は F11 か Alt+Enter（Esc はゲームに渡る）。セーブは遊ぶ側のブラウザ・アプリの中に残る
+- `dist/` は Git に入れない（`.gitignore` に足す）・アセットとしても読まない。`dist/` の下にアセットを置かない

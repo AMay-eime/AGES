@@ -22,13 +22,15 @@ export interface AssetInfo {
 }
 
 const SKIP = new Set(['.git', '.ages', 'node_modules']);
+/** プロジェクトの直下でだけ見ないフォルダ（dist/ は書き出しの置き場所） */
+const SKIP_TOP = new Set(['dist']);
 
 async function walk(dir: string, base = ''): Promise<string[]> {
   const out: string[] = [];
   let names: string[];
   try { names = (await readdir(dir)).sort(); } catch { return out; }
   for (const name of names) {
-    if (SKIP.has(name)) continue;
+    if (SKIP.has(name) || (!base && SKIP_TOP.has(name))) continue;
     const abs = join(dir, name);
     const rel = base ? `${base}/${name}` : name;
     const s = await stat(abs);

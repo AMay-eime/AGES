@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** 互換の番号（docs/MIGRATIONS.md の最後の項の番号と同じ。test/version.test.ts が確かめる） */
-export const COMPAT = 1;
+export const COMPAT = 2;
 
 export interface EngineVersion { compat: number; version: string; commit?: string; recorded?: string }
 

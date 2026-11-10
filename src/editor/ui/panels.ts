@@ -450,3 +450,52 @@ export function gitPanel(app: App): Panel {
   app.on('change', () => { if (el.classList.contains('active')) render(); });
   return { id: 'git', title: 'Git', el, render };
 }
+
+// ---------- 書き出し（Web と、デスクトップ＝Tauri の元） ----------
+export function exportPanel(app: App): Panel {
+  const status = h('div', { class: 'pad muted' });
+  const out = h('pre', { class: 'pad' });
+  const desktop = h('input', { type: 'checkbox' }) as HTMLInputElement;
+  const fullscreen = h('input', { type: 'checkbox' }) as HTMLInputElement;
+  const id = h('input', { type: 'text', placeholder: 'com.自分の名前.ゲーム（デスクトップの初めの1回だけ）', style: 'width:22em' }) as HTMLInputElement;
+  const open = h('a', { href: '/play/', target: '_blank', rel: 'noopener', style: 'display:none' }, '書き出したものを開く（新しいタブ）');
+  let made = false;
+  const opts = h('div', { class: 'toolbar' }, h('label', {}, fullscreen, ' 全画面で始める'), id);
+  const sync = () => { opts.style.display = desktop.checked && !made ? '' : 'none'; };
+  desktop.addEventListener('change', sync);
+  const render = async () => {
+    try {
+      const s = await app.api<{ web: string | null; desktop: boolean; id: string | null }>('/api/export');
+      made = s.desktop;
+      status.textContent = s.web
+        ? `前の書き出し: ${new Date(s.web).toLocaleString()}（dist/web）${s.desktop ? `・デスクトップの元あり（dist/desktop。ID ${s.id ?? '?'}）` : ''}`
+        : 'まだ書き出していません';
+      open.style.display = s.web ? '' : 'none';
+      sync();
+    } catch (e) {
+      status.textContent = (e as Error).message;
+    }
+  };
+  const run = async (btn: HTMLButtonElement) => {
+    btn.disabled = true;
+    out.textContent = '書き出しています…';
+    try {
+      const r = await app.api<{ ok: boolean; out: string }>('/api/export', { body: { desktop: desktop.checked, id: id.value.trim() || undefined, fullscreen: fullscreen.checked } });
+      out.textContent = r.out;
+      if (r.ok) toast('書き出しました（dist/web）');
+      else toast('書き出せませんでした。出力を見てください', 'bad', 8000);
+    } catch (e) {
+      out.textContent = (e as Error).message;
+    } finally {
+      btn.disabled = false;
+      await render();
+    }
+  };
+  const go = h('button', { onclick: () => void run(go) }, '書き出す');
+  const el = h('div', {},
+    h('div', { class: 'pad muted' }, 'エディタを含まない、ゲームだけのファイル一式を dist/ に作ります（Git には入れない）。Web はフォルダごと置けば遊べ、itch.io なら zip にして HTML のゲームとして上げます。デスクトップ（Steam 向けの exe）は、できた dist/desktop/README.md の手順で作ります（Rust と Tauri の道具が要る）。'),
+    h('div', { class: 'toolbar' }, go, h('label', {}, desktop, ' デスクトップ（Tauri）の元も作る'), open),
+    opts, status, out);
+  sync();
+  return { id: 'export', title: '書き出し', el, render };
+}

@@ -6,7 +6,7 @@ import type { SceneDoc, PrefabDoc } from './docs.ts';
 import type { TableDoc } from './table.ts';
 
 /** アセットを置けないフォルダ（プロジェクトの決まった置き場所） */
-export const RESERVED_DIRS = ['scenes', 'prefabs', 'data', 'game', 'editor', 'recordings', 'node_modules', '.ages', '.git'];
+export const RESERVED_DIRS = ['scenes', 'prefabs', 'data', 'game', 'editor', 'recordings', 'dist', 'node_modules', '.ages', '.git'];
 
 export function kindOf(path: string): AssetKind | null {
   const p = path.toLowerCase();

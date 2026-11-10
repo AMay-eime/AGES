@@ -1,3 +1,5 @@
+# 書き出したもの（ages export。大きいので共有しない）
+dist/
 # AIごとの既読位置と最近の作業の場所（共有しない）
 .ages/ai-cursor
 .ages/recent.json
