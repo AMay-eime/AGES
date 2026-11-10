@@ -27,6 +27,13 @@ export function engineVersion(): EngineVersion {
   return (cached = { compat: COMPAT, version, commit });
 }
 
+/** 本体の git のコミット（40文字）。git で取っていなければ undefined */
+export function engineCommitFull(): string | undefined {
+  try {
+    return execFileSync('git', ['-C', ENGINE_DIR, 'rev-parse', 'HEAD'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() || undefined;
+  } catch { return undefined; }
+}
+
 export const formatVersion = (v: Partial<EngineVersion>): string => `互換${v.compat ?? '?'}・${v.version ?? '?'}${v.commit ? `（${v.commit}）` : ''}`;
 
 /** docs/MIGRATIONS.md の項（番号・見出し・中身） */

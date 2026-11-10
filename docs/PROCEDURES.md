@@ -18,6 +18,10 @@
 - `ages init` で作ったプロジェクトなら、Claude Code などで開くだけでつながる（`.mcp.json`）
 - それ以外は README の「MCP」の手順で足す
 
+### GitHub と連携する（版だけ同梱。使う人の選択）
+- `ages pin <dir>`（新しく作るなら `ages init <dir> --pin`）。以後は `node ages.mjs <命令> .`・`node ages.mjs editor`・`node ages.mjs upgrade`
+- リポジトリだけを取ったクラウドの会話でも、最初の命令で本体が `.ages/engine` に入る。本体の直しは AGES のリポジトリで（`.ages/engine` は書き換えても戻る）
+
 ### 起動
 ```sh
 node src/editor/server.ts <プロジェクトのフォルダ>      # 例: examples/shooter
