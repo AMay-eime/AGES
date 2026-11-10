@@ -23,6 +23,7 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
 - 置いてある物をプレハブにつなぐ・切り離すのは `linkPrefab`（`{"op":"linkPrefab","target":"main#boss","prefab":"enemy"}`・`prefab: null`。どちらも値は変わらない）。地図の `#boss ←@enemy` がインスタンス、`変:` がプレハブから変えた所
 - 数値だけが違う行がたくさん並ぶなら、派生より表（table）が向く
 - プレハブだけを試すのは `ages run <dir> --spawn enemy_fast`（空のシーンの真ん中に出し、消えたら止まる。`explosion@40,0` で真ん中からずらす。音のプレハブは1回鳴らす）。人はエディタの「試し」の窓で同じものを見る
+- 実行中にプレハブから出た物の値を見るのは `ages run --watch @プレハブ名.部品.値`（いる最初の1つ）
 
 ## sprite: 画像・図形・コマ・動き・切り抜き
 部品: Sprite Animator Shape Clip
