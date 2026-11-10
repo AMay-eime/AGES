@@ -26,7 +26,7 @@ export interface FindResult {
   top: string[];
 }
 
-export function findInProject(p: Project, query: string, guide: Map<string, GuideTopic> = new Map(), recent?: RecentStore, defs = new Map<string, string>()): FindResult {
+export function findInProject(p: Project, query: string, guide: Map<string, GuideTopic> = new Map(), recent?: RecentStore, defs = new Map<string, string>(), near = '最近の作業の場所'): FindResult {
   // コードの中の宣言の場所（あれば名前の後ろに）
   const at = (key: string) => { const d = defs.get(key); return d ? `（${d}）` : ''; };
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -96,7 +96,7 @@ export function findInProject(p: Project, query: string, guide: Map<string, Guid
   // 最近の作業の場所（.ages/recent.json）に近いものを上へ。ほかは元の順（自分の部品 → 表 → … → 手順）
   const ranked = recent ? found.map((f, i) => ({ ...f, i, w: recentScore(f.place, recent) })).sort((a, b) => b.w - a.w || a.i - b.i) : found;
   const out = ranked.map((f) => f.line);
-  const head = `「${query}」${out.length}件${recent && ranked.some((f) => 'w' in f && (f as { w: number }).w > 0) ? '（最近の作業の場所・エディタで見ている所に近いものから）' : ''}`;
+  const head = `「${query}」${out.length}件${recent && ranked.some((f) => 'w' in f && (f as { w: number }).w > 0) ? `（${near}に近いものから）` : ''}`;
   const top = ranked.slice(0, 3).map((f) => f.place);
   if (out.length <= FIND_MAX) return { text: [head, ...out].join('\n'), top };
   return { text: [head, ...out.slice(0, FIND_MAX), `ほか${out.length - FIND_MAX}件（語を足して絞る。節ごとの一覧は ages map <dir> 節）`].join('\n'), top };

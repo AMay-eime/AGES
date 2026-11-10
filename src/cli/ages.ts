@@ -130,7 +130,8 @@ export async function cmdMap(dir: string, section?: string): Promise<string> {
 export async function cmdFind(dir: string, query: string): Promise<string> {
   const p = await Project.load(dir);
   // 最近の作業の場所と、エディタで人が見ている所に近いものを上に
-  const r = findInProject(p, query, await readGuide(), withFocus(await readRecent(p.dir), await readFocus(p.dir)), codeDefs(await p.codeFiles()));
+  const focus = await readFocus(p.dir);
+  const r = findInProject(p, query, await readGuide(), withFocus(await readRecent(p.dir), focus), codeDefs(await p.codeFiles()), focus ? '最近の作業の場所・エディタで見ている所' : undefined);
   await noteRecent(p.dir, []);
   return r.text;
 }
