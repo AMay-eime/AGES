@@ -1,5 +1,6 @@
 // AGES の AI 向け CLI。出力はすべて短いテキスト（トークン節約）。
 // 後で MCP サーバーから同じ関数を呼べるよう、各コマンドは文字列を返す関数にしてある。
+import { engineVersion, formatVersion, migrations, recordVersion, versionNote } from '../project/version.ts';
 import { readFile, writeFile, readdir, mkdir, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, resolve, relative, basename, dirname, sep } from 'node:path';
@@ -53,6 +54,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   log    <dir> [--all] [--peek]      前回からの編集の要約（--peek は既読にしない）
   undo   <dir> [--tx id] [--force]   自分（AI）の直前の編集を元に戻す（その後で変えられた所があれば止まる）。redo <dir> でやり直す
   check  <dir>                       全データの検証とロックの検査
+  version <dir> [--record]           AGES の版（記録が古ければ直し方を出す）。--record で今の版を残す
   ui     <dir> [シーン]               UI の配置（四角・置き方）と、重なり・はみ出し。直すのは patch の dockUI / attachUI
   assets <dir> [フォルダ] [--kind image|sound|font] [--unused] [--refs 場所]   アセットの一覧（使っている所の数）・使っている所
   sheet  <dir> <画像>                 画像の切り方（コマの名前・位置・基準点・動き）を見る
@@ -173,8 +175,10 @@ export async function cmdInit(dir: string, name?: string): Promise<string> {
   const mcp = { mcpServers: { ages: { command: 'node', args: [`${engine}/src/mcp/server.ts`] } } };
   await writeFile(join(target, '.mcp.json'), JSON.stringify(mcp, null, 2) + '\n');
   created.push('.mcp.json');
+  // 作ったときの AGES の版を残す（後で本体を上げたとき、どこから直せばよいか分かるように）
+  const v = await recordVersion(target);
   return [
-    `プロジェクト ${projectName} を作りました: ${dir}`,
+    `プロジェクト ${projectName} を作りました: ${dir}（AGES ${formatVersion(v)}）`,
     ...created.sort().map((f) => `  ${f}`),
     '次: EDITOR-PLAN.md の質問を使用者に確認し、必要なエディタを決める。合意するまでゲームのコードは書かない',
   ].join('\n');
@@ -628,6 +632,23 @@ export async function cmdLog(dir: string, f: Args['flags']): Promise<string> {
   return `${head}\n${summarize(f.all ? entries : humans.length ? humans : entries)}`;
 }
 
+/** AGES の版（プロジェクトの記録と今の本体）。記録が古ければ、直し方（docs/MIGRATIONS.md の要る項）を出す。--record で今の版を残す */
+export async function cmdVersion(dir: string, record: boolean): Promise<string> {
+  const p = await Project.load(dir);
+  const cur = engineVersion();
+  if (record) {
+    const v = await recordVersion(p.dir);
+    return `記録しました: AGES ${formatVersion(v)}（${v.recorded}）`;
+  }
+  const rec = p.config.engine;
+  const lines = [`本体: AGES ${formatVersion(cur)}`, `プロジェクト: ${rec ? `AGES ${formatVersion(rec)}${rec.recorded ? `（${rec.recorded} に記録）` : ''}` : '記録なし（--record で今の版を残す）'}`];
+  if (typeof rec?.compat === 'number' && rec.compat < cur.compat) {
+    lines.push('', `直すこと（互換${rec.compat} → ${cur.compat}。上から順に。終わって確かめたら --record）:`);
+    for (const m of migrations().filter((m) => m.n > rec.compat && m.n <= cur.compat)) lines.push('', `## ${m.n}. ${m.title}`, m.body);
+  }
+  return lines.join('\n');
+}
+
 export async function cmdCheck(dir: string): Promise<string> {
   const p = await Project.load(dir);
   const sh = await shaderReport(p.dir, p.assets);
@@ -639,7 +660,9 @@ export async function cmdCheck(dir: string): Promise<string> {
   const note = sh.unchecked.length ? `\nシェーダー ${sh.unchecked.join(' ')} はまだコンパイルを確かめていません（エディタを開いていると、変えるたびに確かめて ages check に出ます）` : '';
   // ゲーム独自の検証（defineCheck）は ⚠（編集は止めないもの）
   const own = p.projectChecks().map((m) => `\n⚠ ${m}`).join('');
-  return withLockReport(p, (errs.length ? errs.map((e) => `error: ${e}`).join('\n') : `ok（シーン${p.docs.scenes.size} プレハブ${p.docs.prefabs.size} コンポーネント${p.registry.components.size} システム${p.registry.systems.length}）`) + warns.map((w) => `\n⚠ ${w}`).join('') + own + note + missNote);
+  const ver = versionNote(p.config.engine);
+  const verNote = ver ? `\n${ver}` : '';
+  return withLockReport(p, (errs.length ? errs.map((e) => `error: ${e}`).join('\n') : `ok（シーン${p.docs.scenes.size} プレハブ${p.docs.prefabs.size} コンポーネント${p.registry.components.size} システム${p.registry.systems.length}）`) + warns.map((w) => `\n⚠ ${w}`).join('') + own + note + missNote + verNote);
 }
 
 function imageOf(p: Project, image: string): { w: number; h: number } {
@@ -757,6 +780,7 @@ async function main(argv: string[]): Promise<void> {
     case 'run': out = await cmdRun(dir, a.flags); break;
     case 'log': out = await cmdLog(dir, a.flags); break;
     case 'check': out = await cmdCheck(dir); break;
+    case 'version': out = await cmdVersion(dir, a.flags.record === true); break;
     case 'assets': out = await cmdAssets(dir, a.pos[1], a.flags); break;
     case 'ui': out = await cmdUi(dir, a.pos[1]); break;
     case 'undo': out = await cmdUndo(dir, a.flags); break;

@@ -1,5 +1,6 @@
 // エディタのサーバーが使う作業スレッド。プロジェクトを1つ持ち、検証付きの編集を行う。
 // ゲームコードが変わったらスレッドごと作り直す（モジュールのキャッシュを確実に捨てるため）。
+import { versionNote } from '../project/version.ts';
 import { parentPort, workerData } from 'node:worker_threads';
 import { Project } from '../project/project.ts';
 import { readTouched, readLog, type Actor } from '../project/oplog.ts';
@@ -30,7 +31,8 @@ const READ_ONLY = new Set(['state', 'lockState', 'describe', 'lockCandidates', '
 
 async function state() {
   if (loadError) return { error: loadError };
-  heavy ??= { issues: [...project.validate(), ...project.projectChecks().map((m) => `⚠ ${m}`)], codeRefs: await codeRefsCached() };
+  const ver = versionNote(project.config.engine);
+  heavy ??= { issues: [...project.validate(), ...project.projectChecks().map((m) => `⚠ ${m}`), ...(ver ? [`⚠ ${ver}`] : [])], codeRefs: await codeRefsCached() };
   return {
     config: project.config,
     scenes: Object.fromEntries(project.docs.scenes),
