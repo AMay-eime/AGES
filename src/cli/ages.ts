@@ -11,6 +11,7 @@ import { indexDepth, renderAssets, renderMap, renderMapSection } from '../projec
 import { findInProject } from '../project/find.ts';
 import { codeDefs } from '../project/codedefs.ts';
 import { noteRecent, placeOf, readRecent, recentFor, topRecent } from '../project/recent.ts';
+import { eventWarnings } from '../project/events.ts';
 import { readCursor, readLog, readTouched, summarize, writeCursor, type Actor } from '../project/oplog.ts';
 import { OP_DOCS, getValue, parseLiteral, splitCell, type Op } from '../core/patch.ts';
 import { readGuide } from '../project/guide.ts';
@@ -728,9 +729,12 @@ export async function cmdCheck(dir: string): Promise<string> {
   const note = sh.unchecked.length ? `\nシェーダー ${sh.unchecked.join(' ')} はまだコンパイルを確かめていません（エディタを開いていると、変えるたびに確かめて ages check に出ます）` : '';
   // ゲーム独自の検証（defineCheck）は ⚠（編集は止めないもの）
   const own = p.projectChecks().map((m) => `\n⚠ ${m}`).join('');
+  // 受けている出来事を、どこからも出していない（名前は文字なので型チェックで見えず、動かしても何も起きないだけ）
+  const files = await p.codeFiles();
+  const events = eventWarnings(p.registry.systems, files, codeDefs(files)).map((m) => `\n⚠ ${m}`).join('');
   const ver = versionNote(p.config.engine);
   const verNote = ver ? `\n${ver}` : '';
-  return withLockReport(p, (errs.length ? errs.map((e) => `error: ${e}`).join('\n') : `ok（シーン${p.docs.scenes.size} プレハブ${p.docs.prefabs.size} コンポーネント${p.registry.components.size} システム${p.registry.systems.length}）`) + warns.map((w) => `\n⚠ ${w}`).join('') + own + note + missNote + verNote);
+  return withLockReport(p, (errs.length ? errs.map((e) => `error: ${e}`).join('\n') : `ok（シーン${p.docs.scenes.size} プレハブ${p.docs.prefabs.size} コンポーネント${p.registry.components.size} システム${p.registry.systems.length}）`) + warns.map((w) => `\n⚠ ${w}`).join('') + own + events + note + missNote + verNote);
 }
 
 function imageOf(p: Project, image: string): { w: number; h: number } {
