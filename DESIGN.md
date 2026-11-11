@@ -51,7 +51,7 @@ project/
 
 フィールドごとに型・範囲・既定値・説明を宣言する。インスペクタはここから自動生成され、AIは同じ宣言を読んで範囲外の値を入れない。
 
-型: `number` `int` `bool` `string` `enum` `color` `vec2` `ref`（エンティティID） `prefab` `asset`（画像・音・フォントのファイル） `frame`（コマ） `row`（表の行） `scene`（シーンの名前） `input`（ボタン・軸の名前。`analog: true` で軸） `matrix`（2次元行列） `list`（リスト） `struct`（構造体） `oneOf`（どれか1つ）
+型: `number` `int` `bool` `string` `enum` `color` `vec2` `vec3` `ref`（エンティティID） `prefab` `asset`（画像・音・フォントのファイル） `frame`（コマ） `row`（表の行） `scene`（シーンの名前） `input`（ボタン・軸の名前。`analog: true` で軸） `matrix`（2次元行列） `list`（リスト） `struct`（構造体） `oneOf`（どれか1つ）
 
 ```ts
 export const Mover = defineComponent({

@@ -11,6 +11,7 @@ export type ValueOf<F> =
   : F extends { type: 'ref' } ? string | null
   : F extends { type: 'frame' } ? number | string
   : F extends { type: 'vec2' } ? [number, number]
+  : F extends { type: 'vec3' } ? [number, number, number]
   : F extends { type: 'matrix' } ? (number | boolean | string)[][]
   : F extends { type: 'list'; of: infer O } ? ValueOf<O>[]
   : F extends { type: 'struct'; fields: infer S } ? { [K in keyof S]: ValueOf<S[K]> }

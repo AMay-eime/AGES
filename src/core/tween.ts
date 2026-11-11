@@ -77,7 +77,7 @@ export function targetValue(at: string, f: Field, current: unknown, to: unknown)
     if (typeof to === 'string' && HEX.test(to) && typeof current === 'string' && HEX.test(current)) return to.toLowerCase();
     throw new Error(`${at}: 色は '#rrggbb'（透けるなら '#rrggbbaa'）の形で書きます。受け取った値: ${JSON.stringify(to)}`);
   }
-  if (f.type === 'vec2' || (f.type === 'list' && (f.of.type === 'number' || f.of.type === 'int'))) {
+  if (f.type === 'vec2' || f.type === 'vec3' || (f.type === 'list' && (f.of.type === 'number' || f.of.type === 'int'))) {
     if (Array.isArray(to) && Array.isArray(current) && to.length === current.length && to.every((x) => typeof x === 'number')) return to;
     throw new Error(`${at}: 数の並び（今と同じ ${Array.isArray(current) ? current.length : '?'} 個）を書きます。受け取った値: ${JSON.stringify(to)}`);
   }

@@ -457,6 +457,13 @@ export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, 
       wrap.append(a, b);
       return { el: wrap, set: (v) => { const [p, q] = v as [number, number]; a.value = String(p); b.value = String(q); } };
     }
+    case 'vec3': {
+      const cur = (value as number[]) ?? [0, 0, 0];
+      const ins = [0, 1, 2].map((k) => h('input', { type: 'number', step: 'any', value: String(cur[k] ?? 0), title: 'xyz'[k] }) as HTMLInputElement);
+      for (const a of ins) a.addEventListener('change', () => commit(ins.map((x) => Number(x.value)), true));
+      wrap.append(...ins);
+      return { el: wrap, set: (v) => { (v as number[]).forEach((n, k) => { if (ins[k]) ins[k].value = String(n); }); } };
+    }
     case 'asset': {
       // そのプロジェクトにある、種類の合うファイルから選ぶ。画像なら小さく表示する
       // シェーダーは標準のもの（std:名前）も選べる

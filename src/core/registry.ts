@@ -108,6 +108,7 @@ export class Registry {
       if (r.components.has(c.name)) throw new Error(`追加パッケージ ${pk.name} のコンポーネント ${c.name} が、ほかと重なっています`);
       r.components.set(c.name, c);
       r.fromPackage.set(c.name, pk.name);
+      r.std.add(c.name);
     }
     for (const c of mod.components) {
       if (r.fromPackage.has(c.name)) throw new Error(`コンポーネント ${c.name} は追加パッケージ ${r.fromPackage.get(c.name)} で用意されています。game/ の定義を消して、そちらを使ってください（ages schema <dir> ${c.name} で中身を確認できます）`);

@@ -59,7 +59,8 @@ export class World {
     for (let more = true; more;) {
       more = false;
       for (const e of this.entities.values()) {
-        const p = e.c.Transform?.parent;
+        // Transform3D は追加パッケージ 3d の位置（入れていなければ、どの物にもない）
+        const p = e.c.Transform?.parent ?? e.c.Transform3D?.parent;
         if (p && this.doomed.has(p) && !this.doomed.has(e.id)) { this.doomed.add(e.id); more = true; }
       }
     }
