@@ -20,7 +20,7 @@ export interface AssetInfo {
   /** シェーダーの宣言（説明・調整できる値・中身） */
   shader?: ShaderDef;
   /** 3D のモデルの要約（大きさ m・中心・三角形の数・動きの名前。開かずに置き方を決められるように） */
-  model?: { size: [number, number, number]; center: [number, number, number]; tris: number; clips: string[]; clipSec?: number[] };
+  model?: { size: [number, number, number]; center: [number, number, number]; tris: number; clips: string[]; clipSec?: number[]; /** 外のファイルの画像（プロジェクトの中の場所に直したもの） */ textures?: string[] };
 }
 
 const SKIP = new Set(['.git', '.ages', 'node_modules']);
@@ -203,7 +203,11 @@ export async function scanAssets(dir: string): Promise<AssetScan> {
       // モデルを読むのは追加パッケージ 3d（モデルがあるときだけ読み込む）
       try {
         const { summarizeGlb } = await import('../packages/3d/gltf.ts');
-        info.model = summarizeGlb(await readFile(abs));
+        const sum = summarizeGlb(await readFile(abs));
+        // 外の画像は、モデルのあるフォルダから見た場所 → プロジェクトの中の場所
+        const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/') + 1) : '';
+        const norm = (q: string) => { const out: string[] = []; for (const seg of (dir + q).split('/')) { if (seg === '..') out.pop(); else if (seg && seg !== '.') out.push(seg); } return out.join('/'); };
+        info.model = { ...sum, ...(sum.textures ? { textures: sum.textures.map(norm) } : {}) };
       } catch (e) {
         issues.push(`${rel} を読めません: ${(e as Error).message}`);
       }

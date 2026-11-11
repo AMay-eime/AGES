@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 process.env.AGES_HOME ??= await mkdtemp(join(tmpdir(), 'ages-home-'));
-const { cmdCheck, cmdRun, cmdExport, packageCommands } = await import('../src/cli/ages.ts');
+const { cmdCheck, cmdRun, cmdExport, cmdMap, cmdAssets, cmdPatch, packageCommands } = await import('../src/cli/ages.ts');
 
 async function sample(): Promise<string> {
   const dir = join(await mkdtemp(join(tmpdir(), 'ages-c3d-')), 'collect3d');
@@ -55,4 +55,23 @@ test('collect3d: 書き出したものが headless の Chrome で動く（モデ
   const dir = await sample();
   const out = await cmdExport(dir, { check: true });
   assert.match(out, /確かめました: headless の Chrome で \d+フレーム（約\d+秒）進み、エラーなし（シーン main）/);
+});
+
+test('collect3d: 地図は、置いた物の連番をまとめる。モデルの外の画像は使われている扱い（消せない）。置いた所のまわりだけ確かめられる', async () => {
+  const dir = await sample();
+  const map = await cmdMap(dir);
+  assert.match(map, /^ {2}main#coin1〜8 ←@coin ×8$/m);
+  assert.match(map, /^ {2}main#p1,3,5 ←@plat_s ×3$/m);
+  assert.match(map, /^ {2}main#player \[Transform3D Model3D Collider3D Player\]$/m);
+  assert.ok(map.length < 5500, `地図 ${map.length} 文字`);
+  // モデル（.glb）が外のファイルとして使っている画像は、未使用に見せない・消させない
+  assert.match(await cmdAssets(dir, undefined, {}), /colormap\.png 512x512 11か所/);
+  await assert.rejects(cmdPatch(dir, [{ op: 'removeAsset', path: 'assets/models/Textures/colormap.png' }], false), /使われているので消せません: assets\/models\/brick\.glb（モデルの画像）/);
+  // 奥の足場のまわりだけ（全部を出すより短い）
+  const space = (await packageCommands(dir)).find((c) => c.name === 'space')!;
+  const near = await space.run(dir, { near: 'p4' });
+  assert.match(near, /^p4 のまわり 3m にある物だけ（5 \/ 26）$/m);
+  assert.deepEqual(near.split('\n').filter((l) => l.startsWith('  ')).map((l) => l.trim().split(' ')[0]).sort(), ['coin5', 'coin6', 'flag', 'p3', 'p4']);
+  assert.ok(near.length < (await space.run(dir, {})).length / 3);
+  await assert.rejects(space.run(dir, { near: 'p9' }), /--near の p9 はシーン main にありません/);
 });

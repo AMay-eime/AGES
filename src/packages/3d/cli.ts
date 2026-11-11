@@ -22,19 +22,28 @@ async function cmdSpace(dir: string, f: Record<string, string | true>): Promise<
   const models: ModelBounds = new Map(p.assets.flatMap((a) => (a.model ? [[a.path, { size: a.model.size, center: a.model.center }] as const] : [])));
   const only = typeof f.only === 'string' ? f.only.split(',').map((s) => s.trim()).filter(Boolean) : undefined;
   for (const id of only ?? []) if (!game.world.entities.has(id)) throw new Error(`--only の ${id} はシーン ${scene} にありません${suggest(id, [...game.world.entities.keys()])}`);
-  return [`space ${scene} f${game.frame}（単位 m・Y が上・画面 ${width}x${height}）`, ...describeSpace(game.world, { width, height, models, only })].join('\n');
+  let near: { id: string; radius: number } | undefined;
+  if (typeof f.near === 'string') {
+    if (!game.world.entities.has(f.near)) throw new Error(`--near の ${f.near} はシーン ${scene} にありません${suggest(f.near, [...game.world.entities.keys()])}`);
+    const radius = f.radius !== undefined ? Number(f.radius) : 3;
+    if (!(radius >= 0)) throw new Error('--radius は 0 以上の数です（m。省くと 3）');
+    near = { id: f.near, radius };
+  }
+  return [`space ${scene} f${game.frame}（単位 m・Y が上・画面 ${width}x${height}）`, ...describeSpace(game.world, { width, height, models, only, near })].join('\n');
 }
 
 export const COMMANDS: PackageCommand[] = [
   {
     name: 'space',
-    desc: '3D の空間を文字で確かめる（物の位置・大きさ・何の上にあるか・浮き・沈み・画面のどこに映るか・隠れ・当たり判定のずれ）。置いた直後に',
+    desc: '3D の空間を文字で確かめる（物の位置・大きさ・何の上にあるか・浮き・沈み・画面のどこに映るか・隠れ・当たり判定のずれ）。置いた直後に、near で置いた所のまわりだけ',
     pos: 'scene',
     props: {
       scene: { type: 'string' },
       frames: { type: 'number', description: 'この数だけ進めてから（省くと 1）' },
       keys: { type: 'string', description: 'ages_run と同じ' },
       only: { type: 'string', description: 'この物だけ（例 "hero,coin1"）' },
+      near: { type: 'string', description: 'この物と、まわり radius m（省くと 3）の物だけ。置いた所の確かめに' },
+      radius: { type: 'number' },
     },
     run: cmdSpace,
   },

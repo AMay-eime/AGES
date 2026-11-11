@@ -235,7 +235,7 @@ function flatNormals(pos: number[], idx: number[]): number[] {
 const r3 = (v: number): number => Math.round(v * 1000) / 1000 || 0;
 
 /** モデルの要約（大きさ m・中心・三角形の数・動きの名前と長さ 秒）。地図・ages assets に出し、動きの時刻を進めるのにも使う */
-export function summarizeGlb(buf: Uint8Array): { size: [number, number, number]; center: [number, number, number]; tris: number; clips: string[]; clipSec: number[] } {
+export function summarizeGlb(buf: Uint8Array): { size: [number, number, number]; center: [number, number, number]; tris: number; clips: string[]; clipSec: number[]; textures?: string[] } {
   const m = parseGlb(buf);
   return {
     size: [r3(m.max[0] - m.min[0]), r3(m.max[1] - m.min[1]), r3(m.max[2] - m.min[2])],
@@ -243,5 +243,7 @@ export function summarizeGlb(buf: Uint8Array): { size: [number, number, number];
     tris: m.tris,
     clips: m.clips,
     clipSec: m.animations.map((a) => Math.round(a.duration * 10000) / 10000),
+    // 外のファイルの画像（モデルから見た場所）。あるときだけ
+    ...(m.images.some((i) => i.uri && !i.uri.startsWith('data:')) ? { textures: m.images.flatMap((i) => (i.uri && !i.uri.startsWith('data:') ? [decodeURIComponent(i.uri)] : [])) } : {}),
   };
 }

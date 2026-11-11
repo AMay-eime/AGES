@@ -70,7 +70,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   pin    <dir> [--repo URL] [--commit SHA] [--force]  版だけ同梱の形に（ages.mjs が本体を .ages/engine に取ってくる。GitHub との連携用）。AGENTS.md は手で直されていなければ本体の版に合わせる（--force で直されていても）
   ui     <dir> [シーン]               UI の配置（四角・置き方）と、重なり・はみ出し。直すのは patch の dockUI / attachUI
   assets <dir> [フォルダ] [--kind image|sound|font|shader|model] [--unused] [--refs 場所]   アセットの一覧（使っている所の数）・使っている所
-  space  <dir> [シーン] [--frames n] [--keys …] [--only id,id]   （追加パッケージ 3d を入れたプロジェクト）3D の空間を文字で確かめる
+  space  <dir> [シーン] [--near id [--radius 3]] [--only id,id] [--frames n] [--keys …]   （追加パッケージ 3d を入れたプロジェクト）3D の空間を文字で確かめる
   sheet  <dir> <画像>                 画像の切り方（コマの名前・位置・基準点・動き）を見る
   slice  <dir> <画像> --grid 32x32 | --count 4x6 | --auto  画像を切る（前と同じ場所のコマは名前を引き継ぐ）
                [--spacing n] [--margin n] [--skip-empty] [--alpha 1] [--min 2] [--gap 0] [--pad 0] [--pivot 0.5,1] [--dry] [--force]
@@ -230,6 +230,9 @@ export async function cmdPin(dir: string, repo = DEFAULT_REPO, commit?: string, 
     // 追加パッケージ（'ages/3d' など）の場所も（なければ足す）
     const u = t.replace(/"ages":\s*\["[^"]*\/src\/index\.ts"\](,\s*"ages\/\*":\s*\["[^"]*"\])?/, `"ages": ["./${PINNED_ENGINE}/src/index.ts"], "ages/*": ["./${PINNED_ENGINE}/src/packages/*/index.ts"]`);
     if (u !== t) { await writeFile(ts, u); done.push('tsconfig.json'); }
+  } else {
+    await writeFile(ts, tsconfigText(`./${PINNED_ENGINE}`));
+    done.push('tsconfig.json（型チェック: tsc -p tsconfig.json。エディタの補完にも）');
   }
   return [`版だけ同梱の形にしました（AGES ${sha.slice(0, 7)}）:`, ...done.map((d) => `  ${d}`), '使い方: node ages.mjs <命令> . ・node ages.mjs editor（「エディタを開く」のダブルクリックでも）・本体を上げる: node ages.mjs upgrade'].join('\n');
 }
@@ -298,6 +301,8 @@ export async function cmdInit(dir: string, name?: string): Promise<string> {
   const mcp = { mcpServers: { ages: { command: 'node', args: [`${engine}/src/mcp/server.ts`] } } };
   await writeFile(join(target, '.mcp.json'), JSON.stringify(mcp, null, 2) + '\n');
   created.push('.mcp.json');
+  // 型チェックの設定（tsc -p tsconfig.json。コードのエディタの補完にも使われる）
+  if (!existsSync(join(target, 'tsconfig.json'))) { await writeFile(join(target, 'tsconfig.json'), tsconfigText(engine.startsWith('.') || engine.startsWith('/') || /^[A-Za-z]:/.test(engine) ? engine : `./${engine}`)); created.push('tsconfig.json'); }
   // ダブルクリックでエディタを開くファイル（Windows・mac。命令を打たずに使えるように）
   created.push(...(await writeLaunchers(target, `"${engine}/src/editor/server.ts" .`, `${engine}/src/editor/server.ts`)));
   // 作ったときの AGES の版を残す（後で本体を上げたとき、どこから直せばよいか分かるように）
@@ -983,6 +988,19 @@ export async function cmdInitPinned(dir: string, name?: string, pin?: boolean): 
   const out = await cmdInit(dir, name);
   if (pin === true || (pin !== false && engineOnRemote())) return `${out}\n${await cmdPin(dir)}`;
   return `${out}\n（AGES 本体を今の場所から指す形です。このプロジェクトを別のパソコン・別の場所で使うなら ages pin <dir>）`;
+}
+
+/** プロジェクトの tsconfig.json（型チェックと、コードのエディタの補完用。本体の場所は engine） */
+export function tsconfigText(engine: string): string {
+  return `{
+  "compilerOptions": {
+    "target": "ES2022", "module": "NodeNext", "moduleResolution": "NodeNext", "strict": true, "noEmit": true,
+    "allowImportingTsExtensions": true, "erasableSyntaxOnly": true, "skipLibCheck": true, "lib": ["ES2022", "DOM"],
+    "paths": { "ages": ["${engine}/src/index.ts"], "ages/*": ["${engine}/src/packages/*/index.ts"] }
+  },
+  "include": ["game/**/*.ts", "editor/**/*.ts"]
+}
+`;
 }
 
 /** プロジェクトが入れている追加パッケージの命令（設定を読めないフォルダなら、なし） */

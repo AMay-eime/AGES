@@ -42,7 +42,11 @@ test('プレハブのインスタンスを置くと、ファイルにはつな�
   await p.apply([{ op: 'set', path: 'main#boss.Health.hp', value: 2 }], ai);
   assert.deepEqual((await entityOf(dir, 'main', 'boss')).components, { Transform: { x: 100, y: 50 } });
   // 地図・ages run
-  assert.match(await cmdMap(dir), /^ {2}main#boss "boss" ←@enemy 変:Transform\.x,Transform\.y \[Transform Sprite Velocity Health Enemy Effect Collider\] tags:enemy$/m);
+  // 地図: プレハブと同じ部品・タグと、位置の上書きは出さない（プレハブの行にある）。プレハブと違う値は 変: に出る
+  assert.match(await cmdMap(dir), /^ {2}main#boss ←@enemy$/m);
+  await p.apply([{ op: 'set', path: 'main#boss.Health.hp', value: 9 }], ai);
+  assert.match(await cmdMap(dir), /^ {2}main#boss ←@enemy 変:Health\.hp$/m);
+  await p.apply([{ op: 'set', path: 'main#boss.Health.hp', value: 2 }], ai);
   assert.match(await cmdRun(dir, { frames: '2' }), /@enemy/);
   assert.match(await cmdCheck(dir), /^ok/);
 });

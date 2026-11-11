@@ -75,6 +75,15 @@ test('ages init: ダブルクリックの起動用を作る（本体の場所を
   const win = await readFile(join(dir, 'game', LAUNCHER_WIN), 'utf8');
   assert.match(win, /^node ".+\/src\/editor\/server\.ts" \.\r$/m);
   assert.match(await readFile(join(dir, 'game', '.gitattributes'), 'utf8'), /^\*\.cmd text eol=crlf$/m);
+  // 型チェックの設定も作る（tsc -p tsconfig.json。本体と追加パッケージの場所を指す）。版だけ同梱にすると .ages/engine を指す
+  assert.match(out, /^ {2}tsconfig\.json$/m);
+  const ts = JSON.parse(await readFile(join(dir, 'game', 'tsconfig.json'), 'utf8'));
+  assert.match(ts.compilerOptions.paths.ages[0], /\/src\/index\.ts$/);
+  assert.match(ts.compilerOptions.paths['ages/*'][0], /\/src\/packages\/\*\/index\.ts$/);
+  const { cmdPin } = await import('../src/cli/ages.ts');
+  await rm(join(dir, 'game', 'tsconfig.json'));
+  assert.match(await cmdPin(join(dir, 'game'), undefined, 'a'.repeat(40)), /tsconfig\.json（型チェック/);
+  assert.deepEqual(JSON.parse(await readFile(join(dir, 'game', 'tsconfig.json'), 'utf8')).compilerOptions.paths.ages, ['./.ages/engine/src/index.ts']);
   await rm(dir, { recursive: true, force: true });
 });
 

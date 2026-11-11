@@ -18,7 +18,7 @@ import { PACKAGE_LIST, loadPackages } from '../packages/index.ts';
 import { appendLog, localTime, lockedHits, markTouched, movePrefixTouched, moveTouched, readLocks as readLockFile, readLogLines, readTouched, writeLocks, type Actor, type LockMark, type LogEntry } from './oplog.ts';
 import { agesHome, lockDiff, verifyLocks, type LockIntegrity } from './seal.ts';
 import { scanAssets, type AssetInfo } from './assets.ts';
-import { assetRefs, codePrefabRefs, codeRefs, codeSceneRefs, isUnder, modelsOf } from '../core/assets.ts';
+import { assetRefs, codePrefabRefs, codeRefs, codeSceneRefs, isUnder, modelsOf, modelTexturesOf } from '../core/assets.ts';
 import { resolveEntity, resolvePrefab } from '../core/variant.ts';
 import { allowedByDrawers, checkKept, checkWindows, loadWindows, prefabTags, tagCounts, tagEdit, unlistedWindows, windowAllows, windowTargets, type WindowInfo } from './windows.ts';
 import { Journal, inverseFiles, type DocState, type FileMove, type TxRecord } from './journal.ts';
@@ -106,6 +106,7 @@ export class Project {
     this.registry.images = imagesOf(assets);
     this.registry.shaders = shadersOf(assets);
     this.registry.models = modelsOf(assets);
+    this.registry.modelTextures = modelTexturesOf(assets);
   }
 
   private windowCache: Promise<WindowInfo[]> | null = null;
