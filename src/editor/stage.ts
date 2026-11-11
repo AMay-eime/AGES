@@ -19,16 +19,28 @@ const BUILD_KEYS = ['scene', 'params', 'values', 'spawn', 'date', 'seed', 'keys'
 
 export function createStage(app: App, el: HTMLElement, init: StageOptions): StageHandle {
   let o: StageOptions = { ...init };
-  const canvas = h('canvas', { width: 240, height: 150, style: 'display:block;max-width:100%;height:auto' }) as HTMLCanvasElement;
+  const newCanvas = () => h('canvas', { width: 240, height: 150, style: 'display:block;max-width:100%;height:auto' }) as HTMLCanvasElement;
+  /** 描く側（WebGL）の canvas。返した（loseContext）後は同じ canvas からは作り直せないので、新しいものに替える */
+  let canvas = newCanvas();
   const over = h('canvas', { width: 240, height: 150, style: 'position:absolute;left:0;top:0;width:100%;height:100%;touch-action:none' }) as HTMLCanvasElement;
   const note = h('div', { style: 'position:absolute;left:6px;top:4px;right:6px;font-size:12px;line-height:1.4;color:var(--dim);pointer-events:none;white-space:pre-wrap' });
+  /** 注記を出す。エラーは、ゲームの絵が出ていない（白い・黒い）所に重なるので、地を付けて読めるように */
+  const setNote = (text: string, error = false) => {
+    if (note.textContent !== text) note.textContent = text;
+    const loud = error && !!text;
+    if (note.dataset.loud !== String(loud)) {
+      note.dataset.loud = String(loud);
+      Object.assign(note.style, loud ? { color: '#fff', background: 'rgba(0,0,0,.72)', padding: '3px 6px', borderRadius: '3px' } : { color: 'var(--dim)', background: '', padding: '', borderRadius: '' });
+    }
+  };
   el.append(h('div', { style: 'position:relative;display:inline-block;max-width:100%;vertical-align:top' }, canvas, over, note));
   const og = over.getContext('2d')!;
   let renderer: Renderer | null = null;
   let rendererError = '';
   let last = performance.now();
   let dead = false;
-  let detached = 0;
+  /** 外された時刻（付いている間は 0）。フレームの数でなく時間で数える（画面の更新の速さは環境で違う） */
+  let detachedAt = 0;
   /** 自由な視点（ホイール・右ドラッグで変わる。set の view で戻る） */
   let fv = { zoom: o.view?.zoom ?? 1, x: o.view?.x, y: o.view?.y };
   const draws = new Set<(g: StageDraw, view: StageView) => void>();
@@ -150,12 +162,20 @@ export function createStage(app: App, el: HTMLElement, init: StageOptions): Stag
     // 外されている間（タブを離れた・作り直した）は止める。2秒たったら描く側（WebGL）だけ返し、また付いたら作り直して続ける。
     // 10分たっても付かなければ片付ける（拡張が destroy を忘れても残らないように）
     if (!canvas.isConnected) {
-      detached++;
-      if (detached === 120 && renderer) { (renderer.gl.getExtension('WEBGL_lose_context') as { loseContext(): void } | null)?.loseContext(); renderer = null; }
-      if (detached > 36000) handle.destroy();
+      if (!detachedAt) detachedAt = now;
+      if (now - detachedAt >= 2000 && renderer) {
+        (renderer.gl.getExtension('WEBGL_lose_context') as { loseContext(): void } | null)?.loseContext();
+        renderer = null;
+        // 返したコンテキストは同じ canvas の getContext からまた返ってくる（失われたまま）。新しい canvas に替えて、付いたら作り直す
+        const next = newCanvas();
+        next.width = canvas.width; next.height = canvas.height; next.style.cssText = canvas.style.cssText;
+        canvas.replaceWith(next);
+        canvas = next;
+      }
+      if (now - detachedAt > 600_000) handle.destroy();
       return;
     }
-    detached = 0;
+    detachedAt = 0;
     if (!canvas.offsetParent || !app.state?.config) return;
     layout();
     ensureRenderer();
@@ -164,11 +184,11 @@ export function createStage(app: App, el: HTMLElement, init: StageOptions): Stag
       // シーク・作り直しの早送り: 着くまで描かない（前の絵のまま）
       player.fastForward(FF_BUDGET);
       if (player.target !== null) {
-        note.textContent = T('進めています {0} / {1}秒', (player.game!.frame / app.state.config.fps).toFixed(1), (player.target / app.state.config.fps).toFixed(1));
+        setNote(T('進めています {0} / {1}秒', (player.game!.frame / app.state.config.fps).toFixed(1), (player.target / app.state.config.fps).toFixed(1)));
         return;
       }
     } else player.tick(dt, now);
-    note.textContent = rendererError || player.error;
+    setNote(rendererError || player.error, true);
     render(dt);
   };
 
