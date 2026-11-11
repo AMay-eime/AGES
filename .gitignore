@@ -1,6 +1,10 @@
 node_modules/
-# AIごとの既読位置（共有しない）
+# AIごとの既読位置と最近の作業の場所（共有しない）
 .ages/ai-cursor
+.ages/talk-cursor
+.ages/recent.json
+# ages run --shot で撮った画面（共有しない）
+.ages/shots/
 .ages/locks.seal
 # 書き出したもの（ages export）
 dist/
