@@ -68,8 +68,17 @@
   .field label { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .field.default label { font-style: italic; }
   .field.touched > label::after { content: " ★"; color: var(--warn); }
-  .tab-detach { opacity: .6; cursor: pointer; }
-  .tab-detach:hover { opacity: 1; }
+  .tab-btn { display: none; opacity: .55; cursor: pointer; }
+  .tab.active .tab-btn, .tab:hover .tab-btn { display: inline; }
+  .tab .tab-btn:hover { opacity: 1; color: var(--text); }
+  .tab.out { font-style: italic; }
+  .tab-mark { opacity: .7; }
+  .tab-add { padding: 5px 10px; color: var(--dim); cursor: pointer; user-select: none; }
+  .tab-add:hover { color: var(--text); }
+  .area.folded .tabs { flex: 1; flex-direction: column; align-items: center; border-bottom: 0; overflow: hidden; }
+  .area[data-area=bottom].folded .tabs { flex-direction: row; align-items: stretch; }
+  .split.folded { cursor: default; }
+  .area-note { padding: 12px; color: var(--dim); }
   .field.locked { background: rgba(199, 146, 234, .08); }
   .field.locked label { color: var(--lock); }
   .field.override { box-shadow: inset 2px 0 0 var(--accent); }
