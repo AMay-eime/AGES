@@ -790,6 +790,7 @@ export default {
   "三角形 {0}": "{0} triangles",
   "「3D シーン」へドラッグすると置けます": "Glissez dans « Scène 3D » pour le placer",
   "当たり判定を、選んだ物の形に合わせて付ける": "Ajouter un collider ajusté à l’objet sélectionné",
+  "パーティクル（粒）": "Particules",
   // ---- 本体の標準の部品・表・シェーダーの説明（std-descs.ts。TD で訳す） ----
   "位置・向き・大きさ（標準）": "Position, rotation, taille (standard)",
   "横位置(px。parent があれば親から見た位置)": "Position horizontale (px ; relative au parent si parent est défini)",

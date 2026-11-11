@@ -119,4 +119,41 @@ export const Collider3D = defineComponent({
   },
 });
 
-export const COMPONENTS_3D = [Transform3D, Camera3D, Mesh3D, Model3D, Light3D, Environment3D, Collider3D];
+export const Particles3D = defineComponent({
+  name: 'Particles3D',
+  desc: '3D のパーティクル（3d）。粒はカメラを向く板。粒を出して動かすのは描く側（ゲームの結果には関わらない）。一度に出すのは ages/3d の burst3(ctx.world, 物)',
+  fields: {
+    burst: { type: 'int', default: 0, min: 0, max: 2000, desc: '現れたとき・burst3 で一度に出す数' },
+    rate: { type: 'number', default: 0, min: 0, max: 2000, step: 1, desc: '1秒に出す数（出し続ける）' },
+    playing: { type: 'bool', default: true, desc: '出し続けるか（ゲームのコードで切り替える）' },
+    duration: { type: 'number', default: -1, min: -1, max: 600, step: 0.1, desc: '出し続ける秒数（-1 で止めるまで）' },
+    lifetime: { type: 'number', default: 0.8, min: 0.01, max: 30, step: 0.05, desc: '粒が消えるまでの秒数' },
+    lifetimeJitter: { type: 'number', default: 0.3, min: 0, max: 1, step: 0.05, desc: '消えるまでの秒数のばらつき（割合）' },
+    speed: { type: 'number', default: 2, min: 0, max: 200, step: 0.1, desc: '出たときの速さ（m/秒）' },
+    speedJitter: { type: 'number', default: 0.4, min: 0, max: 1, step: 0.05, desc: '速さのばらつき（割合）' },
+    direction: { type: 'vec3', default: [0, 1, 0], desc: '出る向き（物から見た向き。[0,1,0] が上）' },
+    spread: { type: 'number', default: 360, min: 0, max: 360, desc: '向きの広がり（度。direction を軸にした円すい。360 で全方向）' },
+    radius: { type: 'number', default: 0, min: 0, max: 100, step: 0.05, desc: '出る場所の広がり（m。物の位置を中心にした球）' },
+    gravity: { type: 'vec3', default: [0, 0, 0], desc: '重力（m/秒²。[0, -9.8, 0] で下へ落ちる。煙なら少し上向き）' },
+    drag: { type: 'number', default: 0, min: 0, max: 20, step: 0.1, desc: '空気の抵抗（大きいほど早く止まる）' },
+    sizeStart: { type: 'number', default: 0.2, min: 0, max: 50, step: 0.01, desc: '出たときの大きさ（m）' },
+    sizeEnd: { type: 'number', default: 0, min: 0, max: 50, step: 0.01, desc: '消えるときの大きさ（m）' },
+    colorStart: { type: 'color', default: '#ffffff', desc: '出たときの色' },
+    colorEnd: { type: 'color', default: '#ffffff', desc: '消えるときの色' },
+    alphaStart: { type: 'number', default: 1, min: 0, max: 1, step: 0.05, desc: '出たときの不透明度' },
+    alphaEnd: { type: 'number', default: 0, min: 0, max: 1, step: 0.05, desc: '消えるときの不透明度' },
+    shape: { type: 'enum', options: ['circle', 'square', 'image'], default: 'circle', desc: '粒の形（circle はふちのやわらかい丸。image は image の画像）' },
+    image: { type: 'asset', kind: 'image', default: '', desc: '粒の画像（shape が image のとき）' },
+    spin: { type: 'number', default: 0, min: -3600, max: 3600, desc: '回る速さ（度/秒）' },
+    blend: { type: 'enum', options: ['add', 'normal'], default: 'add', desc: '重ね方。add=光る（火花・炎）/ normal=普通に重ねる（煙・ほこり）' },
+    world: { type: 'bool', default: true, desc: '出た粒はその場に残る（false なら物と一緒に動く）' },
+    max: { type: 'int', default: 500, min: 1, max: 20000, desc: '同時に出ている粒の上限' },
+    autoDestroy: { type: 'bool', default: false, desc: '出し終わって粒が消えたら、この物を消す（爆発の後片付けなど）' },
+    bursts: { type: 'int', default: 0, desc: '一度に出した回数（自動で変化。burst3 で増える）' },
+    burstCount: { type: 'int', default: 0, desc: '次に一度に出す数（自動で変化。0 なら burst の数）' },
+    since: { type: 'int', default: 9999, desc: '最後に一度に出してからのフレーム数（自動で変化）' },
+    age: { type: 'int', default: 0, desc: '現れてからのフレーム数（自動で変化）' },
+  },
+});
+
+export const COMPONENTS_3D = [Transform3D, Camera3D, Mesh3D, Model3D, Light3D, Environment3D, Collider3D, Particles3D];
