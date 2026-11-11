@@ -17,6 +17,7 @@ import { SaveData, SETTINGS_KEY, type SaveApi, type SaveStore } from './save.ts'
 import { format, languagesOf, lookup } from './i18n.ts';
 import { HitState, contains, inGroup, overlap, rayHit, shapeOf, type HitShape } from './collide.ts';
 import { dateAt, realDate, type DateStart, type GameDate } from './clock.ts';
+import type { Profile } from './profile.ts';
 
 export interface Ctx {
   world: World;
@@ -222,6 +223,8 @@ export class Game {
   particleListeners: ((cmd: ParticleCmd) => void)[] = [];
   /** パーティクルを出した回数（物の名前・プレハブ → 回数。ages run の要約に載る） */
   particleCounts = new Map<string, number>();
+  /** 速さの計測（ages run --perf。入れたときだけ、システムごとの時間を測る） */
+  profile: Profile | null = null;
   /** UI の操作（フォーカス・押している物）。フレームで数える */
   readonly ui = new UiState();
   /** セーブ（置き場所はブラウザなら localStorage、画面なしならメモリ） */
@@ -699,9 +702,14 @@ export class Game {
 
   /** 1フレーム進める。input はそのフレームの入力（押されているボタンの並びだけでもよい）。 */
   step(input: Iterable<string> | FrameInput = []): void {
+    const prof = this.profile, now = () => performance.now(), t0 = prof ? now() : 0;
+    let at = t0;
+    /** 測っているときだけ: 前の印からここまでを name の時間にする */
+    const mark = (name: string) => { if (prof) { const n = now(); prof.add(name, n - at); at = n; } };
     this.input.setFrame(input);
     // UI の操作はゲームのシステムより前に（押されたボタンを、そのフレームのうちに読めるように）
     this.ui.update(this.world, this.input, this.config.view.width, this.config.view.height);
+    mark('（UI の操作）');
     const systems = this.active();
     if (!this.started) {
       this.started = true;
@@ -716,16 +724,21 @@ export class Game {
       this.uiCounts.set(id, (this.uiCounts.get(id) ?? 0) + 1);
       this.ctx.emit('ui.click', { id });
     }
+    if (prof) at = now();
     for (const s of systems) {
       if (!s.update) continue;
       try { s.update(this.ctx); } catch (err) { throw err instanceof GameError ? err : new GameError(s.name, this.frame, err); }
+      mark(s.name);
     }
     this.stepTweens();
+    mark('（トゥイーン）');
     // 当たり判定: このフレームの終わりの位置で、重なり始めを求める（このフレームに消した物も数える。次のフレームで ctx.hit.entered に出る）
     this.hits.update(this.world);
+    mark('（当たり判定の記録）');
     this.applyText(); // このフレームに出た物・変えた key も、描く前に言葉を入れる
     this.world.flush();
     this.flushSettings();
+    if (prof) { mark('（物の出し入れ・言葉）'); prof.end(now() - t0, this.world.entities.size); }
     this.frame++;
     this.sceneFrame++;
     const t = this.trans;

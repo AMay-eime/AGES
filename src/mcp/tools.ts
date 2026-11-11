@@ -96,6 +96,7 @@ export function makeTools(defaultProject: string): Tool[] {
           lang: { type: 'string', description: '言語' }, date: { type: 'string', description: 'ctx.date の始め' },
           params: { type: 'object', description: '始めのシーンの scene.params' },
           shot: { type: 'string', description: 'その画面を撮る（例 "0,600"）' }, shotScale: { type: 'number' },
+          perf: { type: 'boolean', description: '重い所を探す（guide:perf）' },
         },
       },
       run: (a, dir) => {
@@ -108,6 +109,7 @@ export function makeTools(defaultProject: string): Tool[] {
         if (a.params) f.params = JSON.stringify(a.params);
         if (a.shot !== undefined) f.shot = String(a.shot);
         if (a.shotScale !== undefined) f['shot-scale'] = String(a.shotScale);
+        if (a.perf) f.perf = true;
         return cmdRun(dir, f);
       },
     },
