@@ -154,7 +154,7 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
 - 拡張から変えられるのは、`edits` に書いた値と、見せている欄（その中も）・部品・行の値だけ。🔒ロックされた値は拡張からは変えられない。ロックの操作を拡張に作らない（作っても、サーバーが受け付けない）
 - 値を変えるのは `api.patch`・`field.set`・`comp.set`・`row.set` だけ（エディタのサーバーを直接呼ばない）。読むのは `api.get`（派生は元と重ねた値）、知らせるのは `api.notify(文, 'warn')`、画像の切り方は `api.sheet(画像)`、選んでいる物は `api.selection`（すべては `api.selected`。`api.select(住所, true)` で足す。表のエディタで選んだ行は `$表.行`、`api.select('$表.行')` で表をその行で開く。変わると `api.on('select')`）、1行を尋ねるのは `await api.ask(題, 既定)`
 - `api.patch` は拡張ごとに1つずつ順に送る。前の変更の後の値から次の変更を作るとき（続けてのクリック・ドラッグ）は、関数で渡す: `api.patch(() => [{ op: 'set', path, value: 今の値から }])`（前の変更が終わってから、その時の `api.get`・`api.table` で作る）。既定値は `defaultOf(型)`、op の型は `Op`（どちらも `ages` から）
-- 拡張の見た目は `defineExtension({ css: '…' })`（クラスの名前は拡張の id から始める。document.head に自分で style を足さない）。欄の見せ方から、その欄を名前の行ごと隠すのは `field.hide()`。パネルはタブの ↗ で別のウインドウに開ける（`/?solo=win&id=<拡張の id>`）
+- 拡張の見た目は `defineExtension({ css: '…' })`（クラスの名前は拡張の id から始める。document.head に自分で style を足さない）。欄の見せ方から、その欄を名前の行ごと隠すのは `field.hide()`。パネルは人がタブの ↗ で別のウインドウに出せる（中身は元のエディタのまま動く）。パネルの中の要素は `el` から探す（`document.getElementById` などは、別のウインドウに出すと見つからない）。`window`・`document` で待つマウス・キーは、別のウインドウからも届く
 - `api.run` の `onEvent(ev)` で出来事の中身（data）を読める（例 stageElement の番号と時刻）。`onFrame(game, ids)` の ids は spawn で出した物。重いシーンの舞台は `resolution: 0.5` で軽くなる。`api.show` は相手の拡張がいなければ false
 - パネルの中に標準の欄（数・選択・プレハブ・アセット・表の行・色・入れ子）を置くのは `api.input(型, 値, (値, final) => …)`。同じ欄を手で作らない
 - プレハブを派生も重ねた形で（受け継いだタグ込みで）読むのは `api.prefabs(タグ)`（`api.state.prefabs` はファイルの中身のまま）。`api.get('@x.部品')` は書いていないフィールドを既定値で埋めて返す

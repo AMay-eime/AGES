@@ -741,7 +741,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
   requestAnimationFrame(loop);
   renderFitSel();
 
-  return { id: 'game', title: T('ゲーム'), el, fill: true, canvas, render: layoutScreen };
+  return { id: 'game', title: T('ゲーム'), el, fill: true, fixed: true, canvas, render: layoutScreen };
 }
 
 /** 保存データの窓: 中身を見る・消す・saves/ に書き出す・saves/ から戻す */

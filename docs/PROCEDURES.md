@@ -110,6 +110,7 @@ rm -rf examples/shooter/.ages examples/shooter/recordings/*.json
 - **AI向けの出力は短く。** 一覧は1行1件、変化は「前→後」、長いJSONは `--dump` のときだけ
 - **毎回読む説明を増やさない。** 道具を増やさず、patch の op（`OP_DOCS` に書き方）・手順（docs/GUIDE.md の項目）・`ages run` の要約の行に足す。AGENTS.md には目次の1行だけ、地図には使っているときだけ出る行を足す。`test/budget.test.ts` の上限を超えたら、上げる前に削れるものを探し、上げるなら DECISIONS.md に理由を書く
 - **エディタの画面に出す文は、日本語の元の文を `T('…{0}…', 値)` で包み、`src/editor/locales/` の5つの言語（en・zh-Hans・zh-Hant・de・fr）にも訳を足す。** 鍵は日本語の文そのもの。サーバーから画面へ返す文は `trFor(言語)` の `tr`、本体の標準の説明は `TD`。プロジェクトが書いた文は訳さない。抜け・使っていない訳・{0} の数・繁体字への簡体字の混じりは `test/editor-i18n.test.ts` が知らせる
+- **パネルの中の要素は、パネルの要素（el）から探す。** `document.getElementById`・`document.querySelector` で探さない（タブを別のウインドウに出すと見つからない。ui/popout.ts）。`window`・`document` で待つマウス・キーと、`toast`・`modal`・`menu`・`confirm` は、別のウインドウでもそのまま動く
 - **エラーには場所・範囲・候補を書く**（`suggest()` を使う）
 - **人の編集はすべて `Project.apply` などを通して操作ログに残す。** 直接ファイルを書く処理を足すときも、ログと★・🔒の扱いを必ず考える
 - **ロックは決して弱めない。** AIの経路（CLI・将来のMCP）からロックを設定・解除・回避できる機能は作らない

@@ -101,6 +101,7 @@ app.on('openMatrix', (path) => { matrix.open(path as string); layout.show('matri
 app.on('openSprite', (image) => { sprite.open(image as string); layout.show('sprite'); sprite.render?.(); });
 app.on('openTable', (t) => { const { name, row } = t as { name: string; row?: string }; table.open(name, row); layout.show('table'); });
 app.on('showPanel', (id) => layout.show(String(id)));
+(window as unknown as { agesLayout: Layout }).agesLayout = layout; // デバッグ・確かめ用（タブの開け閉め・別のウインドウ）
 
 // ---------- 上のバー ----------
 const top = document.getElementById('top')!;
@@ -262,8 +263,7 @@ async function mountWindows(): Promise<void> {
     if (!slot) {
       slot = { el: h('div', { class: 'ext-panel' }) };
       panels.set(id, slot);
-      const extId = x.ext.id;
-      const panel: Panel = { id, title: p.title ?? x.ext.title ?? x.ext.id, el: slot.el, ...(p.area ? { area: p.area } : {}), detach: () => window.open(`/?solo=win&id=${encodeURIComponent(extId)}`, `ages-win-${extId}`, 'width=1000,height=720') };
+      const panel: Panel = { id, title: p.title ?? x.ext.title ?? x.ext.id, el: slot.el, ...(p.area ? { area: p.area } : {}) };
       layout.add(panel);
     }
     slot.el.replaceChildren();
