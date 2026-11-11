@@ -19,7 +19,7 @@
 - それ以外は [MANUAL.md](MANUAL.md) の「MCP」の手順で足す
 
 ### GitHub と連携する（版だけ同梱。使う人の選択）
-- `ages pin <dir>`（新しく作るなら `ages init <dir> --pin`）。以後は `node ages.mjs <命令> .`・`node ages.mjs editor`・`node ages.mjs upgrade`
+- `ages init <dir>` で作ると、この形になる（本体のその版が GitHub にあるとき。ないとき・`--no-pin` のときは本体を今の場所から指す形）。前からあるプロジェクトは `ages pin <dir>`。以後は `node ages.mjs <命令> .`・`node ages.mjs editor`・`node ages.mjs upgrade`
 - リポジトリだけを取ったクラウドの会話でも、最初の命令で本体が `.ages/engine` に入る。本体の直しは AGES のリポジトリで（`.ages/engine` は書き換えても戻る）
 
 ### 起動

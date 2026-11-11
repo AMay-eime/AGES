@@ -1,6 +1,6 @@
 // AGES の AI 向け CLI。出力はすべて短いテキスト（トークン節約）。
 // 後で MCP サーバーから同じ関数を呼べるよう、各コマンドは文字列を返す関数にしてある。
-import { engineCommitFull, engineVersion, formatVersion, migrations, recordVersion, versionNote } from '../project/version.ts';
+import { engineCommitFull, engineOnRemote, engineVersion, formatVersion, migrations, recordVersion, versionNote } from '../project/version.ts';
 import { readFile, writeFile, readdir, mkdir, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -43,7 +43,7 @@ import { parseSpawns, spawnTryout, tryoutGone, tryoutScene } from '../core/tryou
 
 const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [引数]
 
-  init   <dir> [--name 名前] [--pin]  新しいプロジェクトを作る（EDITOR-PLAN.md 付き。ゲームの企画を受けたら最初にこれ。--pin で版だけ同梱の形）
+  init   <dir> [--name 名前] [--no-pin]  新しいプロジェクトを作る（EDITOR-PLAN.md 付き。ゲームの企画を受けたら最初にこれ）。版だけ同梱の形になる（どこへ移しても ages.mjs が本体を取ってきて動く。本体が GitHub にない版のとき・--no-pin のときは、本体を今の場所から指す形）
   map    <dir> [節[/まとめ]]          プロジェクトの地図（作業のたびに最初に読む）。大きなプロジェクトでは目次になり、節（components systems tables prefabs scenes など）で中身を引く。まとめ 名前/(数) は 節/名前（例 prefabs/se）
   find   <dir> <語 ...>              部品・フィールド・表の列と行・システム・プレハブ・シーンの物を、名前と説明から探す（語は全部を含むもの）
   schema <dir> [名前 ...]             詳しく引く: コンポーネント（型・範囲・説明）/ $表 / std:flash などのシェーダー
@@ -297,7 +297,7 @@ export async function cmdInit(dir: string, name?: string): Promise<string> {
   await writeFile(join(target, '.mcp.json'), JSON.stringify(mcp, null, 2) + '\n');
   created.push('.mcp.json');
   // ダブルクリックでエディタを開くファイル（Windows・mac。命令を打たずに使えるように）
-  created.push(...(await writeLaunchers(target, `"${engine}/src/editor/server.ts" .`)));
+  created.push(...(await writeLaunchers(target, `"${engine}/src/editor/server.ts" .`, `${engine}/src/editor/server.ts`)));
   // 作ったときの AGES の版を残す（後で本体を上げたとき、どこから直せばよいか分かるように）
   const v = await recordVersion(target);
   return [
@@ -971,6 +971,17 @@ export function addressExists(p: Project, addr: string): boolean {
   return p.docs.scenes.has(head) || existsSync(join(p.dir, addr));
 }
 
+/**
+ * 新しいプロジェクトを作り、本体のこの版が GitHub にもあれば、版だけ同梱の形にする（命令と MCP の ages_init）。
+ * 版だけ同梱なら、プロジェクトを別のパソコン・別の場所へ移しても ages.mjs が本体を取ってきて動く。
+ * 本体を今の場所から指す形は、移す・本体のフォルダを消すと「エディタを開く」が本体を見つけられない。pin: true=必ず / false=しない / 省く=できるなら
+ */
+export async function cmdInitPinned(dir: string, name?: string, pin?: boolean): Promise<string> {
+  const out = await cmdInit(dir, name);
+  if (pin === true || (pin !== false && engineOnRemote())) return `${out}\n${await cmdPin(dir)}`;
+  return `${out}\n（AGES 本体を今の場所から指す形です。このプロジェクトを別のパソコン・別の場所で使うなら ages pin <dir>）`;
+}
+
 function withLockReport(p: Project, text: string): string {
   return p.lockReport.length ? `${p.lockReport.map((l) => '🔒 ' + l).join('\n')}\n${text}` : text;
 }
@@ -984,7 +995,7 @@ async function main(argv: string[]): Promise<void> {
   await useActiveTask(dir);
   let out: string;
   switch (cmd) {
-    case 'init': out = await cmdInit(dir, typeof a.flags.name === 'string' ? a.flags.name : undefined); if (a.flags.pin === true) out += '\n' + await cmdPin(dir); break;
+    case 'init': out = await cmdInitPinned(dir, typeof a.flags.name === 'string' ? a.flags.name : undefined, a.flags.pin === true ? true : a.flags['no-pin'] === true ? false : undefined); break;
     case 'map': out = await cmdMap(dir, a.pos[1]); break;
     case 'find': out = await cmdFind(dir, need(a.pos.slice(1).join(' ') || undefined, '探す語（例 移動速度）')); break;
     case 'schema': out = await cmdSchema(dir, a.pos.slice(1)); break;
