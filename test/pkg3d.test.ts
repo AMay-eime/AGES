@@ -491,7 +491,10 @@ test('空間を文字で確かめる（ages space）: 位置・大きさ・上�
 });
 
 test('地図: 連番の並びを短く書く。1つの節だけが長いときは、その節だけ目次にする（全体が1枚に収まっていても）', async () => {
-  const { numberRuns, SECTION_MAX } = await import('../src/project/map.ts');
+  const { numberRuns, sectionMax } = await import('../src/project/map.ts');
+  const SECTION_MAX = sectionMax('scenes');
+  // しきい値は、節が要る確率の仮の値から決まる（よく要る節は長くても開いたまま、あまり要らない節は短くても畳む）
+  assert.ok(SECTION_MAX > 2000 && sectionMax('assets') < 600 && sectionMax('prefabs') < SECTION_MAX);
   assert.equal(numberRuns(['1', '2', '3', '5', '7', '8']), '1〜3,5,7,8');
   assert.equal(numberRuns(['01', '02', '03', '10']), '01〜03,10');
   assert.equal(numberRuns(['4']), '4');
@@ -510,4 +513,24 @@ test('地図: 連番の並びを短く書く。1つの節だけが長いとき�
   const page = await cmdMap(dir, 'scenes/main');
   assert.match(page, /alpha\/ ?\(?7|alpha/);
   assert.ok(page.length < SECTION_MAX * 2);
+
+  // とても大きなプロジェクトは、節を畳んだ1枚ではなく、目次の地図になる（見方の説明・最近の作業の場所が出る形）。
+  // 形は、節を畳む前の大きさで決める
+  const more = names.flatMap((a) => names.flatMap((b) => ['x', 'y', 'z', 'w'].map((c) => ({ op: 'addEntity' as const, scene: 'main', entity: { id: `${c}_${a}_${b}`, components: { Transform: {}, Shape: {}, Text: {} } } }))));
+  await cmdPatch(dir, more, false);
+  const big = await cmdMap(dir);
+  assert.match(big, /とても大きなプロジェクトなので目次の地図/);
+  assert.doesNotMatch(big, /長いので目次/);
+
+  // コードのファイルを直接直した場所も、最近の作業の場所に出る（AGES の命令を通らない直し）
+  const { noteCodeEdits, readRecent } = await import('../src/project/recent.ts');
+  assert.deepEqual(await noteCodeEdits(dir), [], '初めては、時刻を覚えるだけ');
+  const file = join(dir, 'game', 'index.ts');
+  const { utimes } = await import('node:fs/promises');
+  await writeFile(file, (await readFile(file, 'utf8')) + '\n// 直した\n');
+  await utimes(file, new Date(), new Date(Date.now() + 5000));
+  assert.deepEqual(await noteCodeEdits(dir), ['game/index.ts']);
+  assert.deepEqual(await noteCodeEdits(dir), [], '変わっていなければ数えない');
+  assert.equal((await readRecent(dir)).places['game/index.ts']?.hits, 1);
+  assert.match(await cmdMap(dir), /^最近の作業の場所.*game\/index\.ts/m);
 });
