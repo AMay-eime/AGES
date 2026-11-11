@@ -1,6 +1,7 @@
 // 書き出し（段階3）: エディタを含まない、ゲームだけのファイル一式を作る。
 // Web: そのままブラウザで遊べる静的なファイル（itch.io などに置ける）。デスクトップ: Web の書き出しを Tauri の窓で包む元（Steam 向け）。
 // 依存ゼロ: 型は Node の stripTypeScriptTypes で消し、import の .ts を .js に直すだけ（まとめない・縮めない。エラーの行番号もそのまま）
+import { checkPackageNames } from '../packages/index.ts';
 import { stripTypeScriptTypes } from 'node:module';
 import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -102,10 +103,12 @@ export async function exportProject(p: Project, opts: ExportOptions = {}): Promi
   }
 
   // 本体（再生に使う所だけ。エディタ・CLI・MCP は入れない）
-  const engineFiles = await copyModules([join(ENGINE_SRC, 'player', 'main.ts'), join(ENGINE_SRC, 'index.ts')], ENGINE_SRC, join(web, 'engine'), notes, () => false);
+  // 追加パッケージは、入れているものだけ（読み込みは式で組み立てているので、import をたどっても拾われない）
+  const pkgs = checkPackageNames(p.config.packages);
+  const engineFiles = await copyModules([join(ENGINE_SRC, 'player', 'main.ts'), join(ENGINE_SRC, 'index.ts'), ...pkgs.map((n) => join(ENGINE_SRC, 'packages', n, 'index.ts'))], ENGINE_SRC, join(web, 'engine'), notes, () => false);
   // ゲームのコード（'ages' は本体へ。import map で向ける）
   const entry = resolve(p.dir, p.config.game);
-  const gameFiles = await copyModules([entry], p.dir, web, notes, (s) => s === 'ages');
+  const gameFiles = await copyModules([entry], p.dir, web, notes, (s) => s === 'ages' || pkgs.some((n) => s === `ages/${n}`));
 
   // データ（シーン・プレハブ・表・切り方・設定）を1つに
   const codeRefs = [...(await p.codeRefs()).keys()];
@@ -129,7 +132,7 @@ export async function exportProject(p: Project, opts: ExportOptions = {}): Promi
     await copyFile(join(p.dir, a.path), dst);
     assetBytes += (await stat(dst)).size;
   }
-  await writeFile(join(web, 'index.html'), indexHtml(p.config.name));
+  await writeFile(join(web, 'index.html'), indexHtml(p.config.name, pkgs));
   await writeFile(join(web, EXPORT_MARK), JSON.stringify({ engine: 'AGES', at: new Date().toISOString() }) + '\n');
 
   const files = engineFiles.length + gameFiles.length + p.assets.length + 3;
@@ -151,7 +154,8 @@ async function clearExportDir(dir: string): Promise<void> {
   await mkdir(dir, { recursive: true });
 }
 
-function indexHtml(name: string): string {
+function indexHtml(name: string, pkgs: string[] = []): string {
+  const more = pkgs.map((n) => `, "ages/${n}": "./engine/packages/${n}/index.js"`).join('');
   const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
   return `<!doctype html>
 <html lang="ja">
@@ -159,7 +163,7 @@ function indexHtml(name: string): string {
 <meta charset="utf-8">
 <title>${esc(name)}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<script type="importmap">{ "imports": { "ages": "./engine/index.js" } }</script>
+<script type="importmap">{ "imports": { "ages": "./engine/index.js"${more} } }</script>
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; touch-action: none; user-select: none; }
   #game { position: absolute; display: block; outline: none; }

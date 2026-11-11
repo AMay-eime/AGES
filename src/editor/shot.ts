@@ -1,5 +1,6 @@
 // 決まったフレームの画面を撮る（ages run --shot）。CLI が headless の Chrome でこのページを開き、window.agesShot(設定) を呼ぶ。
 // ages run と同じ入力（core/runinput.ts）で同じフレームまで進め、そのフレームの画面を PNG で返す。音は鳴らさない。
+import { loadPackages } from '../packages/index.ts';
 import { Registry, type GameModule } from '../core/registry.ts';
 import { Game } from '../core/game.ts';
 import { MemoryStore } from '../core/save.ts';
@@ -41,7 +42,7 @@ async function shoot(cfg: ShotConfig): Promise<ShotResult> {
   const state = (await (await fetch('/api/state')).json()) as EditorState;
   if (state.error) throw new Error(state.error);
   const mod = (await import(`/project@${state.version}/${state.config.game}`)) as GameModule;
-  const registry = Registry.from(mod);
+  const registry = Registry.from(mod, [], await loadPackages(state.config.packages));
   registry.prefabs = new Map(Object.entries(state.prefabs));
   registry.scenes = new Map(Object.entries(state.scenes));
   registry.sheets = new Map(Object.entries(state.sheets ?? {}));

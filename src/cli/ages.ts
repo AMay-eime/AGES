@@ -18,7 +18,8 @@ import { writeLaunchers } from '../project/launchers.ts';
 import { checkExport } from './export-check.ts';
 import { readCursor, readLog, readTouched, summarize, writeCursor, type Actor } from '../project/oplog.ts';
 import { OP_DOCS, getValue, parseLiteral, splitCell, type Op } from '../core/patch.ts';
-import { readGuide } from '../project/guide.ts';
+import { readGuide, readPackageGuide } from '../project/guide.ts';
+import { PACKAGE_LIST } from '../packages/index.ts';
 import { activeTask, appendTalk, foldTalk, newId, readTalk, readTalkCursor, talkNotice, talkView, writeTalkCursor } from '../project/talk.ts';
 import { brief, defaultOf, matrixSize, suggest, typeOf, type AssetKind } from '../core/schema.ts';
 import { assetRefs, codeSceneRefs, isUnder } from '../core/assets.ts';
@@ -224,7 +225,8 @@ export async function cmdPin(dir: string, repo = DEFAULT_REPO, commit?: string, 
   const ts = join(p.dir, 'tsconfig.json');
   if (existsSync(ts)) {
     const t = await readFile(ts, 'utf8');
-    const u = t.replace(/"ages":\s*\["[^"]*\/src\/index\.ts"\]/, `"ages": ["./${PINNED_ENGINE}/src/index.ts"]`);
+    // 追加パッケージ（'ages/3d' など）の場所も（なければ足す）
+    const u = t.replace(/"ages":\s*\["[^"]*\/src\/index\.ts"\](,\s*"ages\/\*":\s*\["[^"]*"\])?/, `"ages": ["./${PINNED_ENGINE}/src/index.ts"], "ages/*": ["./${PINNED_ENGINE}/src/packages/*/index.ts"]`);
     if (u !== t) { await writeFile(ts, u); done.push('tsconfig.json'); }
   }
   return [`版だけ同梱の形にしました（AGES ${sha.slice(0, 7)}）:`, ...done.map((d) => `  ${d}`), '使い方: node ages.mjs <命令> . ・node ages.mjs editor（「エディタを開く」のダブルクリックでも）・本体を上げる: node ages.mjs upgrade'].join('\n');
@@ -309,7 +311,7 @@ export async function cmdSchema(dir: string, names: string[]): Promise<string> {
   const p = await Project.load(dir);
   const field = (k: string, f: import('../core/schema.ts').Field) => `  ${k} ${brief(f)}${f.desc ? ' — ' + f.desc : ''}${nested(f, '    ')}`;
   const out: string[] = [];
-  const guide = await readGuide();
+  const guide = await readGuide(p.registry.packages.map((x) => x.name));
   // 名前の種類: コンポーネント / $表 / シェーダー（std:… か .frag）/ ops（patch の操作）/ guide・guide:項目（機能ごとの手順）
   const isShader = (n: string) => n.startsWith('std:') || /\.(frag|glsl)$/i.test(n);
   const isDoc = (n: string) => n === 'ops' || n === 'guide' || n.startsWith('guide:');
@@ -342,7 +344,11 @@ export async function cmdSchema(dir: string, names: string[]): Promise<string> {
     } else {
       const name = n.slice('guide:'.length);
       const t = guide.get(name);
-      if (!t) throw new Error(`手順の項目 ${name} はありません${suggest(name, [...guide.keys()])}。一覧は guide`);
+      if (!t) {
+        // 入れていない追加パッケージの項目
+        for (const pk of Object.keys(PACKAGE_LIST)) if ((await readPackageGuide(pk)).has(name)) throw new Error(`手順の項目 ${name} は、追加パッケージ ${pk} を入れると引けます（ages.project.json の packages に "${pk}"。guide:packages）`);
+        throw new Error(`手順の項目 ${name} はありません${suggest(name, [...guide.keys()])}。一覧は guide`);
+      }
       const engine = enginePathFrom(p.dir);
       out.push(`## ${t.name}: ${t.title}${t.parts.length ? `（部品: ${t.parts.join(' ')}。中身は ages schema <dir> ${t.parts[0]}）` : ''}`, engine === '.' ? t.body : t.body.replaceAll('`examples/', `\`${engine}/examples/`));
     }

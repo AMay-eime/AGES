@@ -9,6 +9,7 @@ import { STD_SYSTEMS } from '../std/systems.ts';
 import { STD_TABLES, textTable } from '../std/tables.ts';
 import { resolvePrefab } from './variant.ts';
 import type { Ctx } from './game.ts';
+import type { PackageDef } from './packages.ts';
 
 export interface SystemDef {
   name: string;
@@ -94,10 +95,22 @@ export class Registry {
   /** 標準の表の名前 */
   readonly stdTables = new Set(STD_TABLES.map((t) => t.name));
 
-  static from(mod: GameModule, prefabs: Iterable<PrefabDoc> = []): Registry {
+  /** 入れている追加パッケージ（ages.project.json の packages） */
+  packages: PackageDef[] = [];
+  /** 追加パッケージのコンポーネント・表の名前 → パッケージの名前 */
+  readonly fromPackage = new Map<string, string>();
+
+  static from(mod: GameModule, prefabs: Iterable<PrefabDoc> = [], packages: PackageDef[] = []): Registry {
     const r = new Registry();
+    r.packages = packages;
     for (const c of STD_COMPONENTS) r.components.set(c.name, c);
+    for (const pk of packages) for (const c of pk.components ?? []) {
+      if (r.components.has(c.name)) throw new Error(`追加パッケージ ${pk.name} のコンポーネント ${c.name} が、ほかと重なっています`);
+      r.components.set(c.name, c);
+      r.fromPackage.set(c.name, pk.name);
+    }
     for (const c of mod.components) {
+      if (r.fromPackage.has(c.name)) throw new Error(`コンポーネント ${c.name} は追加パッケージ ${r.fromPackage.get(c.name)} で用意されています。game/ の定義を消して、そちらを使ってください（ages schema <dir> ${c.name} で中身を確認できます）`);
       if (r.std.has(c.name)) throw new Error(`コンポーネント ${c.name} は標準で用意されています。game/ の定義を消して、標準のものを使ってください（ages schema <dir> ${c.name} で中身を確認できます）`);
       if (r.components.has(c.name)) throw new Error(`コンポーネント ${c.name} が2回定義されています`);
       r.components.set(c.name, c);
@@ -117,14 +130,25 @@ export class Registry {
       r.systems.push(s);
     }
     for (const t of STD_TABLES) r.tables.set(t.name, t);
+    for (const pk of packages) for (const t of pk.tables ?? []) {
+      if (r.tables.has(t.name)) throw new Error(`追加パッケージ ${pk.name} の表 ${t.name} が、ほかと重なっています`);
+      r.tables.set(t.name, t);
+      r.fromPackage.set(`$${t.name}`, pk.name);
+    }
     for (const t of mod.tables ?? []) {
+      if (r.fromPackage.has(`$${t.name}`)) throw new Error(`表 ${t.name} は追加パッケージ ${r.fromPackage.get(`$${t.name}`)} で用意されています。game/ の定義を消して、そちらを使ってください`);
       if (STD_TABLES.some((x) => x.name === t.name)) throw new Error(`表 ${t.name} は標準で用意されています。game/ の定義を消して、標準のものを使ってください（ages schema <dir> $${t.name}）`);
       if (r.tables.has(t.name)) throw new Error(`表 ${t.name} が2回定義されています`);
       if (!/^[A-Za-z0-9_-]+$/.test(t.name)) throw new Error(`表の名前 "${t.name}" には英数字・_・- だけが使えます`);
       if ('id' in t.columns) throw new Error(`表 ${t.name}: 列 id は自動で付くので、columns に書かないでください`);
       r.tables.set(t.name, t);
     }
-    // 標準のシステムはゲームのシステムの後に動く
+    // 追加パッケージのシステムはゲームのシステムの後、標準のシステムはその後に動く
+    for (const pk of packages) for (const s of pk.systems ?? []) {
+      if (names.has(s.name)) throw new Error(`システム ${s.name} は追加パッケージ ${pk.name} にあります。game/ のシステムの名前を変えてください`);
+      names.add(s.name);
+      r.systems.push(s);
+    }
     for (const s of STD_SYSTEMS) r.systems.push(s);
     for (const c of mod.checks ?? []) {
       if (typeof c?.run !== 'function' || !c.name) throw new Error('checks には defineCheck({ name, desc, run }) を並べます');

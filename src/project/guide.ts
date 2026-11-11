@@ -33,6 +33,22 @@ export function parseGuide(text: string): Map<string, GuideTopic> {
 
 let cache: Map<string, GuideTopic> | undefined;
 
-export async function readGuide(): Promise<Map<string, GuideTopic>> {
-  return (cache ??= parseGuide(await readFile(GUIDE_FILE, 'utf8')));
+const pkgCache = new Map<string, Map<string, GuideTopic>>();
+
+/** 追加パッケージの手順（src/packages/<名前>/GUIDE.md。なければ空） */
+export async function readPackageGuide(name: string): Promise<Map<string, GuideTopic>> {
+  if (!pkgCache.has(name)) {
+    const text = await readFile(new URL(`../packages/${name}/GUIDE.md`, import.meta.url), 'utf8').catch(() => '');
+    pkgCache.set(name, parseGuide(text));
+  }
+  return pkgCache.get(name)!;
+}
+
+/** 本体の手順と、入れている追加パッケージ（packages）の手順 */
+export async function readGuide(packages: string[] = []): Promise<Map<string, GuideTopic>> {
+  const base = (cache ??= parseGuide(await readFile(GUIDE_FILE, 'utf8')));
+  if (!packages.length) return base;
+  const out = new Map(base);
+  for (const n of packages) for (const [k, t] of await readPackageGuide(n)) out.set(k, t);
+  return out;
 }
