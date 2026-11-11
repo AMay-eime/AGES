@@ -15,6 +15,7 @@ import { assetRefs, modelsOf, modelTexturesOf, preloadSet } from '../core/assets
 import { shaderMap, type ShaderDef } from '../core/shader.ts';
 import { LocalStore } from '../core/save.ts';
 import { languagesOf } from '../core/i18n.ts';
+import type { Origins } from '../core/origin.ts';
 import { resolveEntity } from '../core/variant.ts';
 import { T, lang } from './i18n.ts';
 import { AiModel } from './ai.ts';
@@ -25,6 +26,8 @@ export interface TouchMark { who: string; t: string }
 
 export interface EditorState {
   config: ProjectConfig;
+  /** アセットの出どころの記録（場所 → 出どころ） */
+  origins?: Origins;
   scenes: Record<string, SceneDoc>;
   prefabs: Record<string, PrefabDoc>;
   touched: Record<string, TouchMark>;

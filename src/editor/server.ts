@@ -508,6 +508,17 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
     if (typeof b.path === 'string' && !b.path.startsWith('std:') && typeof b.hash === 'string') await writeShaderResult(projectDir, b.path, b.hash, typeof b.error === 'string' ? b.error : null);
     return json(res, { ok: true });
   }
+  if (m === 'POST' && p === '/api/origin') {
+    // アセットの出どころ（自作・AI 生成・素材）を書く
+    const b = JSON.parse((await body(req)).toString('utf8') || '{}');
+    try {
+      const r = await call('origin', String(b.path ?? ''), b.origin ?? {});
+      broadcast({ type: 'files', paths: ['assets.origin.json'] });
+      return json(res, { ok: true, ...(r as object) });
+    } catch (e) {
+      return json(res, { error: (e as Error).message }, 400);
+    }
+  }
   if (m === 'POST' && p === '/api/mkdir') {
     const rel = (url.searchParams.get('path') ?? '').replace(/\\/g, '/').replace(/\/+$/, '');
     const bad = checkAssetPath(rel);
