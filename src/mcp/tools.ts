@@ -1,6 +1,6 @@
 // AGES の MCP の道具（tools）と、使い方の説明（instructions）。
 // server.ts から使う。テスト（毎回読む量の上限）からも読めるよう、標準入出力を開かないこのファイルに分けてある。
-import { cmdAssets, cmdUndo, cmdCheck, cmdUi, cmdGet, cmdInitPinned, cmdLog, cmdMap, cmdFind, cmdPatch, cmdRun, cmdSchema, cmdSheet, cmdSlice, cmdTable, cmdTalk } from '../cli/ages.ts';
+import { cmdAssets, cmdUndo, cmdCheck, cmdUi, cmdGet, cmdInitPinned, cmdLog, cmdMap, cmdFind, cmdCode, cmdPatch, cmdRun, cmdSchema, cmdSheet, cmdSlice, cmdTable, cmdTalk } from '../cli/ages.ts';
 import { parseLiteral, splitCell, type Op } from '../core/patch.ts';
 
 /** 使い方の説明（MCP の initialize で毎回渡る）。短く保つ: 機能ごとの手順は ages_schema の guide で要るときに引く */
@@ -8,7 +8,7 @@ export function makeInstructions(defaultProject: string): string {
   return `AGES は、AIと人が一緒に速くゲームを作るためのゲームエンジン兼エディタ。道具の dir を省くと ${defaultProject}。
 - ゲームの企画を受けたら、いきなりコードを書かない。まず ages_init でプロジェクトを作り、EDITOR-PLAN.md で「どんなエディタが必要か」を使用者と決める（「一緒に決めるか、AIにおまかせか」を最初に聞く。おまかせを自分から選ばない）。合意するまでゲームのコードは書かない
 - 作業の始めに ages_talk の task で、人のエディタに何をするかを見せ、終わりに done。人が決めることは ask。出力の先頭に 📌 が出たら ages_talk で読む
-- 作業のたびに最初に ages_map（全体の地図）と ages_log（前回から人が変えたこと）を読む。大きなプロジェクトの地図は目次なので、中身は ages_find（名前・説明から探す）か ages_map の section で引く
+- 作業のたびに最初に ages_map（全体の地図）と ages_log（前回から人が変えたこと）を読む。大きなプロジェクトの地図は目次なので、中身は ages_find（名前・説明から探す）か ages_map の section で引く。コードは ages_code
 - 値は ages_set / ages_patch で変える。JSONやアセットのファイルを直接書き換えない・動かさない。行列はセル単位（住所[行,列]）、リストの中は 住所[番号]、構造体の中は 住所.名前
 - 同じ形の行が並ぶデータ（武器・敵・カードなど）は表にする（住所は $表.行.列、中身は ages_table）
 - 🔒ロックされた値は絶対に変えない（変えられない）。変えるべき理由があれば人に提案する。★人が調整した値は、人に確認してから force
@@ -44,6 +44,12 @@ export function makeTools(defaultProject: string): Tool[] {
       description: '部品・フィールド・表の列と行・システム・プレハブ・シーンの物を名前と説明から探す（例 "移動速度"）',
       inputSchema: { type: 'object', properties: { ...dirProp, words: { type: 'string' } }, required: ['words'] },
       run: (a, dir) => cmdFind(dir, a.words),
+    },
+    {
+      name: 'ages_code',
+      description: 'コードを引く（ファイルを開く前に）: 宣言の場所と範囲・使っている所（どの関数の中か）。q は 名前・"$表.列"・"部品.欄"・ファイル・日本語の語。body で中身',
+      inputSchema: { type: 'object', properties: { ...dirProp, q: { type: 'array', items: { type: 'string' } }, body: { type: 'boolean' }, all: { type: 'boolean' }, around: { type: 'number' } }, required: ['q'] },
+      run: (a, dir) => cmdCode(dir, a.q ?? [], { ...(a.body ? { body: true } : {}), ...(a.all ? { all: true } : {}), ...(a.around ? { around: String(a.around) } : {}) }),
     },
     {
       name: 'ages_log',

@@ -16,8 +16,8 @@ process.env.AGES_HOME ??= await mkdtemp(join(tmpdir(), 'ages-home-'));
 /** 上限（文字数）。2026-11-09 段階2-14.5 の値に1〜2割の余裕 */
 const BUDGET = {
   instructions: 1200, // MCP の initialize で渡る説明（2026-11-11 段階5 ages_talk の1行で 1100 → 1200）
-  tools: 7200, // MCP の道具の定義（tools/list の JSON。2026-11-11 段階5 ages_talk で 6500 → 7200）
-  agents: 4300, // AGENTS.md（2026-11-10 位置の親子の1行で 3800 → 3900。2026-11-11 段階5 ages talk で 3900 → 4250、速さの道具の1行で 4250 → 4300）
+  tools: 7600, // MCP の道具の定義（tools/list の JSON。2026-11-11 段階5 ages_talk で 6500 → 7200、ages_code で 7200 → 7600）
+  agents: 4400, // AGENTS.md（2026-11-10 位置の親子の1行で 3800 → 3900。2026-11-11 段階5 ages talk で 3900 → 4250、速さの道具の1行で 4250 → 4300、ages code の案内で 4300 → 4400）
   mapBlank: 600, // ages init したばかりのプロジェクトの地図
   mapShooter: 4300, // 見本（examples/shooter）の地図
 };

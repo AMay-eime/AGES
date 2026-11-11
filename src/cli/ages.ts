@@ -10,6 +10,7 @@ import { Project } from '../project/project.ts';
 import { indexDepth, renderAssets, renderMap, renderMapSection } from '../project/map.ts';
 import { findInProject } from '../project/find.ts';
 import { codeDefs } from '../project/codedefs.ts';
+import { codeQuery, indexCode } from '../project/code.ts';
 import { noteCodeEdits, noteRecent, placeOf, readRecent, recentFor, topRecent } from '../project/recent.ts';
 import { eventWarnings } from '../project/events.ts';
 import { focusLine, readFocus, withFocus } from '../project/focus.ts';
@@ -49,6 +50,8 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   init   <dir> [--name 名前] [--no-pin]  新しいプロジェクトを作る（EDITOR-PLAN.md 付き。ゲームの企画を受けたら最初にこれ）。版だけ同梱の形になる（どこへ移しても ages.mjs が本体を取ってきて動く。本体が GitHub にない版のとき・--no-pin のときは、本体を今の場所から指す形）
   map    <dir> [節[/まとめ]]          プロジェクトの地図（作業のたびに最初に読む）。大きなプロジェクトでは目次になり、節（components systems tables prefabs scenes など）で中身を引く。まとめ 名前/(数) は 節/名前（例 prefabs/se）
   find   <dir> <語 ...>              部品・フィールド・表の列と行・システム・プレハブ・シーンの物を、名前と説明から探す（語は全部を含むもの）
+  code   <dir> <名前 | 部品.欄 | $表.列 | ファイル | 日本語の語 ...> [--body] [--around 2] [--all] [--max 30]
+                                     コードを引く: 宣言の場所と範囲（--body で中身）・使っている所（どの関数の中か。読/書/値/呼）・ファイルの目次・コメントから探す
   schema <dir> [名前 ...]             詳しく引く: コンポーネント（型・範囲・説明）/ $表 / std:flash などのシェーダー
                / ops（patch の操作の一覧と書き方）/ guide（機能ごとの手順の目次）/ guide:項目（例 guide:ui）
   get    <dir> <addr> [addr ...]     値を見る（例: main#player / main#player.Player.speed / @enemy / $enemies.basic）
@@ -147,6 +150,16 @@ export async function cmdFind(dir: string, query: string): Promise<string> {
   const r = findInProject(p, query, await readGuide(), withFocus(await readRecent(p.dir), focus), codeDefs(await p.codeFiles()), focus ? '最近の作業の場所・エディタで見ている所' : undefined);
   await noteRecent(p.dir, []);
   return r.text;
+}
+
+/** コードを引く: 宣言の場所と中身・名前や欄を使っている所・ファイルの目次・コメントからの検索 */
+export async function cmdCode(dir: string, queries: string[], f: Args['flags'] = {}): Promise<string> {
+  if (!queries.length && typeof f.body !== 'string') throw new Error('引くものを書いてください（例 ages code <dir> fireShot --body / $bullets.defaultSpeed / Player.speed / game/shot.ts / 速さ）');
+  // --body 名前 と書いても、名前は引くものに数える
+  for (const k of ['body', 'all']) if (typeof f[k] === 'string') queries = [...queries, f[k] as string];
+  const p = await Project.load(dir);
+  const num = (k: string) => (f[k] !== undefined && f[k] !== true ? Number(f[k]) : undefined);
+  return codeQuery(p, indexCode(await p.codeFiles()), queries, { body: !!f.body, all: !!f.all, around: num('around'), max: num('max') });
 }
 
 /** エディタ計画書が未合意なら警告文を返す */
@@ -1068,6 +1081,7 @@ async function main(argv: string[]): Promise<void> {
     case 'init': out = await cmdInitPinned(dir, typeof a.flags.name === 'string' ? a.flags.name : undefined, a.flags.pin === true ? true : a.flags['no-pin'] === true ? false : undefined); break;
     case 'map': out = await cmdMap(dir, a.pos[1]); break;
     case 'find': out = await cmdFind(dir, need(a.pos.slice(1).join(' ') || undefined, '探す語（例 移動速度）')); break;
+    case 'code': out = await cmdCode(dir, a.pos.slice(1), a.flags); break;
     case 'schema': out = await cmdSchema(dir, a.pos.slice(1)); break;
     case 'get': out = await cmdGet(dir, a.pos.slice(1)); break;
     case 'set': {
