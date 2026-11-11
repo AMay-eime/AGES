@@ -37,7 +37,9 @@ import { layoutUI } from '../core/ui.ts';
 import { RunInput, parseParams, parseRunKeys, type RunKeys } from '../core/runinput.ts';
 export { parseParams } from '../core/runinput.ts';
 import { RUN_DATE, formatDate, parseDate } from '../core/clock.ts';
-import { captureShots } from './shot.ts';
+import { captureShots, findChrome } from './shot.ts';
+import { Profile } from '../core/profile.ts';
+import type { DrawStats } from '../editor/shot.ts';
 import { MemoryStore } from '../core/save.ts';
 import { languagesOf } from '../core/i18n.ts';
 import { parseSpawns, spawnTryout, tryoutGone, tryoutScene } from '../core/tryout.ts';
@@ -60,6 +62,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
                [--params stage=s1,level=2]（始めのシーンに渡す ctx.scene.params。JSON でもよい） [--date 2026-12-25T09:00]（ctx.date の始め。省くと決まった日時）
                --keys の "title+30-32:@ui_confirm" は、シーン title に入るたびに、入ってから 30〜31 フレーム目に押す（click=ボタンのID も書ける）
                [--shot 0,600 [--shot-scale 0.5] [--shot-dir 場所]]（そのフレームの画面を PNG で撮る。既定 .ages/shots。要 Chrome）
+               [--perf | --perf logic]（速さ: システムごとの1フレームの時間と、物がいちばん多いフレームを描いた量。logic は描いた量を省く）
   log    <dir> [--all] [--peek]      前回からの編集の要約（--peek は既読にしない）
   undo   <dir> [--tx id] [--force]   自分（AI）の直前の編集を元に戻す（その後で変えられた所があれば止まる）。redo <dir> でやり直す
   check  <dir>                       全データの検証とロックの検査
@@ -628,6 +631,7 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
   const once = () => {
     const lang = typeof f.lang === 'string' ? f.lang : undefined;
     const game = spawns.length ? p.newGame(undefined, seed, new MemoryStore(initialSave), lang, tryoutScene(), undefined, date) : p.newGame(scene, seed, new MemoryStore(initialSave), lang, undefined, params, date);
+    if (f.perf) game.profile = new Profile();
     const spawned = spawns.length ? spawnTryout(game, spawns, p.config.view.width, p.config.view.height) : [];
     const play = new RunInput(keys);
     const lines: string[] = [];
@@ -691,8 +695,38 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
     await mkdir(dirname(to), { recursive: true });
     await writeFile(to, JSON.stringify(g.save.all(), null, 2) + '\n');
   }
-  if (shotFrames.length) out.push(...(await shots(p, f, shotFrames, shotHashes, shotSnaps, { scene, seed, keys, params, save: initialSave, spawns, date: formatDate(date) })));
+  // --perf: システムごとの時間（画面なしで測った目安）と、物がいちばん多いフレームを描いたときの数
+  const prof = g.profile;
+  // 同じ入力なら同じ処理なので、あと2回測って、フレームごとに短い方を取る（たまたまの遅れを消す。長い実行は1回だけ足す）
+  if (prof && prof.frames.length) for (let i = 0; i < (r.ms < 4000 ? 2 : r.ms < 20000 ? 1 : 0); i++) { const again = once().game.profile; if (again) prof.merge(again); }
+  const drawStats = new Map<number, DrawStats>();
+  const drawAt = prof && prof.frames.length && f.perf !== 'logic' && findChrome() ? prof.peak().frame : undefined;
+  const shotLines = shotFrames.length || drawAt !== undefined ? await shots(p, f, shotFrames, shotHashes, shotSnaps, { scene, seed, keys, params, save: initialSave, spawns, date: formatDate(date), statsAt: drawAt, stats: drawStats }) : [];
+  if (prof) out.push(...perfLines(prof, p.config.fps, drawAt, drawAt !== undefined ? drawStats.get(drawAt) : undefined, f.perf === 'logic' ? '' : findChrome() ? '' : '描いたときの数は Chrome がないので出せません'));
+  out.push(...shotLines);
   return withLockReport(p, out.join('\n'));
+}
+
+/** --perf の行。重い順に、1フレームあたりの時間と割合。1フレームの時間を超えたら ⚠ */
+export function perfLines(prof: Profile, fps: number, drawAt: number | undefined, draw: DrawStats | undefined, note = ''): string[] {
+  const n = prof.frames.length;
+  if (!n) return ['perf: 1フレームも進んでいません'];
+  const budget = 1000 / fps, s = prof.summary(budget), worst = prof.worst(), peak = prof.peak();
+  const ms = (v: number) => (v >= 10 ? v.toFixed(0) : v >= 1 ? v.toFixed(1) : v >= 0.095 ? v.toFixed(2) : v.toFixed(3));
+  const num = (v: number) => Math.round(v).toLocaleString('en-US');
+  const out = [`perf: 1フレーム 平均 ${ms(s.mean)}ms・真ん中 ${ms(s.median)}ms・最大 ${ms(worst.ms)}ms @f${worst.frame}（${fps}fps の1フレームは ${ms(budget)}ms。物は最大 ${peak.count} @f${peak.frame}）`];
+  const parts = prof.parts();
+  const top = parts.filter((x) => x.ms / s.total >= 0.03).slice(0, 8), rest = s.total - top.reduce((a, x) => a + x.ms, 0);
+  out.push(`  重い順: ${top.map((x) => `${x.name} ${ms(x.ms / n)}ms ${Math.round((x.ms / s.total) * 100)}%${x.max > budget / 4 ? `（最大 ${ms(x.max)} @f${x.maxFrame}）` : ''}`).join('・')}${rest > 0.005 * s.total ? `・ほか ${ms(rest / n)}ms` : ''}`);
+  if (s.over) out.push(`⚠ 1フレームの時間（${ms(budget)}ms）を超えたフレームが ${s.over}（最初 f${s.firstOver}。いちばん長い f${worst.frame} は ${worst.parts.map(([k, v]) => `${k} ${ms(v)}ms`).join('・')}）`);
+  if (draw) {
+    const l3 = draw.layers['3d'];
+    const d2 = `命令 ${draw.draws}回・2D の四角 ${num(draw.quads)}${draw.particles ? `・2D の粒 ${num(draw.particles)}` : ''}`;
+    const d3 = l3 ? `／3D: 物 ${l3.things}（画面内 ${l3.shown}）・三角形 ${num(l3.tris)}${l3.particles ? `・粒 ${num(l3.particles)}` : ''}` : '';
+    out.push(`  描画 @f${drawAt}（物がいちばん多いフレーム）: ${d2}${d3}`);
+    if (draw.draws > 500 || (l3?.tris ?? 0) > 500_000 || draw.quads > 20_000) out.push(`⚠ 描く量が多い（目安: 命令 500回・三角形 50万・四角 2万まで）。同じ形・同じ材質にそろえる（まとめて描かれる）・画像を1枚のシートにまとめる・遠くの物を減らす`);
+  } else if (note) out.push(`  ${note}`);
+  return out;
 }
 
 /**
@@ -721,20 +755,23 @@ export function snapshotDiff(a: unknown, b: unknown): string {
 }
 
 /** --shot: ages run と同じ入力で、そのフレームの画面を撮って .ages/shots（--shot-dir）に PNG で置く */
-async function shots(p: Project, f: Args['flags'], frames: number[], hashes: Map<number, string>, snaps: Map<number, unknown>, o: { scene: string; seed: number; keys: RunKeys; params?: Record<string, unknown>; save: Record<string, unknown>; spawns: import('../core/tryout.ts').TryoutSpawn[]; date: string }): Promise<string[]> {
+async function shots(p: Project, f: Args['flags'], frames: number[], hashes: Map<number, string>, snaps: Map<number, unknown>, o: { scene: string; seed: number; keys: RunKeys; params?: Record<string, unknown>; save: Record<string, unknown>; /** --perf: このフレームは、描いたときの数だけを取る（画像は置かない） */ statsAt?: number; stats?: Map<number, DrawStats>; spawns: import('../core/tryout.ts').TryoutSpawn[]; date: string }): Promise<string[]> {
   const scale = f['shot-scale'] !== undefined ? Number(f['shot-scale']) : 1;
   if (!(scale > 0 && scale <= 2)) throw new Error('--shot-scale は 0 より大きく 2 以下（例 0.5 で半分の大きさ。画像のトークンも減る）');
   const reach = frames.filter((n) => n === 0 || hashes.has(n));
   const out: string[] = [];
   for (const n of frames.filter((x) => !reach.includes(x))) out.push(`⚠ shot f${n}: そのフレームまで進んでいません（--frames を増やすか、--until で止まる前のフレームに）`);
-  if (!reach.length) return out;
+  const all = [...new Set([...reach, ...(o.statsAt !== undefined ? [o.statsAt] : [])])];
+  if (!all.length) return out;
   try {
-    const r = await captureShots(p.dir, { scene: o.scene, seed: o.seed, frames: reach, keys: o.keys, date: o.date, params: o.params, save: o.save, lang: typeof f.lang === 'string' ? f.lang : undefined, spawns: o.spawns, scale, dump: true });
+    const r = await captureShots(p.dir, { scene: o.scene, seed: o.seed, frames: all, keys: o.keys, date: o.date, params: o.params, save: o.save, lang: typeof f.lang === 'string' ? f.lang : undefined, spawns: o.spawns, scale, dump: true });
     const dir = resolve(p.dir, typeof f['shot-dir'] === 'string' ? f['shot-dir'] : '.ages/shots');
-    await mkdir(dir, { recursive: true });
+    if (reach.length) await mkdir(dir, { recursive: true });
     const name = o.spawns.length ? 'tryout' : o.scene;
     const { width, height } = p.config.view;
     for (const s of r.shots) {
+      o.stats?.set(s.frame, s.stats);
+      if (!reach.includes(s.frame)) continue;
       const file = join(dir, `${name}-f${s.frame}.png`);
       await writeFile(file, Buffer.from(s.png, 'base64'));
       const same = hashes.get(s.frame) === s.hash;
@@ -743,7 +780,7 @@ async function shots(p: Project, f: Args['flags'], frames: number[], hashes: Map
     }
     if (r.error) out.push(`⚠ 画面のページでエラー（f${r.frame}）: ${r.error}`);
   } catch (e) {
-    out.push(`⚠ 画面を撮れませんでした: ${(e as Error).message}`);
+    out.push(`⚠ ${reach.length ? '画面を撮れませんでした' : '描いたときの数を取れませんでした'}: ${(e as Error).message}`);
   }
   return out;
 }

@@ -32,8 +32,11 @@ export interface ShotConfig {
   dump?: boolean;
 }
 
+/** そのフレームを描いたときの数（描く命令の回数・2D の四角・2D の粒と、層ごとの数） */
+export interface DrawStats { draws: number; quads: number; particles: number; layers: Record<string, Record<string, number>> }
+
 export interface ShotResult {
-  shots: { frame: number; hash: string; png: string; snapshot?: unknown }[];
+  shots: { frame: number; hash: string; png: string; snapshot?: unknown; stats: DrawStats }[];
   /** 進めたフレーム */
   frame: number;
   error?: string;
@@ -96,7 +99,9 @@ async function shoot(cfg: ShotConfig): Promise<ShotResult> {
       }
       const hash = game.hash();
       const snapshot = cfg.dump ? game.snapshot() : undefined;
-      shots.push({ frame: game.frame, hash, png: await capture(), ...(snapshot ? { snapshot } : {}) });
+      const png = await capture();
+      const stats: DrawStats = { ...renderer.stats, particles: renderer.particles.count(), layers: Object.fromEntries(renderer.layers.filter((l) => l.stats).map((l) => [l.name, { ...l.stats } as Record<string, number>])) };
+      shots.push({ frame: game.frame, hash, png, stats, ...(snapshot ? { snapshot } : {}) });
     }
   } catch (e) {
     return { shots, frame: game.frame, error: (e as Error).message };

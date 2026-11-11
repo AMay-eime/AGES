@@ -35,4 +35,6 @@ export interface RenderLayer {
   settled?(): Promise<void>;
   /** 前の draw で描いた命令の回数 */
   draws?: number;
+  /** 前の draw の数（速さの目安。ages run --perf に出る。数だけ） */
+  stats?: object;
 }
