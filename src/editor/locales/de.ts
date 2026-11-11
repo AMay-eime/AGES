@@ -786,6 +786,9 @@ export default {
   "モデル": "Modell",
   "動きの名前（空なら元の姿勢）": "Name der Animation (leer = Ruhepose)",
   "このモデルに動きはありません": "Dieses Modell hat keine Animationen",
+  "大きさ {0} m（幅×高さ×奥行き）": "Größe {0} m (Breite × Höhe × Tiefe)",
+  "三角形 {0}": "{0} Dreiecke",
+  "「3D シーン」へドラッグすると置けます": "Zum Platzieren in „3D-Szene“ ziehen",
   // ---- 本体の標準の部品・表・シェーダーの説明（std-descs.ts。TD で訳す） ----
   "位置・向き・大きさ（標準）": "Position, Drehung, Größe (Standard)",
   "横位置(px。parent があれば親から見た位置)": "Horizontale Position (px; relativ zum Elternteil, falls parent gesetzt)",

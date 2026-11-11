@@ -1,16 +1,19 @@
 // 3D の描画（WebGL2）。2D の描画の下の層（src/render/layer.ts）として、背景の上・2D の物の下に描く。
 // - 自分の描く先（色 + 奥行き。4倍のアンチエイリアス）に描いてから、2D の描く先へ重ねる（2D 側に奥行きの用意がなくてよい）
-// - 光: 太陽1つ + 点の光8つまで + 全体の明るさ（上と下の色）。影はまだない
+// - 光: 太陽1つ + 点の光8つまで + 全体の明るさ（上と下の色）
+// - 影: 太陽の影だけ（影の地図1枚。カメラから shadowRange m まで。先に光から見た奥行きを描き、本番で比べる）
 // - 色は画面の色のまま計算する（2D の色と同じに見えるように。光の計算を直線の色で行うのは、必要になってから）
 import type { LayerFrame, LayerHost, RenderLayer } from '../../render/layer.ts';
 import { box, capsule, cylinder, plane, sphere, type Geometry } from './geometry.ts';
-import { invert, multiply, normalize, transformDirection, type Mat4, type Vec3 } from './math.ts';
+import { cross, invert, multiply, normalize, orthographic, transformDirection, transformPoint, type Mat4, type Vec3 } from './math.ts';
 import { cameraOf, matrixOf, type CameraView3 } from './space.ts';
 import { parseGlb, type GltfModel } from './gltf.ts';
 import { jointMatrices, modelPose } from './animation.ts';
 import { translation } from './math.ts';
 
 const MAX_POINT = 8;
+/** 影の地図の1辺（画素） */
+const SHADOW_SIZE = 2048;
 
 const VS = `#version 300 es
 layout(location=0) in vec3 a_pos;
@@ -67,7 +70,22 @@ uniform vec3 u_pointColor[${MAX_POINT}];
 uniform float u_pointRange[${MAX_POINT}];
 uniform vec4 u_fog; // 色は u_fogColor、x=始まり y=終わり z=使うか
 uniform vec3 u_fogColor;
+uniform highp sampler2DShadow u_shadowMap;
+uniform mat4 u_shadowMat; // 世界 → 影の地図（0〜1）
+uniform vec4 u_shadow; // x=使うか y=面の向きへずらす量(m) z=影の届く距離(m) w=1画素の幅(0〜1)
+uniform vec3 u_camDir;
 out vec4 o_color;
+// 太陽が届く割合（1 = 日なた、0 = 影）。まわり9点をならして、ふちをやわらかくする
+float sunlit(vec3 n) {
+  if (u_shadow.x < 0.5) return 1.0;
+  vec3 p = (u_shadowMat * vec4(v_world + n * u_shadow.y, 1.0)).xyz;
+  if (p.x <= 0.0 || p.x >= 1.0 || p.y <= 0.0 || p.y >= 1.0 || p.z >= 1.0) return 1.0;
+  float sum = 0.0;
+  for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) sum += texture(u_shadowMap, vec3(p.xy + vec2(float(x), float(y)) * u_shadow.w, p.z));
+  // 届く距離の手前から、だんだん影をなくす
+  float far = dot(v_world - u_camPos, u_camDir);
+  return mix(sum / 9.0, 1.0, smoothstep(u_shadow.z * 0.8, u_shadow.z, far));
+}
 void main() {
   vec4 base = texture(u_tex, v_uv) * u_color;
   vec3 rgb = base.rgb;
@@ -80,6 +98,7 @@ void main() {
     vec3 light = mix(u_ground, u_sky, n.y * 0.5 + 0.5);
     vec3 spec = vec3(0.0);
     float d = max(dot(n, -u_sunDir), 0.0);
+    if (d > 0.0) d *= sunlit(n);
     light += u_sunColor * d;
     if (d > 0.0) spec += u_sunColor * pow(max(dot(n, normalize(toCam - u_sunDir)), 0.0), shine) * gloss;
     for (int i = 0; i < ${MAX_POINT}; i++) {
@@ -102,6 +121,11 @@ void main() {
   // 重ねるときのために、色に不透明度をかけておく
   o_color = vec4(rgb * base.a, base.a);
 }`;
+
+/** 影の地図に描くとき（奥行きだけ） */
+const DEPTH_FS = `#version 300 es
+precision mediump float;
+void main() {}`;
 
 const BLIT_VS = `#version 300 es
 out vec2 v_uv;
@@ -130,6 +154,9 @@ interface Model {
   size: Vec3;
 }
 interface Tex { tex: WebGLTexture; loaded: Promise<void> }
+/** 1回の描画で描く物 */
+interface Item { m: Mat4; mesh: Mesh; mat: Mat; depth: number; clear: boolean; cast: boolean; joints?: Float32Array }
+interface Lights { sun: { dir: Vec3; color: Vec3; shadow: boolean; range: number } | null; pos: number[]; col: number[]; range: number[]; env: Record<string, any> | undefined }
 
 /** 3D の層への指示（DrawOptions.layers['3d']） */
 export interface Layer3DOptions {
@@ -152,7 +179,13 @@ export class Layer3D implements RenderLayer {
   private host: LayerHost;
   private prog: WebGLProgram;
   private blit: WebGLProgram;
+  private depthProg: WebGLProgram;
   private loc = new Map<string, WebGLUniformLocation | null>();
+  private depthLoc = new Map<string, WebGLUniformLocation | null>();
+  // 影の地図（太陽から見た奥行き）。使うときに作る。使わないときは 1画素の代わりを当てる
+  private shadowTex: WebGLTexture | null = null;
+  private shadowFbo: WebGLFramebuffer | null = null;
+  private noShadow: WebGLTexture;
   private meshes = new Map<string, Mesh>();
   private textures = new Map<string, Tex>();
   private white: WebGLTexture;
@@ -169,6 +202,8 @@ export class Layer3D implements RenderLayer {
     const gl = (this.gl = host.gl);
     this.prog = program(gl, VS, FS);
     this.blit = program(gl, BLIT_VS, BLIT_FS);
+    this.depthProg = program(gl, VS, DEPTH_FS);
+    this.noShadow = this.depthTexture(1);
     this.white = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, this.white);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]));
@@ -179,6 +214,99 @@ export class Layer3D implements RenderLayer {
   private u(name: string): WebGLUniformLocation | null {
     if (!this.loc.has(name)) this.loc.set(name, this.gl.getUniformLocation(this.prog, name));
     return this.loc.get(name)!;
+  }
+
+  private ud(name: string): WebGLUniformLocation | null {
+    if (!this.depthLoc.has(name)) this.depthLoc.set(name, this.gl.getUniformLocation(this.depthProg, name));
+    return this.depthLoc.get(name)!;
+  }
+
+  /** 奥行きの画像（比べた結果をならして読む） */
+  private depthTexture(size: number): WebGLTexture {
+    const gl = this.gl, t = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, size, size, 0, gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_MODE, gl.COMPARE_REF_TO_TEXTURE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_FUNC, gl.LEQUAL);
+    return t;
+  }
+
+  /**
+   * 影の地図を描く。カメラの見える範囲（手前から range m まで）を囲む球を、太陽の向きから見下ろす。
+   * 戻り値は 世界 → 影の地図（0〜1）の行列と、1画素の幅（m）
+   */
+  private shadowPass(items: Item[], cam: CameraView3, dir: Vec3, range: number): { mat: Mat4; texel: number } | null {
+    const casters = items.filter((x) => x.cast);
+    if (!casters.length) return null;
+    const gl = this.gl;
+    // 見える範囲の8つの角（遠い側は range まで）
+    const t = Math.max(0, Math.min(1, (range - cam.near) / Math.max(0.0001, cam.far - cam.near)));
+    const pts: Vec3[] = [];
+    for (const [x, y] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      const a = transformPoint(cam.inverse, [x, y, -1]), b = transformPoint(cam.inverse, [x, y, 1]);
+      pts.push(a, [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]);
+    }
+    const c: Vec3 = [0, 0, 0];
+    for (const q of pts) { c[0] += q[0] / 8; c[1] += q[1] / 8; c[2] += q[2] / 8; }
+    // 半径は切り上げておく（カメラが回っても地図の大きさが変わらず、影のふちがちらつかない）
+    const r = Math.max(1, Math.ceil(Math.max(...pts.map((q) => Math.hypot(q[0] - c[0], q[1] - c[1], q[2] - c[2]))) * 2) / 2);
+    // 光から見た右・上（右 × 上 = 手前。面の表裏が本番と同じになる向き）
+    const right = normalize(cross(dir, Math.abs(dir[1]) > 0.99 ? [1, 0, 0] : [0, 1, 0])), up = cross(right, dir);
+    // 中心を地図の画素に合わせる（カメラが動いても影のふちが泳がない）
+    const texel = (2 * r) / SHADOW_SIZE;
+    const snap = (axis: Vec3) => Math.round((c[0] * axis[0] + c[1] * axis[1] + c[2] * axis[2]) / texel) * texel;
+    const cx = snap(right), cy = snap(up), cz = c[0] * dir[0] + c[1] * dir[1] + c[2] * dir[2];
+    // 範囲の外（太陽の側）にある物の影も落ちるよう、手前に余裕をとる
+    const back = r + 100, depth = back + r;
+    const eye: Vec3 = [right[0] * cx + up[0] * cy + dir[0] * (cz - back), right[1] * cx + up[1] * cy + dir[1] * (cz - back), right[2] * cx + up[2] * cy + dir[2] * (cz - back)];
+    const view = invert([right[0], right[1], right[2], 0, up[0], up[1], up[2], 0, -dir[0], -dir[1], -dir[2], 0, eye[0], eye[1], eye[2], 1]);
+    if (!view) return null;
+    const viewProj = multiply(orthographic(r, 1, 0, depth), view);
+
+    if (!this.shadowTex) {
+      this.shadowTex = this.depthTexture(SHADOW_SIZE);
+      this.shadowFbo = gl.createFramebuffer()!;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.shadowFbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, this.shadowTex, 0);
+      gl.drawBuffers([gl.NONE]);
+      gl.readBuffer(gl.NONE);
+    }
+    // 本番で影の地図を当てる場所（2番）から外しておく（描く先と読む先が同じにならないように）
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this.noShadow);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.shadowFbo);
+    gl.viewport(0, 0, SHADOW_SIZE, SHADOW_SIZE);
+    gl.disable(gl.SCISSOR_TEST);
+    gl.disable(gl.BLEND);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+    gl.depthMask(true);
+    gl.clearDepth(1);
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+    // 面が自分の影で縞にならないよう、少し奥へずらして描く
+    gl.enable(gl.POLYGON_OFFSET_FILL);
+    gl.polygonOffset(2, 4);
+    gl.useProgram(this.depthProg);
+    gl.uniformMatrix4fv(this.ud('u_viewProj'), false, new Float32Array(viewProj));
+    gl.uniform1i(this.ud('u_jointTex'), 1);
+    for (const x of casters) {
+      gl.uniform1f(this.ud('u_skin'), x.joints ? 1 : 0);
+      if (x.joints) this.bindJoints(x.joints);
+      gl.uniformMatrix4fv(this.ud('u_model'), false, new Float32Array(x.m));
+      if (x.mat.doubleSided) gl.disable(gl.CULL_FACE); else { gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK); }
+      gl.bindVertexArray(x.mesh.vao);
+      gl.drawElements(gl.TRIANGLES, x.mesh.count, x.mesh.type, 0);
+      this.draws++;
+    }
+    gl.disable(gl.POLYGON_OFFSET_FILL);
+    gl.bindVertexArray(null);
+    // -1〜1 を 0〜1 へ
+    return { mat: multiply([0.5, 0, 0, 0, 0, 0.5, 0, 0, 0, 0, 0.5, 0, 0.5, 0.5, 0.5, 1], viewProj), texel };
   }
 
   private mesh(key: string, make: () => Geometry): Mesh {
@@ -338,7 +466,7 @@ export class Layer3D implements RenderLayer {
     const opts = (f.options ?? {}) as Layer3DOptions;
     const cam = (this.camera = opts.camera ?? cameraOf(world, f.width / Math.max(1, f.height)));
     // 描く物（見えるもの）。なければ何もしない（3D を入れていても 2D だけのシーンは、そのまま）
-    const items: { m: Mat4; mesh: Mesh; mat: Mat; depth: number; clear: boolean; joints?: Float32Array }[] = [];
+    const items: Item[] = [];
     for (const e of world.entities.values()) {
       const c = e.c.Mesh3D as Record<string, any> | undefined;
       const md = e.c.Model3D as Record<string, any> | undefined;
@@ -351,7 +479,7 @@ export class Layer3D implements RenderLayer {
         const { mesh, scale } = this.shape(c.shape, size);
         const m = multiply(wm, [scale[0], 0, 0, 0, 0, scale[1], 0, 0, 0, 0, scale[2], 0, 0, 0, 0, 1]);
         const [r, g, b] = rgb(c.color ?? '#ffffff'), a = alphaOf(c.color) * (c.alpha ?? 1);
-        items.push({ m, mesh, depth, clear: a < 1, mat: { color: [r, g, b, a], tex: this.texture(c.texture ?? ''), tile: (c.tile ?? [1, 1]) as [number, number], roughness: c.roughness ?? 0.8, unlit: !!c.unlit, doubleSided: false } });
+        items.push({ m, mesh, depth, clear: a < 1, cast: c.shadow !== false && a >= 0.5, mat: { color: [r, g, b, a], tex: this.texture(c.texture ?? ''), tile: (c.tile ?? [1, 1]) as [number, number], roughness: c.roughness ?? 0.8, unlit: !!c.unlit, doubleSided: false } });
         this.drawn.push({ id: e.id, matrix: wm, shape: c.shape ?? 'box', size });
       }
       if (md && md.visible !== false && md.model) {
@@ -371,7 +499,7 @@ export class Layer3D implements RenderLayer {
             joints.set(sk, jm);
           }
           // 骨で動くメッシュは、ノードの位置を使わない（骨の行列に入っている）
-          items.push({ m: jm ? wm : multiply(wm, pose?.[part.node] ?? part.world), ...(jm ? { joints: jm } : {}), mesh: part.mesh, depth, clear: alpha < 1 || mt.blend, mat: { color: [mt.color[0] * r, mt.color[1] * g, mt.color[2] * b, alpha], tex: mt.tex, tile: [1, 1], roughness: mt.roughness, unlit: mt.unlit, doubleSided: mt.doubleSided } });
+          items.push({ m: jm ? wm : multiply(wm, pose?.[part.node] ?? part.world), ...(jm ? { joints: jm } : {}), mesh: part.mesh, depth, clear: alpha < 1 || mt.blend, cast: md.shadow !== false && alpha >= 0.5, mat: { color: [mt.color[0] * r, mt.color[1] * g, mt.color[2] * b, alpha], tex: mt.tex, tile: [1, 1], roughness: mt.roughness, unlit: mt.unlit, doubleSided: mt.doubleSided } });
         }
         // 選ぶ・枠のための、全体を囲む箱
         this.drawn.push({ id: e.id, matrix: multiply(wm, translation(model.center)), shape: 'box', size: model.size });
@@ -380,6 +508,9 @@ export class Layer3D implements RenderLayer {
     if (!items.length && !opts.grid) return;
 
     const gl = this.gl, W = f.width, H = f.height;
+    const L = this.findLights(world);
+    // 太陽の影（先に、光から見た奥行きを描く）
+    const shadow = L.sun?.shadow ? this.shadowPass(items, cam, L.sun.dir, L.sun.range) : null;
     this.target(W, H);
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.msaa);
     gl.viewport(0, 0, W, H);
@@ -395,7 +526,13 @@ export class Layer3D implements RenderLayer {
     gl.useProgram(this.prog);
     gl.uniformMatrix4fv(this.u('u_viewProj'), false, new Float32Array(cam.viewProj));
     gl.uniform3fv(this.u('u_camPos'), cam.pos);
-    this.lights(f);
+    gl.uniform3fv(this.u('u_camDir'), cam.dir);
+    this.lights(L, f.background);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, shadow ? this.shadowTex : this.noShadow);
+    gl.uniform1i(this.u('u_shadowMap'), 2);
+    gl.uniform4f(this.u('u_shadow'), shadow ? 1 : 0, (shadow?.texel ?? 0) * 1.5, L.sun?.range ?? 0, 1 / SHADOW_SIZE);
+    if (shadow) gl.uniformMatrix4fv(this.u('u_shadowMat'), false, new Float32Array(shadow.mat));
     gl.activeTexture(gl.TEXTURE0);
     gl.uniform1i(this.u('u_tex'), 0);
     gl.uniform1i(this.u('u_jointTex'), 1);
@@ -479,22 +616,24 @@ export class Layer3D implements RenderLayer {
   }
 
   private jointTex: WebGLTexture | null = null;
+  /** 骨の行列を、幅4（行列の列）× 骨の数 の画像にして渡す（1番） */
+  private bindJoints(joints: Float32Array): void {
+    const gl = this.gl;
+    gl.activeTexture(gl.TEXTURE1);
+    if (!this.jointTex) {
+      this.jointTex = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, this.jointTex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    }
+    gl.bindTexture(gl.TEXTURE_2D, this.jointTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 4, joints.length / 16, 0, gl.RGBA, gl.FLOAT, joints);
+    gl.activeTexture(gl.TEXTURE0);
+  }
   private one(m: Mat4, mesh: Mesh, mat: Mat, joints?: Float32Array): void {
     const gl = this.gl;
     gl.uniform1f(this.u('u_skin'), joints ? 1 : 0);
-    if (joints) {
-      // 骨の行列を、幅4（行列の列）× 骨の数 の画像にして渡す
-      gl.activeTexture(gl.TEXTURE1);
-      if (!this.jointTex) {
-        this.jointTex = gl.createTexture()!;
-        gl.bindTexture(gl.TEXTURE_2D, this.jointTex);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-      }
-      gl.bindTexture(gl.TEXTURE_2D, this.jointTex);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 4, joints.length / 16, 0, gl.RGBA, gl.FLOAT, joints);
-      gl.activeTexture(gl.TEXTURE0);
-    }
+    if (joints) this.bindJoints(joints);
     gl.uniformMatrix4fv(this.u('u_model'), false, new Float32Array(m));
     gl.uniformMatrix3fv(this.u('u_normalMat'), false, new Float32Array(normalMatrix(m)));
     gl.uniform4f(this.u('u_color'), mat.color[0], mat.color[1], mat.color[2], mat.color[3]);
@@ -508,11 +647,10 @@ export class Layer3D implements RenderLayer {
     this.draws++;
   }
 
-  /** 光と全体の明るさ・霧 */
-  private lights(f: LayerFrame): void {
-    const gl = this.gl, world = f.world;
+  /** シーンの光（太陽1つ・点の光）と全体の明るさの設定を集める */
+  private findLights(world: LayerFrame['world']): Lights {
     let env: Record<string, any> | undefined;
-    let sun: { dir: Vec3; color: Vec3 } | null = null;
+    let sun: Lights['sun'] = null;
     const pos: number[] = [], col: number[] = [], range: number[] = [];
     let any = false;
     for (const e of world.entities.values()) {
@@ -526,23 +664,29 @@ export class Layer3D implements RenderLayer {
       const k = l.intensity ?? 1, [r, g, b] = rgb(l.color ?? '#ffffff');
       if (l.kind === 'point') {
         if (range.length < MAX_POINT) { pos.push(m[12], m[13], m[14]); col.push(r * k, g * k, b * k); range.push(l.range ?? 10); }
-      } else if (!sun) sun = { dir: normalize(transformDirection(m, [0, 0, 1])), color: [r * k, g * k, b * k] };
+      } else if (!sun) sun = { dir: normalize(transformDirection(m, [0, 0, 1])), color: [r * k, g * k, b * k], shadow: l.shadow !== false, range: l.shadowRange ?? 30 };
     }
     // 光を1つも置いていなければ、斜め上からの既定の太陽
-    if (!any) sun = { dir: normalize([-0.4, -0.8, -0.45]), color: [0.9, 0.9, 0.85] };
-    gl.uniform3fv(this.u('u_sunDir'), sun?.dir ?? [0, -1, 0]);
-    gl.uniform3fv(this.u('u_sunColor'), sun?.color ?? [0, 0, 0]);
-    gl.uniform1i(this.u('u_pointCount'), range.length);
-    if (range.length) {
-      gl.uniform3fv(this.u('u_pointPos'), pos);
-      gl.uniform3fv(this.u('u_pointColor'), col);
-      gl.uniform1fv(this.u('u_pointRange'), range);
+    if (!any) sun = { dir: normalize([-0.4, -0.8, -0.45]), color: [0.9, 0.9, 0.85], shadow: true, range: 30 };
+    return { sun, pos, col, range, env };
+  }
+
+  /** 光と全体の明るさ・霧を、本番のシェーダーへ */
+  private lights(L: Lights, background: string): void {
+    const gl = this.gl, env = L.env;
+    gl.uniform3fv(this.u('u_sunDir'), L.sun?.dir ?? [0, -1, 0]);
+    gl.uniform3fv(this.u('u_sunColor'), L.sun?.color ?? [0, 0, 0]);
+    gl.uniform1i(this.u('u_pointCount'), L.range.length);
+    if (L.range.length) {
+      gl.uniform3fv(this.u('u_pointPos'), L.pos);
+      gl.uniform3fv(this.u('u_pointColor'), L.col);
+      gl.uniform1fv(this.u('u_pointRange'), L.range);
     }
     const amb = env?.ambient ?? 0.6;
     gl.uniform3fv(this.u('u_sky'), rgb(env?.sky ?? '#b8c4d8').map((v) => v * amb));
     gl.uniform3fv(this.u('u_ground'), rgb(env?.ground ?? '#5a5348').map((v) => v * amb));
     gl.uniform4f(this.u('u_fog'), env?.fogNear ?? 20, env?.fogFar ?? 80, env?.fog ? 1 : 0, 0);
-    gl.uniform3fv(this.u('u_fogColor'), rgb(f.background));
+    gl.uniform3fv(this.u('u_fogColor'), rgb(background));
   }
 }
 

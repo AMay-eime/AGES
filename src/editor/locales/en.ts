@@ -786,6 +786,9 @@ export default {
   "モデル": "Model",
   "動きの名前（空なら元の姿勢）": "Clip name (empty = rest pose)",
   "このモデルに動きはありません": "This model has no clips",
+  "大きさ {0} m（幅×高さ×奥行き）": "Size {0} m (width × height × depth)",
+  "三角形 {0}": "{0} triangles",
+  "「3D シーン」へドラッグすると置けます": "Drag into “3D scene” to place it",
   // ---- 本体の標準の部品・表・シェーダーの説明（std-descs.ts。TD で訳す） ----
   "位置・向き・大きさ（標準）": "Position, rotation, scale (standard)",
   "横位置(px。parent があれば親から見た位置)": "Horizontal position (px; relative to the parent if parent is set)",
