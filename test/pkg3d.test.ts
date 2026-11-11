@@ -489,3 +489,25 @@ test('空間を文字で確かめる（ages space）: 位置・大きさ・上�
   assert.match(await cmdMap(dir), /ages space/);
   assert.match(await cmdSchema(dir, ['guide:3d-space']), /ages space <dir>/);
 });
+
+test('地図: 連番の並びを短く書く。1つの節だけが長いときは、その節だけ目次にする（全体が1枚に収まっていても）', async () => {
+  const { numberRuns, SECTION_MAX } = await import('../src/project/map.ts');
+  assert.equal(numberRuns(['1', '2', '3', '5', '7', '8']), '1〜3,5,7,8');
+  assert.equal(numberRuns(['01', '02', '03', '10']), '01〜03,10');
+  assert.equal(numberRuns(['4']), '4');
+  const dir = join(await mkdtemp(join(tmpdir(), 'ages-3d-')), 'g');
+  await cmdInit(dir, 'g');
+  // 名前がばらばらで、まとめられない物を多く置く（シーンの節だけが長くなる）
+  const names = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel', 'india', 'juliet'];
+  const ops = names.flatMap((a) => names.slice(0, 7).map((b) => ({ op: 'addEntity' as const, scene: 'main', entity: { id: `${a}_${b}`, components: { Transform: {}, Shape: {} } } })));
+  await cmdPatch(dir, ops, false);
+  const map = await cmdMap(dir);
+  assert.ok(map.length < 12000);
+  assert.match(map, /^## scenes 1個: main\(\d+体・開始\)（長いので目次。中身は ages map <dir> scenes、まとめは ages map <dir> scenes\/名前）$/m);
+  assert.doesNotMatch(map, /main#alpha_bravo/);
+  // 目次から引ける: 節の全体と、シーンの中のまとめ
+  assert.match(await cmdMap(dir, 'scenes'), /main#alpha_bravo/);
+  const page = await cmdMap(dir, 'scenes/main');
+  assert.match(page, /alpha\/ ?\(?7|alpha/);
+  assert.ok(page.length < SECTION_MAX * 2);
+});

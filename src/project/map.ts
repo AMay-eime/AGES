@@ -20,6 +20,8 @@ import { buildTree, commonDir, fileKeys, findNode, isNode, keysOf, topLine, tree
 
 /** 地図の大きさの上限（文字）。超えるプロジェクトでは細かいところを省いた要約の地図、それでも超えるなら目次の地図にする（中身は節ごと・名前で引く） */
 export const MAP_BUDGET = 12000;
+/** 1つの節の大きさの上限（文字）。超えた節だけ、目次の1行にする（全体が MAP_BUDGET に収まっていても） */
+export const SECTION_MAX = 2500;
 
 /** 地図の節（ages map <dir> <節> で1つだけ引ける） */
 export const MAP_SECTIONS = ['components', 'shaders', 'systems', 'tables', 'prefabs', 'scenes', 'assets', 'extensions'] as const;
@@ -56,7 +58,8 @@ export function renderMapSection(p: Project, section: string, ins: MapInputs = {
   if (!MAP_SECTIONS.includes(name)) throw new Error(`地図の節 ${section} はありません${suggest(head ?? '', [...MAP_SECTIONS])}（${MAP_SECTIONS.join(' ')}）`);
   const mode: MapMode = buildMap(p, ins, 'full').length <= budget ? 'full' : buildMap(p, ins, 'compact').length <= budget ? 'compact' : 'index';
   // とても大きなプロジェクト（目次の地図）では、まとめの木から1枚（節/まとめ/…）
-  if (mode === 'index' && name !== 'assets') return treeSectionPage(p, withDefaults(ins), name, path);
+  // まとめの名前つき（節/まとめ/…）は、小さなプロジェクトでも木から1枚（節ごとの入れ子で目次になった節から引く）
+  if ((mode === 'index' || path.length) && name !== 'assets') return treeSectionPage(p, withDefaults(ins), name, path);
   const lines = sectionLines(p, withDefaults(ins), mode === 'full' ? 'full' : 'compact')[name];
   return lines.length ? lines.join('\n') : `（${name} はありません）`;
 }
@@ -81,6 +84,14 @@ export function buildMap(p: Project, inputs: MapInputs, mode: MapMode): string {
   // 追加パッケージ（入れているときだけ）。機能の目次は AGENTS.md と同じ書き方（→ `項目` は ages schema <dir> guide:項目）
   for (const pk of p.registry.packages) out.push(`## package ${pk.name}: ${pk.desc}`, ...(pk.toc ?? []).map((l) => `- ${l}`));
   const sec = mode === 'index' ? indexLines(p, ins) : sectionLines(p, ins, mode);
+  // 節ごとの入れ子: 全体は1枚に収まっても、1つの節だけが長いなら、その節だけ目次にする（置いた物の多いシーンなど）
+  if (mode !== 'index') {
+    for (const k of TREE_SECTIONS) {
+      if (sec[k].join('\n').length <= SECTION_MAX) continue;
+      const line = indexTreeLine(p, ins, k);
+      if (line) sec[k] = [`${line}（長いので目次。中身は ages map <dir> ${k}、まとめは ages map <dir> ${k}/名前）`];
+    }
+  }
   out.push(...sec.components, ...sec.shaders, ...notes(p), ...sec.systems, ...sec.tables, ...sec.prefabs, ...sec.scenes, ...sec.assets, ...sec.extensions);
   if (mode === 'index') out.push(...markRoots(ins));
   // 最近の作業の場所（目次の地図だけ。続けて同じ辺りを触るなら探さずに済む）
@@ -157,24 +168,32 @@ function sectionLines(p: Project, ins: Ins, mode: 'full' | 'compact'): Record<Ma
   if (p.docs.prefabs.size && !compact) r.prefabs.push(`## prefabs（@名前 で参照${[...p.docs.prefabs.values()].some((x) => x.base) ? '。← は派生の元、変: は元から変えた所' : ''}）`);
   for (const raw of compact ? [] : p.docs.prefabs.values()) r.prefabs.push(prefabLine(p, raw, ins, false));
 
-  r.scenes.push(`## scenes（シーン#ID "名前" [コンポーネント]）${gotos.size ? `\ngoto の行き先（コード）: ${[...gotos.keys()].join(' ')}` : ''}`);
+  r.scenes.push(`## scenes（シーン#ID "名前" ←@プレハブ 変:プレハブと違う値 [部品]。プレハブと同じ部品・タグと、位置の上書きは省く。連番は #coin1〜8 ×8 とまとめる）${gotos.size ? `\ngoto の行き先（コード）: ${[...gotos.keys()].join(' ')}` : ''}`);
   // 要約の地図では、前のシーンと同じ物（同じ ID・同じ部品）を繰り返さない
   const seen = new Map<string, string>();
   for (const raw of p.docs.scenes.values()) {
     const s = p.resolvedScene(raw);
     r.scenes.push(`${s.name}（${s.entities.length}体）${s.name === c.startScene ? ' 開始' : ''}${s.desc ? ' ' + (compact ? firstSentence(s.desc) : s.desc) : ''}`);
     const same = new Map<string, number>();
+    // 1行ずつ作ってから、連番（同じ頭の名前・同じ中身）を1行にまとめる
+    const rows: { id: string; rest: string; group: string | null }[] = [];
     s.entities.forEach((e, i) => {
-      const tags = e.tags?.length ? ` tags:${e.tags.join(',')}` : '';
       const mk = marks(touched, locks, `${s.name}#${e.id}`);
-      // プレハブのインスタンスは ←@プレハブ と、プレハブから変えた所（変:）
-      const ov = e.prefab ? instanceOverrides(p.docs.prefabs, raw.entities[i]) : [];
-      const inst = e.prefab ? ` ←@${e.prefab}${!compact && ov.length ? ` 変:${ov.join(',')}` : ''}` : '';
-      const sig = `${e.id}[${Object.keys(e.components).join(' ')}]${tags}${inst}`;
+      const rest = entityRest(p, raw.entities[i], e, compact) + mk;
+      const sig = `${e.id}${rest}`;
       if (compact && !mk && seen.has(sig)) { const from = seen.get(sig)!; same.set(from, (same.get(from) ?? 0) + 1); return; }
       if (!seen.has(sig)) seen.set(sig, s.name);
-      r.scenes.push(compact ? `  #${e.id}${inst} [${Object.keys(e.components).join(' ')}]${tags}${mk}` : `  ${s.name}#${e.id} "${e.name}"${inst} [${Object.keys(e.components).join(' ')}]${tags}${mk}`);
+      const num = NUMBERED.exec(e.id);
+      rows.push({ id: e.id, rest, group: num && !mk && (!e.name || e.name === e.id) ? `${num[1]}\n${rest}` : null });
     });
+    const done = new Set<string>();
+    for (const row of rows) {
+      const members = row.group ? rows.filter((x) => x.group === row.group) : [row];
+      if (members.length < 2) { r.scenes.push(`  ${compact ? '' : s.name}#${row.id}${row.rest}`); continue; }
+      if (done.has(row.group!)) continue;
+      done.add(row.group!);
+      r.scenes.push(`  ${compact ? '' : s.name}#${NUMBERED.exec(row.id)![1]}${numberRuns(members.map((x) => NUMBERED.exec(x.id)![2]))}${row.rest} ×${members.length}`);
+    }
     for (const [from, n] of same) r.scenes.push(`  ほか${n}体は ${from} と同じ`);
   }
 
@@ -188,6 +207,38 @@ function sectionLines(p: Project, ins: Ins, mode: 'full' | 'compact'): Record<Ma
   }
   r.extensions.push(...extensionLines(p, windows));
   return r;
+}
+
+/** 位置・向き・大きさの上書き（置いた物なら当たり前なので、地図には出さない） */
+const PLACEMENT = /^Transform(3D)?\./;
+
+/**
+ * シーンの物の行の、ID の後ろ（"名前" ←@プレハブ 変:… [部品] tags:…）。
+ * プレハブのインスタンスは、プレハブの行にあるもの（同じ部品・同じタグ）を繰り返さない
+ */
+function entityRest(p: Project, rawEntity: SceneDoc['entities'][number], e: SceneDoc['entities'][number], compact: boolean): string {
+  const comps = Object.keys(e.components);
+  let pf: { tags?: string[]; components: Record<string, unknown> } | undefined;
+  try { pf = e.prefab ? p.registry.findPrefab(e.prefab) : undefined; } catch { pf = undefined; }
+  const ov = e.prefab ? instanceOverrides(p.docs.prefabs, rawEntity).filter((o) => !PLACEMENT.test(o)) : [];
+  const inst = e.prefab ? ` ←@${e.prefab}${!compact && ov.length ? ` 変:${ov.join(',')}` : ''}` : '';
+  const sameParts = !!pf && Object.keys(pf.components).length === comps.length && comps.every((k) => k in pf!.components);
+  const sameTags = !!pf && (pf.tags ?? []).join(',') === (e.tags ?? []).join(',');
+  const tags = e.tags?.length && !sameTags ? ` tags:${e.tags.join(',')}` : '';
+  const name = !compact && e.name && e.name !== e.id ? ` "${e.name}"` : '';
+  return `${name}${inst}${sameParts ? '' : ` [${comps.join(' ')}]`}${tags}`;
+}
+
+/** 連番の番号の並びを短く（1,2,3,5 → 1〜3,5。桁をそろえた 01 などはそのまま） */
+export function numberRuns(nums: string[]): string {
+  const out: string[] = [];
+  for (let i = 0; i < nums.length;) {
+    let j = i;
+    while (j + 1 < nums.length && nums[j + 1].length === nums[j].length && Number(nums[j + 1]) === Number(nums[j]) + 1) j++;
+    out.push(j > i + 1 ? `${nums[i]}〜${nums[j]}` : j === i + 1 ? `${nums[i]},${nums[j]}` : nums[i]);
+    i = j + 1;
+  }
+  return out.join(',');
 }
 
 /** コンポーネントの1行。compact: 説明の初めとフィールドの名前だけ。at: コードの場所 */
@@ -260,6 +311,7 @@ function codeTree<T>(list: T[], kind: string, nameOf: (x: T) => string, item: (x
 }
 
 type TreeSection = Exclude<MapSection, 'assets'>;
+const TREE_SECTIONS: TreeSection[] = ['components', 'shaders', 'systems', 'tables', 'prefabs', 'scenes', 'extensions'];
 
 /** 節の木（目次の地図と ages map <dir> 節/まとめ） */
 function sectionTree(p: Project, ins: Ins, sec: TreeSection): TreeNode {
@@ -449,11 +501,11 @@ function indexLines(p: Project, ins: Ins): Record<MapSection, string[]> {
     if (line) r[sec].push(line);
   }
   if (p.assets.length) {
-    const n = { image: 0, sheet: 0, sound: 0, font: 0 };
+    const n = { image: 0, sheet: 0, sound: 0, font: 0, shader: 0, model: 0 };
     for (const a of p.assets) {
-      if (a.kind === 'image') { n.image++; if (p.registry.sheets.get(a.path)) n.sheet++; } else if (a.kind === 'sound') n.sound++; else n.font++;
+      if (a.kind === 'image') { n.image++; if (p.registry.sheets.get(a.path)) n.sheet++; } else n[a.kind]++;
     }
-    r.assets.push(`## assets ${p.assets.length}個: 画像${n.image}（シート${n.sheet}） 音${n.sound}${n.font ? ` フォント${n.font}` : ''}（1つずつは ages assets <dir> [フォルダ]）`);
+    r.assets.push(`## assets ${p.assets.length}個: 画像${n.image}（シート${n.sheet}） 音${n.sound}${n.font ? ` フォント${n.font}` : ''}${n.shader ? ` シェーダー${n.shader}` : ''}${n.model ? ` モデル${n.model}` : ''}（1つずつは ages assets <dir> [フォルダ]）`);
   }
   return r;
 }
@@ -504,21 +556,20 @@ export function summarizeAssets(p: Project, o: AssetListOptions = {}): string[] 
   const refs = assetRefs(p.docs, p.registry);
   const code = o.code ?? new Map<string, string[]>();
   const locks = o.locks ?? {}, touched = o.touched ?? {};
-  const groups = new Map<string, { image: number; sheet: number; sound: number; font: number; unused: number; lock: number; star: number }>();
+  const groups = new Map<string, { image: number; sheet: number; sound: number; font: number; shader: number; model: number; unused: number; lock: number; star: number }>();
   for (const a of p.assets) {
     const parts = dirOf(a.path).split('/').filter(Boolean);
     const key = parts.slice(0, 3).join('/') || '.';
-    const g = groups.get(key) ?? { image: 0, sheet: 0, sound: 0, font: 0, unused: 0, lock: 0, star: 0 };
+    const g = groups.get(key) ?? { image: 0, sheet: 0, sound: 0, font: 0, shader: 0, model: 0, unused: 0, lock: 0, star: 0 };
     if (a.kind === 'image') { g.image++; if (p.registry.sheets.get(a.path)) g.sheet++; }
-    else if (a.kind === 'sound') g.sound++;
-    else g.font++;
+    else g[a.kind]++;
     if (!((refs.get(a.path)?.length ?? 0) + (code.get(a.path)?.length ?? 0))) g.unused++;
     if (locks[`sheet:${a.path}`] || locks[`file:${a.path}`]) g.lock++;
     else if (touched[`sheet:${a.path}`]) g.star++;
     groups.set(key, g);
   }
   return [...groups].map(([k, g]) => {
-    const kinds = [g.image ? `画像${g.image}${g.sheet ? `（シート${g.sheet}）` : ''}` : '', g.sound ? `音${g.sound}` : '', g.font ? `フォント${g.font}` : ''].filter(Boolean).join(' ');
+    const kinds = [g.image ? `画像${g.image}${g.sheet ? `（シート${g.sheet}）` : ''}` : '', g.sound ? `音${g.sound}` : '', g.font ? `フォント${g.font}` : '', g.shader ? `シェーダー${g.shader}` : '', g.model ? `モデル${g.model}` : ''].filter(Boolean).join(' ');
     const marks = [g.unused ? `未使用${g.unused}` : '', g.lock ? `🔒${g.lock}` : '', g.star ? `★${g.star}` : ''].filter(Boolean).join(' ');
     return `  ${k}/ ${kinds}${marks ? ' ' + marks : ''}`;
   });

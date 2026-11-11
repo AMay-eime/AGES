@@ -94,6 +94,8 @@ export class Registry {
   images = new Map<string, { w: number; h: number }>();
   /** モデルの動き（場所 → 動きの名前 → 長さ秒）。動きの時刻を進めるのに使う（追加パッケージ 3d） */
   models = new Map<string, Record<string, number>>();
+  /** モデルが使っている外の画像（モデルの場所 → 画像の場所）。使っている所の数え方に入れる（消してはいけない画像） */
+  modelTextures = new Map<string, string[]>();
   /** 標準のコンポーネントの名前 */
   readonly std = new Set(STD_COMPONENTS.map((c) => c.name));
   /** 標準の表の名前 */

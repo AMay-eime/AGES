@@ -14,6 +14,10 @@ export function kindOf(path: string): AssetKind | null {
   return null;
 }
 
+/** アセットの一覧から、モデルが使っている外の画像（モデルの場所 → 画像の場所） */
+export const modelTexturesOf = (assets: { path: string; model?: { textures?: string[] } }[]): Map<string, string[]> =>
+  new Map(assets.flatMap((a) => (a.model?.textures?.length ? [[a.path, a.model.textures] as [string, string[]]] : [])));
+
 /** アセットの一覧から、モデルの動きの長さ（場所 → 名前 → 秒）を作る（登録簿の models に入れる） */
 export const modelsOf = (assets: { path: string; model?: { clips: string[]; clipSec?: number[] } }[]): Map<string, Record<string, number>> =>
   new Map(assets.flatMap((a) => (a.model ? [[a.path, Object.fromEntries(a.model.clips.map((c, i) => [c, a.model!.clipSec?.[i] ?? 0]))] as [string, Record<string, number>]] : [])));
@@ -53,7 +57,10 @@ export interface AssetDocs {
  * 画像の切り方（.sheet.json）は画像と一緒に動くので、ここには入れない
  */
 export function assetRefs(docs: AssetDocs, reg: Registry): Map<string, string[]> {
-  return leafRefs(docs, reg, (f) => f.type === 'asset');
+  const out = leafRefs(docs, reg, (f) => f.type === 'asset');
+  // モデル（.glb）が外のファイルとして使っている画像も、使っている所に数える（未使用に見えて消されないように）
+  for (const [model, textures] of reg.modelTextures) for (const t of textures) out.set(t, [...(out.get(t) ?? []), `${model}（モデルの画像）`]);
+  return out;
 }
 
 /** 値の葉（pick が true の型）の値 → それを持っている住所 */

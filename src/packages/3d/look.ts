@@ -70,6 +70,8 @@ export interface SpaceOptions {
   models: ModelBounds;
   /** この物だけ（省くと全部） */
   only?: string[];
+  /** この物と、そのまわり radius m にある物だけ（外枠どうしの距離で） */
+  near?: { id: string; radius: number };
 }
 
 /** 空間の様子を文字で（1つの物に1行。⚠ は置き間違いらしいもの） */
@@ -80,9 +82,14 @@ export function describeSpace(world: World, o: SpaceOptions): string[] {
   const out: string[] = [];
   const warns: string[] = [];
   out.push(`カメラ ${cam.id || '（既定）'} 位置${vec(cam.pos)} 見る向き${vec(cam.dir)}${cam.ortho ? ' 遠近なし' : ''}`);
-  out.push('物（カメラに近い順。位置は外枠の中心・大きさは 幅x高さx奥行き m ｜ 上下 ｜ 画面の位置 px・見かけの高さ px・距離 m）:');
   const dist = (t: Thing) => Math.hypot(t.center[0] - cam.pos[0], t.center[1] - cam.pos[1], t.center[2] - cam.pos[2]);
-  const shown = (o.only?.length ? all.filter((t) => o.only!.includes(t.id)) : all).sort((a, b) => dist(a) - dist(b));
+  // 外枠どうしの距離（重なっていれば 0）
+  const gap = (a: Thing, b: Thing) => Math.hypot(...[0, 1, 2].map((k) => Math.max(0, a.min[k] - b.max[k], b.min[k] - a.max[k])));
+  const center = o.near ? all.find((t) => t.id === o.near!.id) : undefined;
+  const picked = o.only?.length ? all.filter((t) => o.only!.includes(t.id)) : center ? all.filter((t) => gap(t, center) <= o.near!.radius) : all;
+  if (center) out.push(`${center.id} のまわり ${o.near!.radius}m にある物だけ（${picked.length} / ${all.length}）`);
+  const shown = picked.sort((a, b) => dist(a) - dist(b));
+  out.push('物（カメラに近い順。位置は外枠の中心・大きさは 幅x高さx奥行き m ｜ 上下 ｜ 画面の位置 px・見かけの高さ px・距離 m）:');
   for (const t of shown) {
     // ---- 上下: 真下にある物（外枠が、この物の底の中心を含むもの）
     const EPS = 0.02;
@@ -126,16 +133,18 @@ export function describeSpace(world: World, o: SpaceOptions): string[] {
   // ---- 当たり判定: 見た目とのずれ・いま重なっている組
   const shapes: { id: string; s: Shape3 }[] = [];
   for (const e of world.entities.values()) { const s = e.c.Collider3D ? shapeOf(world, e) : null; if (s) shapes.push({ id: e.id, s }); }
+  const shownIds = new Set(shown.map((t) => t.id));
   for (const { id, s } of shapes) {
     const t = all.find((x) => x.id === id);
-    if (!t) continue;
+    if (!t || !shownIds.has(id)) continue;
     const c: Vec3 = [(s.box.min[0] + s.box.max[0]) / 2, (s.box.min[1] + s.box.max[1]) / 2, (s.box.min[2] + s.box.max[2]) / 2];
     const off = [0, 1, 2].some((k) => Math.abs(c[k] - t.center[k]) > Math.max(0.05, (t.max[k] - t.min[k]) * 0.3));
     if (off) warns.push(`⚠ ${id} の当たり判定が見た目とずれています（判定の中心${vec(c)} 大きさ${r2(s.box.max[0] - s.box.min[0])}x${r2(s.box.max[1] - s.box.min[1])}x${r2(s.box.max[2] - s.box.min[2])}、見た目の中心${vec(t.center)}。Collider3D.offset・size を直す）`);
   }
   const pairs: string[] = [];
-  for (let i = 0; i < shapes.length; i++) for (let j = i + 1; j < shapes.length; j++) if (overlap3(shapes[i].s, shapes[j].s)) pairs.push(`${shapes[i].id}–${shapes[j].id}`);
-  if (shapes.length) out.push(`当たり判定 ${shapes.length}個。いま重なっている組: ${pairs.length ? pairs.slice(0, 30).join(' ') + (pairs.length > 30 ? ` …ほか${pairs.length - 30}` : '') : 'なし'}`);
+  const part = picked.length < all.length;
+  for (let i = 0; i < shapes.length; i++) for (let j = i + 1; j < shapes.length; j++) if ((!part || shownIds.has(shapes[i].id) || shownIds.has(shapes[j].id)) && overlap3(shapes[i].s, shapes[j].s)) pairs.push(`${shapes[i].id}–${shapes[j].id}`);
+  if (shapes.length) out.push(`当たり判定 ${shapes.length}個。${part ? '出した物が' : ''}いま重なっている組: ${pairs.length ? pairs.slice(0, 30).join(' ') + (pairs.length > 30 ? ` …ほか${pairs.length - 30}` : '') : 'なし'}`);
   out.push(...warns);
   return out;
 }
