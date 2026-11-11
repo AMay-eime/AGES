@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { cp, mkdtemp, rm } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -60,4 +60,20 @@ test('MCP: 初期化で使い方の説明を渡し、道具の一覧と呼び出
   assert.equal(by[7].error.code, -32601);
   assert.match(by[8].result.content[0].text, /^部品 Health（game\/components\.ts:\d+） — 体力/m);
   assert.match(by[9].result.content[0].text, /^## tables/);
+});
+
+test('MCP: 追加パッケージの道具は、入れているプロジェクトでだけ一覧に出て、呼べる', async () => {
+  process.env.AGES_HOME ??= await mkdtemp(join(tmpdir(), 'ages-home-'));
+  const { cmdInit, cmdPatch } = await import('../src/cli/ages.ts');
+  const dir = join(await mkdtemp(join(tmpdir(), 'ages-mcp-')), 'g');
+  await cmdInit(dir, 'g');
+  const names = async () => (await talk(dir, [{ id: 1, method: 'tools/list' }]))[0].result.tools.map((t: any) => t.name) as string[];
+  const plain = await names();
+  assert.ok(!plain.includes('ages_space'));
+  const cfg = join(dir, 'ages.project.json');
+  await writeFile(cfg, JSON.stringify({ ...JSON.parse(await readFile(cfg, 'utf8')), packages: ['3d'] }, null, 2) + '\n');
+  await cmdPatch(dir, [{ op: 'addEntity', scene: 'main', entity: { id: 'box', components: { Transform3D: { y: 0.5 }, Mesh3D: {} } } }], false);
+  assert.deepEqual(await names(), [...plain, 'ages_space']);
+  const r = await talk(dir, [{ id: 1, method: 'tools/call', params: { name: 'ages_space', arguments: { frames: 0, only: 'box' } } }]);
+  assert.match(r[0].result.content[0].text, /^space main f0（.*\n[\s\S]*\n {2}box box 位置\[0,0\.5,0\] 大きさ1x1x1 ｜ 底y=0 下に何もない/);
 });

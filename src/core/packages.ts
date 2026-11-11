@@ -22,8 +22,25 @@ export interface PackageDef {
   render?(host: LayerHost): RenderLayer;
   /** エディタのパネルを持つ（src/packages/<名前>/editor.ts の mount(app) がパネルを返す。入れているプロジェクトのエディタでだけ読み込む） */
   editor?: boolean;
+  /**
+   * 命令を持つ（src/packages/<名前>/cli.ts の COMMANDS。Node だけ）。入れているプロジェクトでだけ、
+   * `ages <命令> <dir>` と MCP の道具 ages_<命令> として使える（入れていないプロジェクトの道具の一覧は増えない）
+   */
+  cli?: boolean;
   /** 地図に出す機能の目次（AGENTS.md の目次と同じ書き方。1行ずつ。「→ `項目`」は ages schema guide:項目 で引く） */
   toc?: string[];
+}
+
+/** 追加パッケージの命令（CLI と MCP の両方から同じ関数を呼ぶ） */
+export interface PackageCommand {
+  /** 命令の名前（ages <name> <dir>。MCP では ages_<name>） */
+  name: string;
+  /** 何をするか（MCP の道具の説明。短く） */
+  desc: string;
+  /** MCP の引数（dir は自動で付く）。名前は CLI の --フラグ と同じ。pos は CLI の2つ目の位置の引数にもなる */
+  props: Record<string, { type: string; description?: string; items?: unknown }>;
+  pos?: string;
+  run(dir: string, flags: Record<string, string | true>): Promise<string>;
 }
 
 export function definePackage<T extends PackageDef>(def: T): T {

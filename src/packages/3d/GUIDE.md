@@ -8,7 +8,7 @@
 - カメラは Transform3D + Camera3D の物。`follow` に相手の ID を書くと、相手の位置 + `offset`（世界の向き）へ動き、`look` なら相手（の `lookHeight` 上）を向く。置かなければ、少し上・手前から原点を見る既定のカメラ
 - ゲームのコードでは `import { worldPosition, forwardOf, lookAt, cameraOf, toScreen, screenRay, math3 } from 'ages/3d'`。`worldPosition(ctx.world, e)` は親をたどった世界の位置、`forwardOf` は前の向き、`lookAt(ctx.world, e, [x, y, z])` はその点へ向ける（カメラなら第4引数に true）。`toScreen(cameraOf(ctx.world, 幅÷高さ), 点, 幅, 高さ)` は画面の px（HUD を物の上に出すとき）、`screenRay` は画面の点から世界への光線。ベクトルと行列の計算は `math3`（add・sub・normalize・distance・lookRotation など）
 - 動きはゲームのコードで書く（`t.x += vx * dt`）。物理（押し返し・重力）は本体にない（壁で止める・地面に立つ書き方は `3d-hit`）
-- 2D の UI（HUD・メニュー）は 3D の上にそのまま重なる。確かめは 2D と同じ（`ages run --watch player.Transform3D.x`）
+- 2D の UI（HUD・メニュー）は 3D の上にそのまま重なる。確かめは 2D と同じ（`ages run --watch player.Transform3D.x`）。置いた物の位置関係は `ages space`（→ `3d-space`）
 
 ## 3d-draw: 3D の形と光
 部品: Mesh3D Light3D Environment3D
@@ -46,3 +46,14 @@
   - 地面に立つ: 足元より少し上から下へ `hit3.ray(ctx.world, [x, y + 1, z], [x, y - 0.2, z], 'ground')`。当たれば `t.y = hit.point[1]` で立たせ、当たらなければ落とす（`vy -= 20 * ctx.dt`）
 - 確かめ: `ages run --watch player.Collider3D.touching`（`with` のグループと、いま重なっている相手）。`ages check` は、`with` に書いたグループを誰も名乗っていないと ⚠ で知らせる
 - 人はエディタの「3D シーン」で当たり判定の形を緑の線で見られる。「＋ 足す」→「当たり判定を、選んだ物の形に合わせて付ける」で、選んだ形・モデルに合う大きさで付く
+
+## 3d-space: 3D の空間を文字で確かめる（ages space）
+部品: Transform3D
+- **物を置いた・動かした直後に `ages space <dir> [シーン]`**（MCP は ages_space）。画像を撮らずに、置き間違いが分かる。1つの物に1行:
+  `hero capsule 位置[2.5,0.9,0] 大きさ0.8x1.8x0.8 ｜ 底y=0 ground の上 ｜ 画面(610,431) 高さ94px 距離9.84`
+- 上下: 「X の上」（乗っている）・「X の 1.25 上に浮く」・「X に 0.3 沈んでいる」（⚠ と、どれだけ上げれば面に乗るか）・「下に何もない」。浮かせたい物（コイン）はそのままでよい
+- 画面: ゲームのカメラに映る位置（px）と見かけの高さ。「画面の外（右）」「カメラの後ろ」「中心が X に隠れている」。主人公が小さすぎる・映っていない、が分かる
+- 当たり判定: Collider3D の形が見た目からずれていると ⚠（足元が原点のモデルに offset を書き忘れた、など）。いま重なっている組も出る
+- `--frames N` で N フレーム進めてから（省くと 1。カメラの追いかけが効いた後）。`--keys` は ages run と同じ。`--only hero,coin1` でその物だけ
+- 位置・大きさは軸にそろった外枠で数える（回した物は少し大きめに出る）。モデルは `ages assets` の大きさで数える（動きで形が変わっても同じ）
+- 色・光・質感は文字では分からないので、見た目の確かめは `ages run --shot`（必要なときだけ）

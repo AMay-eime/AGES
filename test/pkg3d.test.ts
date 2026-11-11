@@ -440,3 +440,52 @@ export const systems: GameModule['systems'] = [walk];
   await cmdPatch(dir, [{ op: 'set', path: 'main#player.Collider3D.with', value: ['coin', 'enemy'] }], false);
   assert.match(await cmdCheck(dir), /⚠ 3d-group: main#player\.Collider3D\.with: グループ enemy の Collider3D がどこにもありません（あるのは player ground coin wall）/);
 });
+
+test('空間を文字で確かめる（ages space）: 位置・大きさ・上下・画面の位置・隠れ・当たり判定のずれ。MCP の道具は入れているプロジェクトだけ', async () => {
+  const { makeGlb } = await import('./util-glb.ts');
+  const { packageCommands } = await import('../src/cli/ages.ts');
+  const dir = join(await mkdtemp(join(tmpdir(), 'ages-3d-')), 'g');
+  await cmdInit(dir, 'g');
+  // 入れていないプロジェクトには、命令がない
+  assert.deepEqual(await packageCommands(dir), []);
+  const cfg = join(dir, 'ages.project.json');
+  const c = JSON.parse(await readFile(cfg, 'utf8'));
+  await writeFile(cfg, JSON.stringify({ ...c, packages: ['3d'], view: { ...c.view, width: 800, height: 600 } }, null, 2) + '\n');
+  await mkdir(join(dir, 'assets'), { recursive: true });
+  // 足元が原点のモデル（高さ 1。箱を 0.5 上げてある）
+  await writeFile(join(dir, 'assets', 'crate.glb'), makeGlb({ translation: [0, 0.5, 0] }));
+  const ent = (id: string, components: Record<string, Record<string, unknown>>) => ({ op: 'addEntity' as const, scene: 'main', entity: { id, components } });
+  await cmdPatch(dir, [
+    ent('floor', { Transform3D: {}, Mesh3D: { shape: 'plane', size: [20, 1, 20] } }),
+    ent('table', { Transform3D: { y: 0.5 }, Mesh3D: { size: [2, 1, 2] } }),
+    ent('cup', { Transform3D: { y: 1.1 }, Mesh3D: { shape: 'cylinder', size: [0.2, 0.2, 0.2] } }),
+    ent('coin', { Transform3D: { x: 3, y: 1.5 }, Mesh3D: { shape: 'sphere', size: [0.5, 0.5, 0.5] } }),
+    ent('rock', { Transform3D: { x: -3, y: 0.2 }, Mesh3D: { size: [1, 1, 1] } }),
+    ent('crate', { Transform3D: { x: 0, z: -4, sx: 2, sy: 2, sz: 2 }, Model3D: { model: 'assets/crate.glb' }, Collider3D: { size: [1, 1, 1] } }),
+    ent('side', { Transform3D: { x: 30 }, Mesh3D: {} }),
+    ent('cam', { Transform3D: { y: 1, z: 8 }, Camera3D: {} }),
+  ], false);
+  const space = (await packageCommands(dir)).find((x) => x.name === 'space')!;
+  const out = await space.run(dir, {});
+  const line = (id: string) => out.split('\n').find((l) => l.startsWith(`  ${id} `)) ?? '';
+  assert.match(out, /^space main f1（単位 m・Y が上・画面 800x600）\nカメラ cam 位置\[0,1,8\] 見る向き\[0,0,-1\]/);
+  // 上下: 机は床の上、コップは机の上、コインは浮いている、岩は床に沈んでいる（⚠ と直し方）
+  assert.match(line('table'), /位置\[0,0\.5,0\] 大きさ2x1x2 ｜ 底y=0 floor の上 ｜ 画面\(400,\d+\) 高さ\d+px 距離8\.02/);
+  assert.match(line('cup'), /底y=1 table の上/);
+  assert.match(line('coin'), /底y=1\.25 floor の 1\.25 上に浮く/);
+  assert.match(line('rock'), /底y=-0\.3 floor に 0\.3 沈んでいる/);
+  assert.match(out, /^⚠ rock が floor に 0\.3m 沈んでいます（底 y=-0\.3、floor の上の面 y=0。y を 0\.3 上げると面に乗る）$/m);
+  // モデルは要約の大きさ（倍率 2 で 2x2x2。足元が原点なので中心は y = 1）。机の後ろで、中心が隠れている
+  assert.match(line('crate'), /crate\.glb 位置\[0,1,-4\] 大きさ2x2x2 ｜ 底y=0 floor の上 ｜ 画面\(400,300\) 高さ\d+px 中心が table に隠れている/);
+  assert.match(line('side'), /画面の外（右）/);
+  // 当たり判定が見た目とずれている（足元が原点のモデルに、offset なしの箱）
+  assert.match(out, /^⚠ crate の当たり判定が見た目とずれています（判定の中心\[0,0,-4\] 大きさ2x2x2、見た目の中心\[0,1,-4\]。Collider3D\.offset・size を直す）$/m);
+  await cmdPatch(dir, [{ op: 'set', path: 'main#crate.Collider3D.offset', value: [0, 0.5, 0] }], false);
+  const fixed = await space.run(dir, { only: 'crate,rock' });
+  assert.doesNotMatch(fixed, /当たり判定が見た目とずれています/);
+  assert.equal(fixed.split('\n').filter((l) => l.startsWith('  ')).length, 2);
+  await assert.rejects(space.run(dir, { only: 'crat' }), /--only の crat はシーン main にありません.*crate/);
+  // 手順と地図に出る
+  assert.match(await cmdMap(dir), /ages space/);
+  assert.match(await cmdSchema(dir, ['guide:3d-space']), /ages space <dir>/);
+});

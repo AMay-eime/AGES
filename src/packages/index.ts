@@ -1,7 +1,7 @@
 // 追加パッケージの一覧と読み込み（ブラウザでも Node でも動く）。
 // 読み込むのは、プロジェクトが packages に書いたものだけ。行き先を式で組み立てるのは、書き出し（ages export）が
 // import をたどって本体を写すとき、使っていないパッケージまで写さないため（使うものは export.ts が名前で足す）
-import type { PackageDef } from '../core/packages.ts';
+import type { PackageCommand, PackageDef } from '../core/packages.ts';
 
 /** 名前 → 何ができるか（入れていないプロジェクトにも、ages schema guide:packages で見せる1行） */
 export const PACKAGE_LIST: Record<string, string> = {
@@ -17,6 +17,20 @@ export function checkPackageNames(names: unknown): string[] {
 }
 
 const EXT = import.meta.url.endsWith('.js') ? 'js' : 'ts';
+
+/** 命令を持つパッケージ（cli.ts を読むだけで済むよう、名前で持つ。PackageDef.cli と合わせる） */
+const WITH_CLI = new Set(['3d']);
+
+/** プロジェクトが入れている追加パッケージの命令（Node だけ） */
+export async function loadPackageCommands(names: unknown): Promise<PackageCommand[]> {
+  const out: PackageCommand[] = [];
+  for (const n of checkPackageNames(names)) {
+    if (!WITH_CLI.has(n)) continue;
+    const mod = (await import(new URL(`./${n}/cli.${EXT}`, import.meta.url).href)) as { COMMANDS: PackageCommand[] };
+    out.push(...mod.COMMANDS);
+  }
+  return out;
+}
 
 export async function loadPackages(names: unknown): Promise<PackageDef[]> {
   const out: PackageDef[] = [];
