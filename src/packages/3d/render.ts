@@ -106,6 +106,8 @@ interface Tex { tex: WebGLTexture; loaded: Promise<void> }
 export interface Layer3DOptions {
   /** ゲームのカメラの代わりに、この視点で描く（エディタの自由な視点） */
   camera?: CameraView3;
+  /** 地面（y = 0）に 1m の格子を描く（エディタ）。center のまわり half m */
+  grid?: { center: Vec3; half: number };
 }
 
 /** 描いた物（クリックで選ぶ・AI の確かめに使う） */
@@ -272,7 +274,7 @@ export class Layer3D implements RenderLayer {
       items.push({ e, m, mesh, c, depth });
       this.drawn.push({ id: e.id, matrix: wm, shape: c.shape ?? 'box', size });
     }
-    if (!items.length) return;
+    if (!items.length && !opts.grid) return;
 
     const gl = this.gl, W = f.width, H = f.height;
     this.target(W, H);
@@ -306,6 +308,7 @@ export class Layer3D implements RenderLayer {
       for (const x of clear) this.one(x.m, x.mesh, x.c);
       gl.depthMask(true);
     }
+    if (opts.grid) this.grid(opts.grid.center, opts.grid.half);
     gl.bindVertexArray(null);
 
     // アンチエイリアスをならして、2D の描く先へ重ねる
@@ -324,6 +327,48 @@ export class Layer3D implements RenderLayer {
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.bindVertexArray(null);
     this.draws++;
+  }
+
+  private gridVao: WebGLVertexArrayObject | null = null;
+  private gridBuf: WebGLBuffer | null = null;
+  /** 地面の格子（奥行きは比べるが、書き込まない。透ける線） */
+  private grid(center: Vec3, half: number): void {
+    const gl = this.gl;
+    const n = Math.max(4, Math.min(100, Math.round(half)));
+    const cx = Math.round(center[0]), cz = Math.round(center[2]);
+    const minor: number[] = [], major: number[] = [], xs: number[] = [], zs: number[] = [];
+    const line = (into: number[], a: Vec3, b: Vec3) => into.push(a[0], a[1], a[2], 0, 1, 0, 0, 0, b[0], b[1], b[2], 0, 1, 0, 0, 0);
+    for (let i = -n; i <= n; i++) {
+      const x = cx + i, z = cz + i;
+      // 床（y = 0 の板）と重なってちらつかないよう、わずかに浮かせる
+      line(x === 0 ? zs : x % 10 === 0 ? major : minor, [x, 0.004, cz - n], [x, 0.004, cz + n]);
+      line(z === 0 ? xs : z % 10 === 0 ? major : minor, [cx - n, 0.004, z], [cx + n, 0.004, z]);
+    }
+    if (!this.gridVao) {
+      this.gridVao = gl.createVertexArray()!;
+      this.gridBuf = gl.createBuffer()!;
+      gl.bindVertexArray(this.gridVao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.gridBuf);
+      for (const [i, k, o] of [[0, 3, 0], [1, 3, 3], [2, 2, 6]]) { gl.enableVertexAttribArray(i); gl.vertexAttribPointer(i, k, gl.FLOAT, false, 32, o * 4); }
+    }
+    gl.bindVertexArray(this.gridVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.gridBuf);
+    gl.enable(gl.BLEND);
+    gl.blendFuncSeparate(gl.ONE, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.depthMask(false);
+    gl.uniformMatrix4fv(this.u('u_model'), false, new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]));
+    gl.uniformMatrix3fv(this.u('u_normalMat'), false, new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]));
+    gl.uniform1f(this.u('u_unlit'), 1);
+    gl.uniform2f(this.u('u_tile'), 1, 1);
+    gl.bindTexture(gl.TEXTURE_2D, this.white);
+    for (const [verts, r, g, b, a] of [[minor, 1, 1, 1, 0.13], [major, 1, 1, 1, 0.3], [xs, 1, 0.35, 0.35, 0.7], [zs, 0.4, 0.55, 1, 0.7]] as const) {
+      if (!verts.length) continue;
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.DYNAMIC_DRAW);
+      gl.uniform4f(this.u('u_color'), r, g, b, a);
+      gl.drawArrays(gl.LINES, 0, verts.length / 8);
+      this.draws++;
+    }
+    gl.depthMask(true);
   }
 
   private one(m: Mat4, mesh: Mesh, c: Record<string, any>): void {

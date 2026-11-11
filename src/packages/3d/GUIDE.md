@@ -17,4 +17,5 @@
 - 光は Transform3D + Light3D。`sun` は向きだけが効く（物の前 +Z の向きに照らす。rx: 50 で斜め下、ry で方角）。`point` は位置からまわりを `range` m まで（8 つまで）。1つも置かなければ、斜め上からの既定の太陽。影はまだ落ちない
 - 全体の明るさと霧は Environment3D（シーンに1つ。上からの色 `sky`・下からの色 `ground`・強さ `ambient`・`fog`）。空の色は画面の背景の色（ages.project.json の view.background）
 - 3D は 2D の物（Sprite・Text・UI）の下に描かれる。HUD・メニューは今までどおり UI で作る
+- 人はエディタの「3D シーン」パネルで、自由な視点から物を選び、ギズモで動かす・回す・大きさを変える・形や光を足す（Unity の Scene ビューにあたる。ゲームのカメラで見るのは「ゲーム」パネル）。位置の細かい調整は人に任せ、AI は大まかに置く
 - 確かめ: 値は `ages run --watch`、見た目は必要なときだけ `--shot`（3D は形と位置の間違いが数字で分かりにくいので、置いた直後に1枚見るのはよい。`--shot-scale 0.5`）。`ages check` は Transform3D のない Mesh3D・Camera3D・Light3D を ⚠ で知らせる

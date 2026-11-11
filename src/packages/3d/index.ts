@@ -9,6 +9,7 @@ import { createLayer3D } from './render.ts';
 export { Transform3D, Camera3D, Mesh3D, Light3D, Environment3D } from './components.ts';
 export * as math3 from './math.ts';
 export type { Vec3, Mat4 } from './math.ts';
+export { pickSolids, hitSolid, type Ray, type Solid } from './pick.ts';
 export { matrixOf, worldPosition, forwardOf, lookAt, cameraOf, toScreen, screenRay, worldMatrix, localMatrix, type CameraView3, type Pose3 } from './space.ts';
 
 export default definePackage({
@@ -18,6 +19,7 @@ export default definePackage({
   systems: SYSTEMS_3D,
   checks: CHECKS_3D,
   render: createLayer3D,
+  editor: true,
   toc: [
     '3D の位置・回転・親子とカメラ: Transform3D・Camera3D と `ages/3d` の worldPosition・lookAt・toScreen。Y が上・単位は m・物の前は +Z → `3d`',
     '3D の形と光: Mesh3D（箱・球・円柱・カプセル・板）・Light3D（太陽・点）・Environment3D（全体の明るさ・霧） → `3d-draw`',

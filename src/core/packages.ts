@@ -20,6 +20,8 @@ export interface PackageDef {
   checks?: CheckDef[];
   /** 2D の下に描く層を作る（ブラウザで、描画を始めるときに1回。3D の描画など） */
   render?(host: LayerHost): RenderLayer;
+  /** エディタのパネルを持つ（src/packages/<名前>/editor.ts の mount(app) がパネルを返す。入れているプロジェクトのエディタでだけ読み込む） */
+  editor?: boolean;
   /** 地図に出す機能の目次（AGENTS.md の目次と同じ書き方。1行ずつ。「→ `項目`」は ages schema guide:項目 で引く） */
   toc?: string[];
 }

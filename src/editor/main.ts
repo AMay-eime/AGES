@@ -328,9 +328,27 @@ async function mountWindows(): Promise<void> {
       slot.el.append(h('div', { class: 'pad', style: 'color:var(--bad)' }, T('エラー: {0}', (e as Error).message)));
     }
   }
+  // 追加パッケージのパネル（入れているものだけ。例 3d の「3D シーン」）
+  const pks = app.registry?.packages ?? [];
+  for (const pk of pks) {
+    if (!pk.editor || pkgPanels.has(pk.name)) continue;
+    try {
+      const mod = (await import(new URL(`../packages/${pk.name}/editor.ts`, import.meta.url).href)) as { mount(app: App): Panel };
+      const panel = mod.mount(app);
+      // 初めて出すときは、中央の前に出す
+      if (!layout.areaOf(panel.id) && !layout.isClosed(panel.id)) { layout.data.areas.center.push(panel.id); layout.data.active.center = panel.id; }
+      layout.add(panel);
+      pkgPanels.set(pk.name, panel.id);
+    } catch (e) {
+      toast(T('エラー: {0}', (e as Error).message), 'bad', 8000);
+    }
+  }
+  for (const [name, id] of pkgPanels) if (!pks.some((pk) => pk.name === name)) { layout.panels.delete(id); pkgPanels.delete(name); }
   // 欄・部品の見せ方は、インスペクタが描き直すときに使う
   app.emit('extensions');
 }
+/** 追加パッケージのパネル（パッケージの名前 → パネルの id） */
+const pkgPanels = new Map<string, string>();
 
 // ---------- サーバーからの通知 ----------
 let lastVersion = app.state.version;

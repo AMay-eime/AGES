@@ -112,6 +112,20 @@ export function hierarchyPanel(app: App): Panel {
             if (v !== Number(cur[f] ?? d)) ops.push({ op: 'set', path: `${base}.${f}`, value: v });
           }
         }
+        // 3D の位置の親も、世界での位置・向き・大きさを変えない（追加パッケージ 3d。要るときだけ読み込む）
+        if (k === 'Transform3D' && view) {
+          const { worldMatrix } = await import('../../packages/3d/space.ts');
+          const m3 = await import('../../packages/3d/math.ts');
+          const get = (id: string) => view.entities.find((e) => e.id === id)?.components.Transform3D as Record<string, number> | undefined;
+          const cur = get(child) ?? {};
+          const cw = worldMatrix(get, cur), pw = to ? worldMatrix(get, get(to) ?? {}) : null;
+          const d = m3.decompose(pw ? m3.multiply(m3.invert(pw) ?? m3.identity(), cw) : cw);
+          const vals: [string, number, number][] = [['x', d.pos[0], 0], ['y', d.pos[1], 0], ['z', d.pos[2], 0], ['rx', d.rot[0], 0], ['ry', d.rot[1], 0], ['rz', d.rot[2], 0], ['sx', d.scale[0], 1], ['sy', d.scale[1], 1], ['sz', d.scale[2], 1]];
+          for (const [f, raw, def] of vals) {
+            const v = Math.round(raw * 1000) / 1000 || 0;
+            if (v !== Number(cur[f] ?? def)) ops.push({ op: 'set', path: `${base}.${f}`, value: v });
+          }
+        }
         await app.patch(ops, 'hierarchy');
       };
       const dropOn = (target: string | null) => ({
