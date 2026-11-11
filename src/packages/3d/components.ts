@@ -52,6 +52,17 @@ export const Mesh3D = defineComponent({
   },
 });
 
+export const Model3D = defineComponent({
+  name: 'Model3D',
+  desc: 'モデル（.glb）を描く（3d）。位置と向きと大きさは Transform3D',
+  fields: {
+    model: { type: 'asset', kind: 'model', default: '', desc: 'モデルのファイル（.glb）。大きさ・中心・動きの名前は ages assets で見る' },
+    color: { type: 'color', default: '#ffffff', desc: '掛け合わせる色（白でそのまま。当たったときに赤くするなど）' },
+    alpha: { type: 'number', default: 1, min: 0, max: 1, step: 0.05, desc: '不透明度（1 より小さいと透ける）' },
+    visible: { type: 'bool', default: true, desc: '描くか' },
+  },
+});
+
 export const Light3D = defineComponent({
   name: 'Light3D',
   desc: '3D の光（3d）。位置と向きは Transform3D。1つも置かなければ、斜め上からの既定の太陽の光',
@@ -77,4 +88,4 @@ export const Environment3D = defineComponent({
   },
 });
 
-export const COMPONENTS_3D = [Transform3D, Camera3D, Mesh3D, Light3D, Environment3D];
+export const COMPONENTS_3D = [Transform3D, Camera3D, Mesh3D, Model3D, Light3D, Environment3D];

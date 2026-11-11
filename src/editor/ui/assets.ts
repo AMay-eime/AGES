@@ -15,8 +15,8 @@ export const PREFAB_MIME = 'application/x-ages-prefab';
 type Asset = App['state']['assets'][number];
 
 /** アセットの種類の名前（エディタの言葉で） */
-export const assetLabel = (k: AssetKind): string => ({ image: T('画像'), sound: T('音'), font: T('フォント'), shader: T('シェーダー') })[k] ?? ASSET_LABEL[k];
-const KIND_LABEL: Record<AssetKind, string> = { image: assetLabel('image'), sound: assetLabel('sound'), font: assetLabel('font'), shader: assetLabel('shader') };
+export const assetLabel = (k: AssetKind): string => ({ image: T('画像'), sound: T('音'), font: T('フォント'), shader: T('シェーダー'), model: T('モデル') })[k] ?? ASSET_LABEL[k];
+const KIND_LABEL: Record<AssetKind, string> = { image: assetLabel('image'), sound: assetLabel('sound'), font: assetLabel('font'), shader: assetLabel('shader'), model: assetLabel('model') };
 const kb = (n: number) => (n < 1024 ? `${n}B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)}KB` : `${(n / 1024 / 1024).toFixed(1)}MB`);
 
 /** フォントを画面で使える名前にする（見本の表示用） */

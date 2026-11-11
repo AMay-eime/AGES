@@ -1,7 +1,7 @@
 // 追加パッケージ 3d: 計算（行列・回転）・位置の親子・カメラ（世界 ↔ 画面）・画面なしで動かす
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -130,4 +130,52 @@ test('描画: 基本の形・光が画面に出て、2D の UI が上に重な�
   const top = toScreen(cam, [3, 1, 0], 400, 300)!;
   const px = at(Math.round(top.x), Math.round(top.y));
   assert.ok(px[0] > 120 && px[1] > 120 && px[0] !== 0x9f, `箱の上の面 ${px}`);
+});
+
+test('モデル（.glb）: 読む（頂点・ノードの位置・材質・囲む箱・動きの名前）。ages assets に大きさと動きが出る', async () => {
+  const { makeGlb } = await import('./util-glb.ts');
+  const { parseGlb, summarizeGlb } = await import('../src/packages/3d/gltf.ts');
+  const { cmdAssets } = await import('../src/cli/ages.ts');
+  const glb = makeGlb({ color: [0.2, 0.4, 0.6, 1], translation: [0, 1, 0], scale: [2, 1, 1], clips: ['idle', 'walk'] });
+  const g = parseGlb(glb);
+  assert.deepEqual([g.meshes[0][0].vertices.length / 8, g.meshes[0][0].indices.length, g.tris], [24, 36, 12]);
+  near(g.materials[0].color, [0.2, 0.4, 0.6, 1], 1e-6);
+  near([...g.min, ...g.max], [-1, 0.5, -0.5, 1, 1.5, 0.5]);
+  assert.deepEqual(summarizeGlb(glb), { size: [2, 1, 1], center: [0, 1, 0], tris: 12, clips: ['idle', 'walk'] });
+  assert.throws(() => parseGlb(new Uint8Array(40)), /\.glb ではありません/);
+
+  const dir = join(await mkdtemp(join(tmpdir(), 'ages-3d-')), 'g');
+  await cmdInit(dir, 'g');
+  await mkdir(join(dir, 'assets'), { recursive: true });
+  await writeFile(join(dir, 'assets', 'crate.glb'), glb);
+  assert.match(await cmdAssets(dir, undefined, {}), /crate\.glb.* 2x1x1m 中心\[0,1,0\] 三角形12 動き: idle walk/);
+});
+
+test('モデルの描画: 材質の色と中の画像で描かれる（ages run --shot）', { skip: (await import('../src/cli/shot.ts')).findChrome() ? false : 'Chrome がない' }, async () => {
+  const { makeGlb, png1x1 } = await import('./util-glb.ts');
+  const { decodePng } = await import('../src/project/png.ts');
+  const dir = join(await mkdtemp(join(tmpdir(), 'ages-3d-')), 'g');
+  await cmdInit(dir, 'g');
+  const cfg = join(dir, 'ages.project.json');
+  const c = JSON.parse(await readFile(cfg, 'utf8'));
+  await writeFile(cfg, JSON.stringify({ ...c, packages: ['3d'], view: { ...c.view, width: 400, height: 300, background: '#000000' } }, null, 2) + '\n');
+  await mkdir(join(dir, 'assets'), { recursive: true });
+  await writeFile(join(dir, 'assets', 'red.glb'), makeGlb({ color: [1, 0, 0, 1], unlit: true }));
+  await writeFile(join(dir, 'assets', 'tex.glb'), makeGlb({ color: [1, 1, 1, 1], unlit: true, image: png1x1([0, 0, 255, 255]) }));
+  const ent = (id: string, components: Record<string, Record<string, unknown>>) => ({ op: 'addEntity' as const, scene: 'main', entity: { id, components } });
+  await cmdPatch(dir, [
+    ent('a', { Transform3D: { x: -1.5 }, Model3D: { model: 'assets/red.glb' } }),
+    ent('b', { Transform3D: { x: 1.5 }, Model3D: { model: 'assets/tex.glb', color: '#80ffff' } }),
+    ent('cam', { Transform3D: { z: 6 }, Camera3D: {} }),
+  ], false);
+  assert.match(await cmdCheck(dir), /^ok/);
+  await cmdRun(dir, { frames: '1', shot: '1', 'shot-dir': join(dir, 'shots') });
+  const png = decodePng(await readFile(join(dir, 'shots', 'main-f1.png')));
+  const at = (x: number, y: number) => [...png.data.subarray((y * png.w + x) * 4, (y * png.w + x) * 4 + 3)];
+  const { toScreen, cameraFrom } = await import('../src/packages/3d/space.ts');
+  const cam = cameraFrom('cam', m.compose([0, 0, 6], [0, 0, 0]), {}, 400 / 300);
+  const pa = toScreen(cam, [-1.5, 0, 0.5], 400, 300)!, pb = toScreen(cam, [1.5, 0, 0.5], 400, 300)!;
+  assert.deepEqual(at(Math.round(pa.x), Math.round(pa.y)), [255, 0, 0], '材質の色');
+  assert.deepEqual(at(Math.round(pb.x), Math.round(pb.y)), [0, 0, 255], '中の画像（青）に、掛け合わせる色 #80ffff（青はそのまま）');
+  assert.deepEqual(at(200, 150), [0, 0, 0], '間は背景');
 });

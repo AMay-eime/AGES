@@ -19,6 +19,8 @@ export interface AssetInfo {
   sec?: number;
   /** シェーダーの宣言（説明・調整できる値・中身） */
   shader?: ShaderDef;
+  /** 3D のモデルの要約（大きさ m・中心・三角形の数・動きの名前。開かずに置き方を決められるように） */
+  model?: { size: [number, number, number]; center: [number, number, number]; tris: number; clips: string[] };
 }
 
 const SKIP = new Set(['.git', '.ages', 'node_modules']);
@@ -197,6 +199,15 @@ export async function scanAssets(dir: string): Promise<AssetScan> {
       if (sec !== null && Number.isFinite(sec)) info.sec = Math.round(sec * 100) / 100;
     }
     if (kind === 'shader') info.shader = parseShader(rel, await readFile(abs, 'utf8'));
+    if (kind === 'model') {
+      // モデルを読むのは追加パッケージ 3d（モデルがあるときだけ読み込む）
+      try {
+        const { summarizeGlb } = await import('../packages/3d/gltf.ts');
+        info.model = summarizeGlb(await readFile(abs));
+      } catch (e) {
+        issues.push(`${rel} を読めません: ${(e as Error).message}`);
+      }
+    }
     assets.push(info);
   }
   // 定義ファイルを、隣にある同じ名前の画像に結びつける

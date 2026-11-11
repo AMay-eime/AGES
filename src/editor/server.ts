@@ -167,7 +167,7 @@ async function handleChanges(paths: string[]): Promise<void> {
   const code = fresh.some((p) => p.endsWith('.ts') || p === 'ages.project.json');
   // 画像の切り方（.sheet.json）もシーン・プレハブと同じ扱い（外からの編集を記録し、ロックを戻す）
   const docs = fresh.some((p) => /^(scenes|prefabs)\/.+\.json$/.test(p) || /^data\/.+\.table\.json$/.test(p) || p.endsWith('.sheet.json'));
-  const assets = fresh.some((p) => /\.(png|jpe?g|webp|gif|wav|mp3|ogg|m4a|ttf|otf|woff2?|frag|glsl)$/i.test(p) || /^saves\/.+\.save\.json$/.test(p));
+  const assets = fresh.some((p) => /\.(png|jpe?g|webp|gif|wav|mp3|ogg|m4a|ttf|otf|woff2?|frag|glsl|glb)$/i.test(p) || /^saves\/.+\.save\.json$/.test(p));
   if (code) {
     version++;
     await startWorker();
@@ -214,7 +214,7 @@ const MIME: Record<string, string> = {
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.wav': 'audio/wav',
   '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8',
-  '.ttf': 'font/ttf', '.otf': 'font/otf', '.woff': 'font/woff', '.woff2': 'font/woff2', '.frag': 'text/plain; charset=utf-8', '.glsl': 'text/plain; charset=utf-8',
+  '.glb': 'model/gltf-binary', '.ttf': 'font/ttf', '.otf': 'font/otf', '.woff': 'font/woff', '.woff2': 'font/woff2', '.frag': 'text/plain; charset=utf-8', '.glsl': 'text/plain; charset=utf-8',
 };
 
 function inside(dir: string, rel: string): string {
