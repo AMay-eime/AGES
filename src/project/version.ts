@@ -34,6 +34,16 @@ export function engineCommitFull(): string | undefined {
   } catch { return undefined; }
 }
 
+/**
+ * 今の本体のコミットが、取ってきた先（GitHub）にもあるか（リモートの枝に含まれているか。通信はしない）。
+ * あれば、プロジェクトを「版だけ同梱」の形にできる（ages.mjs が、どのパソコンでも同じ版を取ってこられる）
+ */
+export function engineOnRemote(dir: string = ENGINE_DIR): boolean {
+  try {
+    return execFileSync('git', ['-C', dir, 'branch', '-r', '--contains', 'HEAD'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() !== '';
+  } catch { return false; }
+}
+
 export const formatVersion = (v: Partial<EngineVersion>): string => `互換${v.compat ?? '?'}・${v.version ?? '?'}${v.commit ? `（${v.commit}）` : ''}`;
 
 /** docs/MIGRATIONS.md の項（番号・見出し・中身） */

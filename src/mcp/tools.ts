@@ -1,6 +1,6 @@
 // AGES の MCP の道具（tools）と、使い方の説明（instructions）。
 // server.ts から使う。テスト（毎回読む量の上限）からも読めるよう、標準入出力を開かないこのファイルに分けてある。
-import { cmdAssets, cmdUndo, cmdCheck, cmdUi, cmdGet, cmdInit, cmdLog, cmdMap, cmdFind, cmdPatch, cmdRun, cmdSchema, cmdSheet, cmdSlice, cmdTable, cmdTalk } from '../cli/ages.ts';
+import { cmdAssets, cmdUndo, cmdCheck, cmdUi, cmdGet, cmdInitPinned, cmdLog, cmdMap, cmdFind, cmdPatch, cmdRun, cmdSchema, cmdSheet, cmdSlice, cmdTable, cmdTalk } from '../cli/ages.ts';
 import { parseLiteral, splitCell, type Op } from '../core/patch.ts';
 
 /** 使い方の説明（MCP の initialize で毎回渡る）。短く保つ: 機能ごとの手順は ages_schema の guide で要るときに引く */
@@ -202,7 +202,7 @@ export function makeTools(defaultProject: string): Tool[] {
       name: 'ages_init',
       description: '新しいプロジェクトを作る（AGENTS.md・EDITOR-PLAN.md 付き）。ゲームの企画を受けたら最初にこれ',
       inputSchema: { type: 'object', properties: { dir: { type: 'string', description: '作る場所' }, name: { type: 'string' } }, required: ['dir'] },
-      run: (a) => cmdInit(a.dir, a.name),
+      run: (a) => cmdInitPinned(a.dir, a.name),
     },
   ];
 }

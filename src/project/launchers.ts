@@ -13,7 +13,15 @@ const NODE_URL = 'https://nodejs.org/ja/download';
 const NODE_OK = "const [a,b]=process.versions.node.split('.').map(Number);process.exit(a>22||(a===22&&b>=18)?0:1)";
 
 /** 中身。run は node に渡すもの（例 `ages.mjs editor`・`"../AGES/src/editor/server.ts" .`） */
-export function launcherFiles(run: string): Record<string, string> {
+/**
+ * needs: 起動の前に、あることを確かめるファイル（AGES 本体。プロジェクトから見た場所）。
+ * 本体を別の場所に置く形（ages init --no-pin）は、プロジェクトを別のパソコン・別の場所へ移すと本体が見つからなくなるので、直し方を出す
+ */
+export function launcherFiles(run: string, needs?: string): Record<string, string> {
+  // cmd の ( ) の中では半角の括弧が使えないので、文には全角だけを使う
+  const lost = ['AGES 本体が見つかりません。このフォルダを別の場所へ移したか、AGES 本体のフォルダがなくなっています。', '直し方: AI に「このプロジェクトを ages pin で、版だけ同梱の形にして」と頼んでください。'];
+  const winCheck = needs ? [`if not exist "${needs.replaceAll('/', '\\')}" (`, ...lost.map((l) => `  echo ${l}`), '  pause', '  exit /b 1', ')'] : [];
+  const macCheck = needs ? [`if [ ! -f "${needs}" ]; then`, ...lost.map((l) => `  echo "${l}"`), '  read -r _', '  exit 1', 'fi'] : [];
   // cmd は1行ずつ今の文字コードで読むので、日本語の行より先に UTF-8 にする。行の終わりは CRLF（Windows のメモ帳でも崩れない）
   const win = [
     '@echo off',
@@ -35,6 +43,7 @@ export function launcherFiles(run: string): Record<string, string> {
     '  pause',
     '  exit /b 1',
     ')',
+    ...winCheck,
     'echo AGES のエディタを起動します。この黒い窓は閉じないでください。閉じるとエディタが止まります。',
     `node ${run}`,
     'if errorlevel 1 pause',
@@ -56,6 +65,7 @@ export function launcherFiles(run: string): Record<string, string> {
     '  read -r _',
     '  exit 1',
     'fi',
+    ...macCheck,
     'echo "AGES のエディタを起動します。このターミナルの窓は閉じないでください（閉じるとエディタが止まります）。"',
     `node ${run} || read -r _`,
     '',
@@ -64,9 +74,9 @@ export function launcherFiles(run: string): Record<string, string> {
 }
 
 /** 書く（ないか、印の行が残っていて中身が違うときだけ）。書いたファイルの名前を返す */
-export async function writeLaunchers(dir: string, run: string): Promise<string[]> {
+export async function writeLaunchers(dir: string, run: string, needs?: string): Promise<string[]> {
   const out: string[] = [];
-  for (const [name, body] of Object.entries(launcherFiles(run))) {
+  for (const [name, body] of Object.entries(launcherFiles(run, needs))) {
     const f = join(dir, name);
     if (existsSync(f)) {
       const cur = await readFile(f, 'utf8');

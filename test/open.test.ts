@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { browserCommand, choosePort, findAppBrowser, sameDir, shouldOpen, whoIs } from '../src/editor/open.ts';
@@ -96,4 +97,45 @@ test('エディタのサーバー: どのプロジェクトか（/api/who）を�
     server.kill();
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('本体を横に置く形の起動用: 本体が見つからなければ、直し方を出して止まる（cmd の括弧の中に半角の括弧を書かない）', () => {
+  const f = launcherFiles('"../AGES/src/editor/server.ts" .', '../AGES/src/editor/server.ts');
+  const win = f[LAUNCHER_WIN].split('\r\n');
+  const at = win.indexOf('if not exist "..\\AGES\\src\\editor\\server.ts" (');
+  assert.ok(at > 0 && at < win.indexOf('node "../AGES/src/editor/server.ts" .'), '起動の前に確かめる');
+  const block = win.slice(at + 1, win.indexOf(')', at));
+  assert.ok(block.some((l) => l.includes('AGES 本体が見つかりません')) && block.some((l) => l.includes('ages pin')));
+  assert.ok(block.every((l) => !/[()]/.test(l)), '半角の括弧があると、そこで if の括弧が閉じてしまう');
+  assert.match(f[LAUNCHER_MAC], /if \[ ! -f "\.\.\/AGES\/src\/editor\/server\.ts" \]; then\n {2}echo "AGES 本体が見つかりません/);
+  // 版だけ同梱の形（ages.mjs）には要らない
+  assert.doesNotMatch(launcherFiles('ages.mjs editor')[LAUNCHER_WIN], /if not exist/);
+});
+
+test('ages init（命令）: 本体の版が GitHub にもあれば版だけ同梱の形に。なければ本体を今の場所から指す形で、その旨を言う', async () => {
+  const { execFileSync, spawnSync } = await import('node:child_process');
+  const { engineOnRemote } = await import('../src/project/version.ts');
+  // リモートの枝に含まれているかを、通信せずに見る
+  const repo = await mkdtemp(join(tmpdir(), 'ages-repo-'));
+  const git = (...a: string[]) => execFileSync('git', ['-C', repo, ...a], { stdio: ['ignore', 'pipe', 'ignore'] });
+  git('init', '-q');
+  git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '--allow-empty', '-m', 'a');
+  assert.equal(engineOnRemote(repo), false);
+  git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  assert.equal(engineOnRemote(repo), true);
+  assert.equal(engineOnRemote(join(repo, 'nope')), false);
+
+  const dir = join(await mkdtemp(join(tmpdir(), 'ages-init-')), 'g');
+  const cli = new URL('../bin/ages.js', import.meta.url).pathname;
+  const r = spawnSync(process.execPath, [cli, 'init', dir, '--name', 'g', '--no-pin'], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /AGES 本体を今の場所から指す形です。.*ages pin/);
+  assert.equal(existsSync(join(dir, 'ages.mjs')), false);
+  assert.match(await readFile(join(dir, LAUNCHER_WIN), 'utf8'), /if not exist ".*src\\editor\\server\.ts" \(/);
+  // 既定: この本体が GitHub にもある版なら ages.mjs ができ、起動用は ages.mjs editor
+  const dir2 = join(await mkdtemp(join(tmpdir(), 'ages-init-')), 'g');
+  const r2 = spawnSync(process.execPath, [cli, 'init', dir2, '--name', 'g'], { encoding: 'utf8' });
+  assert.equal(r2.status, 0, r2.stderr);
+  assert.equal(existsSync(join(dir2, 'ages.mjs')), engineOnRemote());
+  if (engineOnRemote()) assert.match(await readFile(join(dir2, LAUNCHER_WIN), 'utf8'), /^node ages\.mjs editor\r$/m);
 });
