@@ -789,6 +789,7 @@ export default {
   "大きさ {0} m（幅×高さ×奥行き）": "Size {0} m (width × height × depth)",
   "三角形 {0}": "{0} triangles",
   "「3D シーン」へドラッグすると置けます": "Drag into “3D scene” to place it",
+  "当たり判定を、選んだ物の形に合わせて付ける": "Add a collider fitted to the selected object",
   // ---- 本体の標準の部品・表・シェーダーの説明（std-descs.ts。TD で訳す） ----
   "位置・向き・大きさ（標準）": "Position, rotation, scale (standard)",
   "横位置(px。parent があれば親から見た位置)": "Horizontal position (px; relative to the parent if parent is set)",
