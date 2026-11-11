@@ -1,7 +1,7 @@
 // AGES の AI 向け CLI。出力はすべて短いテキスト（トークン節約）。
 // 後で MCP サーバーから同じ関数を呼べるよう、各コマンドは文字列を返す関数にしてある。
 import { engineCommitFull, engineOnRemote, engineVersion, formatVersion, migrations, recordVersion, versionNote } from '../project/version.ts';
-import { readFile, writeFile, readdir, mkdir, stat } from 'node:fs/promises';
+import { readFile, writeFile, readdir, mkdir, stat, copyFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, resolve, relative, basename, dirname, sep } from 'node:path';
@@ -48,7 +48,7 @@ import { parseSpawns, spawnTryout, tryoutGone, tryoutScene } from '../core/tryou
 
 const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [引数]
 
-  init   <dir> [--name 名前] [--no-pin]  新しいプロジェクトを作る（EDITOR-PLAN.md 付き。ゲームの企画を受けたら最初にこれ）。版だけ同梱の形になる（どこへ移しても ages.mjs が本体を取ってきて動く。本体が GitHub にない版のとき・--no-pin のときは、本体を今の場所から指す形）
+  init   <dir> --template none|shooter|collect3d [--name 名前] [--no-pin]  新しいプロジェクトを作る（--template を付けないと、作らずにテンプレートの一覧を出す: 使うかを使用者に聞く。EDITOR-PLAN.md 付き。ゲームの企画を受けたら最初にこれ）。版だけ同梱の形になる（どこへ移しても ages.mjs が本体を取ってきて動く。本体が GitHub にない版のとき・--no-pin のときは、本体を今の場所から指す形）
   map    <dir> [節[/まとめ]]          プロジェクトの地図（作業のたびに最初に読む）。大きなプロジェクトでは目次になり、節（components systems tables prefabs scenes など）で中身を引く。まとめ 名前/(数) は 節/名前（例 prefabs/se）
   find   <dir> <語 ...>              部品・フィールド・表の列と行・システム・プレハブ・シーンの物を、名前と説明から探す（語は全部を含むもの）
   code   <dir> <名前 | 部品.欄 | $表.列 | ファイル | 日本語の語 ...> [--body] [--around 2] [--all] [--max 30]
@@ -291,8 +291,26 @@ export async function cmdExport(dir: string, flags: Record<string, string | bool
 }
 
 /** 新しいプロジェクトを作る。AIへの手順書とエディタ計画書のひな形も入れる。 */
-export async function cmdInit(dir: string, name?: string): Promise<string> {
+/** 公式テンプレート（動く骨組み。本体の examples/ の見本をそのまま使う） */
+export const TEMPLATES: { name: string; from: string; desc: string; has: string }[] = [
+  { name: 'shooter', from: 'examples/shooter', desc: '2D の縦シューティング', has: '自機の移動と弾・敵の種類と出方の表・当たり判定と体力・得点と結果の画面・音・多言語・エディタ拡張の例' },
+  { name: 'collect3d', from: 'examples/collect3d', desc: '3D の足場渡り（追加パッケージ 3d）', has: '3人称の移動とジャンプ・足場と壁の当たり判定・コイン集め・追いかけるカメラ・モデルの動き・音' },
+];
+
+/** ages init に --template がないとき: 作らずに、テンプレートから始めるかを聞く */
+export function templateQuestion(dir: string): string {
+  return [
+    'テンプレートから始めますか？ 使用者に聞いて、--template を付けてもう一度（まだ何も作っていません）:',
+    `  ages init ${dir} --template none   空から始める`,
+    ...TEMPLATES.map((t) => `  ages init ${dir} --template ${t.name}   ${t.desc}: ${t.has}`),
+    'テンプレートは動く骨組みで、面白さの核・手触り・個性は入っていない（使用者がこれから決める）。使用者に聞けないときは、企画に近いものがあれば選び、なければ none',
+  ].join('\n');
+}
+
+export async function cmdInit(dir: string, name?: string, template?: string): Promise<string> {
   const target = resolve(dir);
+  const from = template && template !== 'none' ? TEMPLATES.find((t) => t.name === template) : undefined;
+  if (template && template !== 'none' && !from) throw new Error(`テンプレート ${template} はありません（none ${TEMPLATES.map((t) => t.name).join(' ')}）${suggest(template, TEMPLATES.map((t) => t.name))}`);
   if (existsSync(join(target, 'ages.project.json'))) throw new Error(`${dir} にはすでに AGES のプロジェクトがあります`);
   const projectName = name ?? basename(target);
   if (!/^[\w.-]+$/.test(projectName)) throw new Error(`プロジェクト名 "${projectName}" には英数字・_・-・. だけが使えます（--name で指定できます）`);
@@ -316,6 +334,7 @@ export async function cmdInit(dir: string, name?: string): Promise<string> {
     }
   };
   await copy(tpl, target);
+  if (from) created.push(...(await copyTemplate(join(ENGINE_DIR, from.from), target, projectName, from)));
   // AIの手順書は AGES 本体の AGENTS.md をそのまま写す（プロジェクトだけを開いたAIも手順にたどり着けるように）
   await writeFile(join(target, 'AGENTS.md'), await projectAgents(engine, `\`ages\` は \`node ${engine}/bin/ages.js\`（AGES本体の場所: ${engine}。本体で \`npm link\` すれば \`ages\` だけで動く）。`));
   created.push('AGENTS.md');
@@ -332,8 +351,41 @@ export async function cmdInit(dir: string, name?: string): Promise<string> {
   return [
     `プロジェクト ${projectName} を作りました: ${dir}（AGES ${formatVersion(v)}）`,
     ...created.sort().map((f) => `  ${f}`),
-    '次: EDITOR-PLAN.md の質問を使用者に確認し、必要なエディタを決める。合意するまでゲームのコードは書かない',
+    from
+      ? `次: テンプレート ${from.name}（${from.desc}）の骨組みが入っています。ages map で中身を見て、EDITOR-PLAN.md の質問（何を残し・何を変えるか）を使用者に確認する。合意するまでゲームのコードは書かない`
+      : '次: EDITOR-PLAN.md の質問を使用者に確認し、必要なエディタを決める。合意するまでゲームのコードは書かない',
   ].join('\n');
+}
+
+/** テンプレート（見本のプロジェクト）の中身を、作ったばかりのプロジェクトに重ねる。設定は名前だけ変え、エディタ計画書には始め方を書き足す */
+async function copyTemplate(src: string, target: string, projectName: string, t: (typeof TEMPLATES)[number]): Promise<string[]> {
+  const SKIP = new Set(['.ages', 'dist', 'recordings', 'EDITOR-PLAN.md', 'ages.project.json', 'node_modules']);
+  let files = 0;
+  const walk = async (from: string, to: string, top: boolean) => {
+    for (const entry of await readdir(from)) {
+      if (top && SKIP.has(entry)) continue;
+      const a = join(from, entry), b = join(to, entry);
+      if ((await stat(a)).isDirectory()) await walk(a, b, false);
+      else { await mkdir(to, { recursive: true }); await copyFile(a, b); files++; }
+    }
+  };
+  await walk(src, target, true);
+  // 設定: 見本のもの（画面の大きさ・言語・追加パッケージ・エディタ拡張）に、名前だけ入れる。版は作った後で記録する
+  const cfg = JSON.parse(await readFile(join(src, 'ages.project.json'), 'utf8')) as Record<string, unknown>;
+  delete cfg.engine;
+  await writeFile(join(target, 'ages.project.json'), JSON.stringify({ ...cfg, name: projectName }, null, 2) + '\n');
+  const plan = join(target, 'EDITOR-PLAN.md');
+  await writeFile(plan, (await readFile(plan, 'utf8')).trimEnd() + `
+
+## テンプレート
+
+このプロジェクトは、公式テンプレート \`${t.name}\`（${t.desc}）から始めた。入っているもの: ${t.has}。
+
+- これは動く骨組みで、面白さの核・手触り・個性は入っていない。上の質問は、このゲームとして改めて使用者に聞く
+- まず \`ages map\` で中身を見て、\`ages run\` で動くことを確かめる。その上で、何を残し・何を変え・何を消すかを使用者に聞く
+- 素材（画像・音・モデル）は仮のもの。出どころは \`ages assets <dir> --origin\`（差し替えたら書き直す）
+`);
+  return [`（テンプレート ${t.name}: ${files} ファイル）`];
 }
 
 export async function cmdSchema(dir: string, names: string[]): Promise<string> {
@@ -1056,8 +1108,10 @@ export function addressExists(p: Project, addr: string): boolean {
  * 版だけ同梱なら、プロジェクトを別のパソコン・別の場所へ移しても ages.mjs が本体を取ってきて動く。
  * 本体を今の場所から指す形は、移す・本体のフォルダを消すと「エディタを開く」が本体を見つけられない。pin: true=必ず / false=しない / 省く=できるなら
  */
-export async function cmdInitPinned(dir: string, name?: string, pin?: boolean): Promise<string> {
-  const out = await cmdInit(dir, name);
+export async function cmdInitPinned(dir: string, name?: string, pin?: boolean, template?: string): Promise<string> {
+  // テンプレートから始めるかは、作る前に決める（決めていなければ、作らずに聞く）
+  if (template === undefined) return templateQuestion(dir);
+  const out = await cmdInit(dir, name, template);
   if (pin === true || (pin !== false && engineOnRemote())) return `${out}\n${await cmdPin(dir)}`;
   return `${out}\n（AGES 本体を今の場所から指す形です。このプロジェクトを別のパソコン・別の場所で使うなら ages pin <dir>）`;
 }
@@ -1098,7 +1152,7 @@ async function main(argv: string[]): Promise<void> {
   await useActiveTask(dir);
   let out: string;
   switch (cmd) {
-    case 'init': out = await cmdInitPinned(dir, typeof a.flags.name === 'string' ? a.flags.name : undefined, a.flags.pin === true ? true : a.flags['no-pin'] === true ? false : undefined); break;
+    case 'init': out = await cmdInitPinned(dir, typeof a.flags.name === 'string' ? a.flags.name : undefined, a.flags.pin === true ? true : a.flags['no-pin'] === true ? false : undefined, typeof a.flags.template === 'string' ? a.flags.template : undefined); break;
     case 'map': out = await cmdMap(dir, a.pos[1]); break;
     case 'find': out = await cmdFind(dir, need(a.pos.slice(1).join(' ') || undefined, '探す語（例 移動速度）')); break;
     case 'code': out = await cmdCode(dir, a.pos.slice(1), a.flags); break;

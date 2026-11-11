@@ -219,9 +219,9 @@ export function makeTools(defaultProject: string): Tool[] {
     },
     {
       name: 'ages_init',
-      description: '新しいプロジェクトを作る（AGENTS.md・EDITOR-PLAN.md 付き）。ゲームの企画を受けたら最初にこれ',
-      inputSchema: { type: 'object', properties: { dir: { type: 'string', description: '作る場所' }, name: { type: 'string' } }, required: ['dir'] },
-      run: (a) => cmdInitPinned(a.dir, a.name),
+      description: '新しいプロジェクトを作る（AGENTS.md・EDITOR-PLAN.md 付き）。ゲームの企画を受けたら最初にこれ。template を省くと、作らずにテンプレートの一覧を返す（使うかを使用者に聞く）',
+      inputSchema: { type: 'object', properties: { dir: { type: 'string', description: '作る場所' }, name: { type: 'string' }, template: { type: 'string' } }, required: ['dir'] },
+      run: (a) => cmdInitPinned(a.dir, a.name, undefined, a.template),
     },
   ];
 }
