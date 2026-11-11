@@ -4,6 +4,7 @@
 // 操作: 右ドラッグ（Alt+左ドラッグ）で回す・中ボタン（Shift+右ドラッグ）で平行移動・ホイールで寄る／引く・F で選んだ物へ・W/E/R で道具
 import { h, menu, toast } from '../../editor/ui/dom.ts';
 import { T } from '../../editor/i18n.ts';
+import { ASSET_MIME } from '../../editor/ui/assets.ts';
 import type { App } from '../../editor/app.ts';
 import type { Panel } from '../../editor/ui/layout.ts';
 import { Renderer } from '../../render/webgl.ts';
@@ -127,7 +128,7 @@ export function mount(app: App): Panel {
     // 形のない物（光・カメラ・空の物）は印で出す
     g.font = `${16 * k}px sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
     for (const e of w.entities.values()) {
-      if (!e.c.Transform3D || e.c.Mesh3D) continue;
+      if (!e.c.Transform3D || e.c.Mesh3D || e.c.Model3D) continue;
       const m = matrixOf(w, e);
       const p = m && px(m3.positionOf(m));
       if (!m || !p) continue;
@@ -302,7 +303,7 @@ export function mount(app: App): Panel {
     if (!w) return null;
     const k = canvas.width / Math.max(1, wrap.clientWidth);
     for (const e of w.entities.values()) {
-      if (!e.c.Transform3D || e.c.Mesh3D) continue;
+      if (!e.c.Transform3D || e.c.Mesh3D || e.c.Model3D) continue;
       const m = matrixOf(w, e), s = m && px(m3.positionOf(m));
       if (s && Math.hypot(p[0] - s.x, p[1] - s.y) < 13 * k) return e.id;
     }
@@ -377,6 +378,26 @@ export function mount(app: App): Panel {
     view.target = m3.scale(m3.add(min, max), 0.5);
     view.dist = Math.max(2, (m3.distance(min, max) + size) * 1.4);
   };
+
+  // アセットのパネルからモデル（.glb）を運んでくると、落とした所の地面に置く
+  canvas.addEventListener('dragover', (e) => { if (e.dataTransfer?.types.includes(ASSET_MIME)) e.preventDefault(); });
+  canvas.addEventListener('drop', (e) => {
+    const path = e.dataTransfer?.getData(ASSET_MIME);
+    if (!path || !/\.glb$/i.test(path) || app.play) return;
+    e.preventDefault();
+    const scene = app.state.scenes[app.scene];
+    if (!scene) return;
+    cam = camera();
+    const ray = screenRay(cam, ...at(e), canvas.width, canvas.height);
+    // 地面（y = 0）との交わり。空を指していたら、見ている点
+    const t = Math.abs(ray.dir[1]) > 1e-6 ? -ray.origin[1] / ray.dir[1] : -1;
+    const p = t > 0 && t < 5000 ? m3.add(ray.origin, m3.scale(ray.dir, t)) : view.target;
+    const base = (path.split('/').pop() ?? 'model').replace(/\.glb$/i, '').replace(/[^A-Za-z0-9_]/g, '_') || 'model';
+    let id = base;
+    for (let n = 2; scene.entities.some((x) => x.id === id); n++) id = `${base}${n}`;
+    void app.patch([{ op: 'addEntity', scene: app.scene, entity: { id, name: id, components: { Transform3D: { x: round(p[0], 100), y: 0, z: round(p[2], 100) }, Model3D: { model: path } } } }], 'scene3d')
+      .then((r) => { if (r) app.select({ kind: 'scene', scene: app.scene, id }); });
+  });
 
   /** 形・光・カメラを足す（見ている点に） */
   const addMenu = (e: MouseEvent) => {

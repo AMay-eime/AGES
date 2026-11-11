@@ -3,10 +3,11 @@
 // - 光: 太陽1つ + 点の光8つまで + 全体の明るさ（上と下の色）。影はまだない
 // - 色は画面の色のまま計算する（2D の色と同じに見えるように。光の計算を直線の色で行うのは、必要になってから）
 import type { LayerFrame, LayerHost, RenderLayer } from '../../render/layer.ts';
-import type { Entity } from '../../core/world.ts';
 import { box, capsule, cylinder, plane, sphere, type Geometry } from './geometry.ts';
 import { invert, multiply, normalize, transformDirection, type Mat4, type Vec3 } from './math.ts';
 import { cameraOf, matrixOf, type CameraView3 } from './space.ts';
+import { parseGlb } from './gltf.ts';
+import { translation } from './math.ts';
 
 const MAX_POINT = 8;
 
@@ -99,7 +100,16 @@ uniform sampler2D u_tex;
 out vec4 o_color;
 void main() { o_color = texture(u_tex, v_uv); }`;
 
-interface Mesh { vao: WebGLVertexArrayObject; count: number }
+interface Mesh { vao: WebGLVertexArrayObject; count: number; type: number }
+/** 描くときの材質 */
+interface Mat { color: [number, number, number, number]; tex: WebGLTexture; tile: [number, number]; roughness: number; unlit: boolean; doubleSided: boolean }
+/** 読み込んだモデル（ノードごとのメッシュと材質） */
+interface Model {
+  parts: { world: Mat4; mesh: Mesh; material: number }[];
+  materials: { color: [number, number, number, number]; tex: WebGLTexture; roughness: number; unlit: boolean; doubleSided: boolean; blend: boolean }[];
+  center: Vec3;
+  size: Vec3;
+}
 interface Tex { tex: WebGLTexture; loaded: Promise<void> }
 
 /** 3D の層への指示（DrawOptions.layers['3d']） */
@@ -155,7 +165,17 @@ export class Layer3D implements RenderLayer {
   private mesh(key: string, make: () => Geometry): Mesh {
     let m = this.meshes.get(key);
     if (m) return m;
-    const gl = this.gl, g = make();
+    const gl = this.gl;
+    // カプセルは大きさごとに作るので、増えすぎたら捨てる
+    if (this.meshes.size > 200) { for (const x of this.meshes.values()) gl.deleteVertexArray(x.vao); this.meshes.clear(); }
+    m = this.upload(make());
+    this.meshes.set(key, m);
+    return m;
+  }
+
+  /** 頂点（x y z nx ny nz u v）と番号を GPU に送る */
+  private upload(g: { vertices: Float32Array; indices: Uint16Array | Uint32Array }): Mesh {
+    const gl = this.gl;
     const vao = gl.createVertexArray()!;
     gl.bindVertexArray(vao);
     gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
@@ -164,11 +184,36 @@ export class Layer3D implements RenderLayer {
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, g.indices, gl.STATIC_DRAW);
     for (const [i, n, o] of [[0, 3, 0], [1, 3, 3], [2, 2, 6]]) { gl.enableVertexAttribArray(i); gl.vertexAttribPointer(i, n, gl.FLOAT, false, 32, o * 4); }
     gl.bindVertexArray(null);
-    // カプセルは大きさごとに作るので、増えすぎたら捨てる
-    if (this.meshes.size > 200) { for (const x of this.meshes.values()) gl.deleteVertexArray(x.vao); this.meshes.clear(); }
-    m = { vao, count: g.indices.length };
-    this.meshes.set(key, m);
-    return m;
+    return { vao, count: g.indices.length, type: g.indices instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT };
+  }
+
+  private models = new Map<string, { model: Model | null; loaded: Promise<void>; error?: string }>();
+  /** モデル（.glb）。読み込み中・読めなかったときは null */
+  private model(path: string): Model | null {
+    let entry = this.models.get(path);
+    if (!entry) {
+      const e: { model: Model | null; loaded: Promise<void>; error?: string } = { model: null, loaded: Promise.resolve() };
+      e.loaded = fetch(this.host.urlOf(path)).then((r) => { if (!r.ok) throw new Error(`${path}: ${r.status}`); return r.arrayBuffer(); }).then((buf) => {
+        const g = parseGlb(new Uint8Array(buf));
+        const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : '';
+        const texOf = (i: number): WebGLTexture => {
+          const im = g.images[i];
+          if (!im) return this.white;
+          if (im.data) return this.texture(`${path}#${i}`, URL.createObjectURL(new Blob([im.data as BlobPart], { type: im.mime ?? 'image/png' })));
+          return im.uri && !im.uri.startsWith('data:') ? this.texture(normalizePath(dir + decodeURIComponent(im.uri))) : im.uri ? this.texture(`${path}#${i}`, im.uri) : this.white;
+        };
+        const meshes = g.meshes.map((prims) => prims.map((pr) => ({ mesh: this.upload(pr), material: pr.material })));
+        e.model = {
+          parts: g.nodes.flatMap((n) => (meshes[n.mesh] ?? []).map((x) => ({ world: n.world, ...x }))),
+          materials: g.materials.map((m) => ({ color: m.color, tex: texOf(m.image), roughness: m.roughness, unlit: m.unlit, doubleSided: m.doubleSided, blend: m.blend })),
+          center: [(g.min[0] + g.max[0]) / 2, (g.min[1] + g.max[1]) / 2, (g.min[2] + g.max[2]) / 2],
+          size: [g.max[0] - g.min[0], g.max[1] - g.min[1], g.max[2] - g.min[2]],
+        };
+      }).catch((err) => { e.error = (err as Error).message; console.error(`3D のモデル ${path} を読めません: ${e.error}`); });
+      this.models.set(path, e);
+      entry = e;
+    }
+    return entry.model;
   }
 
   private shape(shape: string, size: Vec3): { mesh: Mesh; scale: Vec3 } {
@@ -184,7 +229,7 @@ export class Layer3D implements RenderLayer {
     }
   }
 
-  private texture(path: string): WebGLTexture {
+  private texture(path: string, src?: string): WebGLTexture {
     if (!path) return this.white;
     let t = this.textures.get(path);
     if (!t) {
@@ -205,7 +250,7 @@ export class Layer3D implements RenderLayer {
         };
         img.onerror = () => done();
       });
-      img.src = this.host.urlOf(path);
+      img.src = src ?? this.host.urlOf(path);
       t = { tex, loaded };
       this.textures.set(path, t);
     }
@@ -213,11 +258,17 @@ export class Layer3D implements RenderLayer {
   }
 
   invalidate(path?: string): void {
-    for (const [k, t] of this.textures) if (!path || k === path) { this.gl.deleteTexture(t.tex); this.textures.delete(k); }
+    for (const [k, t] of this.textures) if (!path || k === path || k.startsWith(`${path}#`)) { this.gl.deleteTexture(t.tex); this.textures.delete(k); }
+    for (const k of [...this.models.keys()]) if (!path || k === path) this.models.delete(k);
   }
 
   async settled(): Promise<void> {
-    await Promise.all([...this.textures.values()].map((t) => t.loaded));
+    // モデルを読み終わると、その画像の読み込みが始まるので、増えなくなるまで待つ
+    for (let i = 0; i < 4; i++) {
+      const n = this.models.size + this.textures.size;
+      await Promise.all([...[...this.models.values()].map((m) => m.loaded), ...[...this.textures.values()].map((t) => t.loaded)]);
+      if (this.models.size + this.textures.size === n) return;
+    }
   }
 
   /** 描く先を用意する（大きさが変わったら作り直す） */
@@ -261,18 +312,34 @@ export class Layer3D implements RenderLayer {
     const opts = (f.options ?? {}) as Layer3DOptions;
     const cam = (this.camera = opts.camera ?? cameraOf(world, f.width / Math.max(1, f.height)));
     // 描く物（見えるもの）。なければ何もしない（3D を入れていても 2D だけのシーンは、そのまま）
-    const items: { e: Entity; m: Mat4; mesh: Mesh; c: Record<string, any>; depth: number }[] = [];
+    const items: { m: Mat4; mesh: Mesh; mat: Mat; depth: number; clear: boolean }[] = [];
     for (const e of world.entities.values()) {
       const c = e.c.Mesh3D as Record<string, any> | undefined;
-      if (!c || c.visible === false) continue;
+      const md = e.c.Model3D as Record<string, any> | undefined;
+      if (!(c && c.visible !== false) && !(md && md.visible !== false && md.model)) continue;
       const wm = matrixOf(world, e);
       if (!wm) continue;
-      const size = (c.size ?? [1, 1, 1]) as Vec3;
-      const { mesh, scale } = this.shape(c.shape, size);
-      const m = multiply(wm, [scale[0], 0, 0, 0, 0, scale[1], 0, 0, 0, 0, scale[2], 0, 0, 0, 0, 1]);
       const depth = (wm[12] - cam.pos[0]) * cam.dir[0] + (wm[13] - cam.pos[1]) * cam.dir[1] + (wm[14] - cam.pos[2]) * cam.dir[2];
-      items.push({ e, m, mesh, c, depth });
-      this.drawn.push({ id: e.id, matrix: wm, shape: c.shape ?? 'box', size });
+      if (c && c.visible !== false) {
+        const size = (c.size ?? [1, 1, 1]) as Vec3;
+        const { mesh, scale } = this.shape(c.shape, size);
+        const m = multiply(wm, [scale[0], 0, 0, 0, 0, scale[1], 0, 0, 0, 0, scale[2], 0, 0, 0, 0, 1]);
+        const [r, g, b] = rgb(c.color ?? '#ffffff'), a = alphaOf(c.color) * (c.alpha ?? 1);
+        items.push({ m, mesh, depth, clear: a < 1, mat: { color: [r, g, b, a], tex: this.texture(c.texture ?? ''), tile: (c.tile ?? [1, 1]) as [number, number], roughness: c.roughness ?? 0.8, unlit: !!c.unlit, doubleSided: false } });
+        this.drawn.push({ id: e.id, matrix: wm, shape: c.shape ?? 'box', size });
+      }
+      if (md && md.visible !== false && md.model) {
+        const model = this.model(md.model);
+        if (!model) continue;
+        const [r, g, b] = rgb(md.color ?? '#ffffff'), a = alphaOf(md.color) * (md.alpha ?? 1);
+        for (const part of model.parts) {
+          const mt = model.materials[part.material] ?? model.materials[model.materials.length - 1];
+          const alpha = mt.color[3] * a;
+          items.push({ m: multiply(wm, part.world), mesh: part.mesh, depth, clear: alpha < 1 || mt.blend, mat: { color: [mt.color[0] * r, mt.color[1] * g, mt.color[2] * b, alpha], tex: mt.tex, tile: [1, 1], roughness: mt.roughness, unlit: mt.unlit, doubleSided: mt.doubleSided } });
+        }
+        // 選ぶ・枠のための、全体を囲む箱
+        this.drawn.push({ id: e.id, matrix: multiply(wm, translation(model.center)), shape: 'box', size: model.size });
+      }
     }
     if (!items.length && !opts.grid) return;
 
@@ -297,17 +364,18 @@ export class Layer3D implements RenderLayer {
     gl.uniform1i(this.u('u_tex'), 0);
 
     // 透けない物を先に（手前から）、透ける物を後で（奥から）
-    const solid = items.filter((x) => (x.c.alpha ?? 1) >= 1 && alphaOf(x.c.color) >= 1).sort((a, b) => a.depth - b.depth);
-    const clear = items.filter((x) => !solid.includes(x)).sort((a, b) => b.depth - a.depth);
+    const solid = items.filter((x) => !x.clear).sort((a, b) => a.depth - b.depth);
+    const clear = items.filter((x) => x.clear).sort((a, b) => b.depth - a.depth);
     gl.disable(gl.BLEND);
-    for (const x of solid) this.one(x.m, x.mesh, x.c);
+    for (const x of solid) this.one(x.m, x.mesh, x.mat);
     if (clear.length) {
       gl.enable(gl.BLEND);
       gl.blendFuncSeparate(gl.ONE, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       gl.depthMask(false);
-      for (const x of clear) this.one(x.m, x.mesh, x.c);
+      for (const x of clear) this.one(x.m, x.mesh, x.mat);
       gl.depthMask(true);
     }
+    gl.enable(gl.CULL_FACE);
     if (opts.grid) this.grid(opts.grid.center, opts.grid.half);
     gl.bindVertexArray(null);
 
@@ -371,19 +439,18 @@ export class Layer3D implements RenderLayer {
     gl.depthMask(true);
   }
 
-  private one(m: Mat4, mesh: Mesh, c: Record<string, any>): void {
+  private one(m: Mat4, mesh: Mesh, mat: Mat): void {
     const gl = this.gl;
     gl.uniformMatrix4fv(this.u('u_model'), false, new Float32Array(m));
     gl.uniformMatrix3fv(this.u('u_normalMat'), false, new Float32Array(normalMatrix(m)));
-    const [r, g, b] = rgb(c.color ?? '#ffffff');
-    gl.uniform4f(this.u('u_color'), r, g, b, alphaOf(c.color) * (c.alpha ?? 1));
-    gl.uniform1f(this.u('u_unlit'), c.unlit ? 1 : 0);
-    gl.uniform1f(this.u('u_roughness'), c.roughness ?? 0.8);
-    const tile = c.tile ?? [1, 1];
-    gl.uniform2f(this.u('u_tile'), tile[0], tile[1]);
-    gl.bindTexture(gl.TEXTURE_2D, this.texture(c.texture ?? ''));
+    gl.uniform4f(this.u('u_color'), mat.color[0], mat.color[1], mat.color[2], mat.color[3]);
+    gl.uniform1f(this.u('u_unlit'), mat.unlit ? 1 : 0);
+    gl.uniform1f(this.u('u_roughness'), mat.roughness);
+    gl.uniform2f(this.u('u_tile'), mat.tile[0], mat.tile[1]);
+    if (mat.doubleSided) gl.disable(gl.CULL_FACE); else gl.enable(gl.CULL_FACE);
+    gl.bindTexture(gl.TEXTURE_2D, mat.tex);
     gl.bindVertexArray(mesh.vao);
-    gl.drawElements(gl.TRIANGLES, mesh.count, gl.UNSIGNED_SHORT, 0);
+    gl.drawElements(gl.TRIANGLES, mesh.count, mesh.type, 0);
     this.draws++;
   }
 
@@ -435,6 +502,12 @@ function normalMatrix(m: Mat4): number[] {
 function rgb(hex: string): Vec3 {
   const n = parseInt(hex.slice(1, 7), 16);
   return Number.isNaN(n) ? [1, 1, 1] : [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+}
+/** a/./b・a/../b を整える（モデルの外の画像の場所） */
+function normalizePath(p: string): string {
+  const out: string[] = [];
+  for (const seg of p.split('/')) { if (seg === '..') out.pop(); else if (seg && seg !== '.') out.push(seg); }
+  return out.join('/');
 }
 const alphaOf = (hex: unknown): number => (typeof hex === 'string' && hex.length === 9 ? parseInt(hex.slice(7, 9), 16) / 255 : 1);
 

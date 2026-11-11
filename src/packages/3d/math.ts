@@ -71,6 +71,18 @@ export function translation(p: Vec3): Mat4 {
   return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, p[0], p[1], p[2], 1];
 }
 
+/** 位置・回転（クォータニオン x y z w）・倍率から行列を作る（glTF のノード） */
+export function composeQuat(t: number[], q: number[], s: number[]): Mat4 {
+  const [x, y, z, w] = q, x2 = x + x, y2 = y + y, z2 = z + z;
+  const xx = x * x2, xy = x * y2, xz = x * z2, yy = y * y2, yz = y * z2, zz = z * z2, wx = w * x2, wy = w * y2, wz = w * z2;
+  return [
+    (1 - (yy + zz)) * s[0], (xy + wz) * s[0], (xz - wy) * s[0], 0,
+    (xy - wz) * s[1], (1 - (xx + zz)) * s[1], (yz + wx) * s[1], 0,
+    (xz + wy) * s[2], (yz - wx) * s[2], (1 - (xx + yy)) * s[2], 0,
+    t[0], t[1], t[2], 1,
+  ];
+}
+
 /** 行列を位置・回転（度）・倍率に戻す（compose の逆。斜めにつぶれた行列は近い値になる） */
 export function decompose(m: Mat4): { pos: Vec3; rot: Vec3; scale: Vec3 } {
   const sx = Math.hypot(m[0], m[1], m[2]), sy = Math.hypot(m[4], m[5], m[6]);

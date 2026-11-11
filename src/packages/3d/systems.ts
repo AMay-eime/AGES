@@ -36,10 +36,10 @@ export const SYSTEMS_3D = [camera3d];
 /** 3D の部品は Transform3D と一緒に使う（なければ描かれない・照らさない） */
 export const needsTransform3D = defineCheck({
   name: '3d-transform',
-  desc: 'Mesh3D・Camera3D・Light3D の物には Transform3D が要る',
+  desc: 'Mesh3D・Model3D・Camera3D・Light3D の物には Transform3D が要る',
   run(view) {
     const out: string[] = [];
-    const lacks = (c: Record<string, unknown>) => (['Mesh3D', 'Camera3D', 'Light3D'] as const).filter((k) => k in c && !('Transform3D' in c));
+    const lacks = (c: Record<string, unknown>) => (['Mesh3D', 'Model3D', 'Camera3D', 'Light3D'] as const).filter((k) => k in c && !('Transform3D' in c));
     for (const p of view.prefabs()) for (const k of lacks(p.components)) out.push(`@${p.name}: ${k} があるのに Transform3D がありません（位置が決まらず、使われません）`);
     for (const name of view.scenes) for (const e of view.scene(name)?.entities ?? []) for (const k of lacks(e.components ?? {})) out.push(`${name}#${e.id}: ${k} があるのに Transform3D がありません（位置が決まらず、使われません）`);
     return out;

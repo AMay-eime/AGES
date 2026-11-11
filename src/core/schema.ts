@@ -105,7 +105,7 @@ export function fieldAt(f: Field, sub: (string | number)[], value: unknown): Fie
   return cur;
 }
 
-export type AssetKind = 'image' | 'sound' | 'font' | 'shader';
+export type AssetKind = 'image' | 'sound' | 'font' | 'shader' | 'model';
 
 /** 種類ごとの拡張子 */
 export const ASSET_EXT: Record<AssetKind, string[]> = {
@@ -113,10 +113,12 @@ export const ASSET_EXT: Record<AssetKind, string[]> = {
   sound: ['.wav', '.mp3', '.ogg', '.m4a'],
   font: ['.ttf', '.otf', '.woff', '.woff2'],
   shader: ['.frag', '.glsl'],
+  // 3D のモデル（glTF の1つにまとまった形。追加パッケージ 3d の Model3D で描く）
+  model: ['.glb'],
 };
 
 /** 種類の名前（人に見せる） */
-export const ASSET_LABEL: Record<AssetKind, string> = { image: '画像', sound: '音', font: 'フォント', shader: 'シェーダー' };
+export const ASSET_LABEL: Record<AssetKind, string> = { image: '画像', sound: '音', font: 'フォント', shader: 'シェーダー', model: 'モデル' };
 
 /** 2次元行列（例: 敵の出現パターン、地形、ダメージ表）。インスペクタでは「開く」から専用の行列エディタで編集する。 */
 export interface MatrixField {

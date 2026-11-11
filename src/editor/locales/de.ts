@@ -783,6 +783,7 @@ export default {
   "点の光": "Punktlicht",
   "カメラ": "Kamera",
   "3D シーン": "3D-Szene",
+  "モデル": "Modell",
   // ---- 本体の標準の部品・表・シェーダーの説明（std-descs.ts。TD で訳す） ----
   "位置・向き・大きさ（標準）": "Position, Drehung, Größe (Standard)",
   "横位置(px。parent があれば親から見た位置)": "Horizontale Position (px; relativ zum Elternteil, falls parent gesetzt)",
