@@ -6,7 +6,8 @@ import type { LayerFrame, LayerHost, RenderLayer } from '../../render/layer.ts';
 import { box, capsule, cylinder, plane, sphere, type Geometry } from './geometry.ts';
 import { invert, multiply, normalize, transformDirection, type Mat4, type Vec3 } from './math.ts';
 import { cameraOf, matrixOf, type CameraView3 } from './space.ts';
-import { parseGlb } from './gltf.ts';
+import { parseGlb, type GltfModel } from './gltf.ts';
+import { jointMatrices, modelPose } from './animation.ts';
 import { translation } from './math.ts';
 
 const MAX_POINT = 8;
@@ -15,6 +16,10 @@ const VS = `#version 300 es
 layout(location=0) in vec3 a_pos;
 layout(location=1) in vec3 a_normal;
 layout(location=2) in vec2 a_uv;
+layout(location=3) in vec4 a_joints;
+layout(location=4) in vec4 a_weights;
+uniform sampler2D u_jointTex;
+uniform float u_skin;
 uniform mat4 u_viewProj;
 uniform mat4 u_model;
 uniform mat3 u_normalMat;
@@ -22,10 +27,22 @@ uniform vec2 u_tile;
 out vec3 v_world;
 out vec3 v_normal;
 out vec2 v_uv;
+mat4 joint(float j) {
+  int y = int(j);
+  return mat4(texelFetch(u_jointTex, ivec2(0, y), 0), texelFetch(u_jointTex, ivec2(1, y), 0), texelFetch(u_jointTex, ivec2(2, y), 0), texelFetch(u_jointTex, ivec2(3, y), 0));
+}
 void main() {
-  vec4 w = u_model * vec4(a_pos, 1.0);
+  vec4 p = vec4(a_pos, 1.0);
+  vec3 nrm = a_normal;
+  if (u_skin > 0.5) {
+    // 骨で動かす（モデルの座標の中で）
+    mat4 sk = joint(a_joints.x) * a_weights.x + joint(a_joints.y) * a_weights.y + joint(a_joints.z) * a_weights.z + joint(a_joints.w) * a_weights.w;
+    p = sk * p;
+    nrm = mat3(sk) * nrm;
+  }
+  vec4 w = u_model * p;
   v_world = w.xyz;
-  v_normal = u_normalMat * a_normal;
+  v_normal = u_normalMat * nrm;
   v_uv = a_uv * u_tile;
   gl_Position = u_viewProj * w;
 }`;
@@ -105,7 +122,9 @@ interface Mesh { vao: WebGLVertexArrayObject; count: number; type: number }
 interface Mat { color: [number, number, number, number]; tex: WebGLTexture; tile: [number, number]; roughness: number; unlit: boolean; doubleSided: boolean }
 /** 読み込んだモデル（ノードごとのメッシュと材質） */
 interface Model {
-  parts: { world: Mat4; mesh: Mesh; material: number }[];
+  parts: { node: number; world: Mat4; mesh: Mesh; material: number; skinned: boolean }[];
+  /** 動き・骨を求めるための元のデータ */
+  gltf: GltfModel;
   materials: { color: [number, number, number, number]; tex: WebGLTexture; roughness: number; unlit: boolean; doubleSided: boolean; blend: boolean }[];
   center: Vec3;
   size: Vec3;
@@ -174,7 +193,7 @@ export class Layer3D implements RenderLayer {
   }
 
   /** 頂点（x y z nx ny nz u v）と番号を GPU に送る */
-  private upload(g: { vertices: Float32Array; indices: Uint16Array | Uint32Array }): Mesh {
+  private upload(g: { vertices: Float32Array; indices: Uint16Array | Uint32Array; skin?: Float32Array }): Mesh {
     const gl = this.gl;
     const vao = gl.createVertexArray()!;
     gl.bindVertexArray(vao);
@@ -183,6 +202,12 @@ export class Layer3D implements RenderLayer {
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer());
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, g.indices, gl.STATIC_DRAW);
     for (const [i, n, o] of [[0, 3, 0], [1, 3, 3], [2, 2, 6]]) { gl.enableVertexAttribArray(i); gl.vertexAttribPointer(i, n, gl.FLOAT, false, 32, o * 4); }
+    if (g.skin) {
+      // 骨の番号と重み（別のバッファ）
+      gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+      gl.bufferData(gl.ARRAY_BUFFER, g.skin, gl.STATIC_DRAW);
+      for (const [i, o] of [[3, 0], [4, 4]]) { gl.enableVertexAttribArray(i); gl.vertexAttribPointer(i, 4, gl.FLOAT, false, 32, o * 4); }
+    }
     gl.bindVertexArray(null);
     return { vao, count: g.indices.length, type: g.indices instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT };
   }
@@ -202,9 +227,10 @@ export class Layer3D implements RenderLayer {
           if (im.data) return this.texture(`${path}#${i}`, URL.createObjectURL(new Blob([im.data as BlobPart], { type: im.mime ?? 'image/png' })));
           return im.uri && !im.uri.startsWith('data:') ? this.texture(normalizePath(dir + decodeURIComponent(im.uri))) : im.uri ? this.texture(`${path}#${i}`, im.uri) : this.white;
         };
-        const meshes = g.meshes.map((prims) => prims.map((pr) => ({ mesh: this.upload(pr), material: pr.material })));
+        const meshes = g.meshes.map((prims) => prims.map((pr) => ({ mesh: this.upload(pr), material: pr.material, skinned: !!pr.skin })));
         e.model = {
-          parts: g.nodes.flatMap((n) => (meshes[n.mesh] ?? []).map((x) => ({ world: n.world, ...x }))),
+          gltf: g,
+          parts: g.nodes.flatMap((n, node) => (meshes[n.mesh] ?? []).map((x) => ({ node, world: n.world, ...x, skinned: x.skinned && n.skin >= 0 }))),
           materials: g.materials.map((m) => ({ color: m.color, tex: texOf(m.image), roughness: m.roughness, unlit: m.unlit, doubleSided: m.doubleSided, blend: m.blend })),
           center: [(g.min[0] + g.max[0]) / 2, (g.min[1] + g.max[1]) / 2, (g.min[2] + g.max[2]) / 2],
           size: [g.max[0] - g.min[0], g.max[1] - g.min[1], g.max[2] - g.min[2]],
@@ -312,7 +338,7 @@ export class Layer3D implements RenderLayer {
     const opts = (f.options ?? {}) as Layer3DOptions;
     const cam = (this.camera = opts.camera ?? cameraOf(world, f.width / Math.max(1, f.height)));
     // 描く物（見えるもの）。なければ何もしない（3D を入れていても 2D だけのシーンは、そのまま）
-    const items: { m: Mat4; mesh: Mesh; mat: Mat; depth: number; clear: boolean }[] = [];
+    const items: { m: Mat4; mesh: Mesh; mat: Mat; depth: number; clear: boolean; joints?: Float32Array }[] = [];
     for (const e of world.entities.values()) {
       const c = e.c.Mesh3D as Record<string, any> | undefined;
       const md = e.c.Model3D as Record<string, any> | undefined;
@@ -332,10 +358,20 @@ export class Layer3D implements RenderLayer {
         const model = this.model(md.model);
         if (!model) continue;
         const [r, g, b] = rgb(md.color ?? '#ffffff'), a = alphaOf(md.color) * (md.alpha ?? 1);
+        // 動き（clip）・骨があれば、いまの姿勢のノードの行列を求める
+        const pose = model.gltf.animations.length || model.gltf.skins.length ? modelPose(model.gltf, md) : null;
+        const joints = new Map<number, Float32Array>();
         for (const part of model.parts) {
           const mt = model.materials[part.material] ?? model.materials[model.materials.length - 1];
           const alpha = mt.color[3] * a;
-          items.push({ m: multiply(wm, part.world), mesh: part.mesh, depth, clear: alpha < 1 || mt.blend, mat: { color: [mt.color[0] * r, mt.color[1] * g, mt.color[2] * b, alpha], tex: mt.tex, tile: [1, 1], roughness: mt.roughness, unlit: mt.unlit, doubleSided: mt.doubleSided } });
+          let jm: Float32Array | undefined;
+          if (part.skinned && pose) {
+            const sk = model.gltf.nodes[part.node].skin;
+            jm = joints.get(sk) ?? jointMatrices(model.gltf, sk, pose);
+            joints.set(sk, jm);
+          }
+          // 骨で動くメッシュは、ノードの位置を使わない（骨の行列に入っている）
+          items.push({ m: jm ? wm : multiply(wm, pose?.[part.node] ?? part.world), ...(jm ? { joints: jm } : {}), mesh: part.mesh, depth, clear: alpha < 1 || mt.blend, mat: { color: [mt.color[0] * r, mt.color[1] * g, mt.color[2] * b, alpha], tex: mt.tex, tile: [1, 1], roughness: mt.roughness, unlit: mt.unlit, doubleSided: mt.doubleSided } });
         }
         // 選ぶ・枠のための、全体を囲む箱
         this.drawn.push({ id: e.id, matrix: multiply(wm, translation(model.center)), shape: 'box', size: model.size });
@@ -362,17 +398,19 @@ export class Layer3D implements RenderLayer {
     this.lights(f);
     gl.activeTexture(gl.TEXTURE0);
     gl.uniform1i(this.u('u_tex'), 0);
+    gl.uniform1i(this.u('u_jointTex'), 1);
+    gl.uniform1f(this.u('u_skin'), 0);
 
     // 透けない物を先に（手前から）、透ける物を後で（奥から）
     const solid = items.filter((x) => !x.clear).sort((a, b) => a.depth - b.depth);
     const clear = items.filter((x) => x.clear).sort((a, b) => b.depth - a.depth);
     gl.disable(gl.BLEND);
-    for (const x of solid) this.one(x.m, x.mesh, x.mat);
+    for (const x of solid) this.one(x.m, x.mesh, x.mat, x.joints);
     if (clear.length) {
       gl.enable(gl.BLEND);
       gl.blendFuncSeparate(gl.ONE, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       gl.depthMask(false);
-      for (const x of clear) this.one(x.m, x.mesh, x.mat);
+      for (const x of clear) this.one(x.m, x.mesh, x.mat, x.joints);
       gl.depthMask(true);
     }
     gl.enable(gl.CULL_FACE);
@@ -427,6 +465,7 @@ export class Layer3D implements RenderLayer {
     gl.uniformMatrix4fv(this.u('u_model'), false, new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]));
     gl.uniformMatrix3fv(this.u('u_normalMat'), false, new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]));
     gl.uniform1f(this.u('u_unlit'), 1);
+    gl.uniform1f(this.u('u_skin'), 0);
     gl.uniform2f(this.u('u_tile'), 1, 1);
     gl.bindTexture(gl.TEXTURE_2D, this.white);
     for (const [verts, r, g, b, a] of [[minor, 1, 1, 1, 0.13], [major, 1, 1, 1, 0.3], [xs, 1, 0.35, 0.35, 0.7], [zs, 0.4, 0.55, 1, 0.7]] as const) {
@@ -439,8 +478,23 @@ export class Layer3D implements RenderLayer {
     gl.depthMask(true);
   }
 
-  private one(m: Mat4, mesh: Mesh, mat: Mat): void {
+  private jointTex: WebGLTexture | null = null;
+  private one(m: Mat4, mesh: Mesh, mat: Mat, joints?: Float32Array): void {
     const gl = this.gl;
+    gl.uniform1f(this.u('u_skin'), joints ? 1 : 0);
+    if (joints) {
+      // 骨の行列を、幅4（行列の列）× 骨の数 の画像にして渡す
+      gl.activeTexture(gl.TEXTURE1);
+      if (!this.jointTex) {
+        this.jointTex = gl.createTexture()!;
+        gl.bindTexture(gl.TEXTURE_2D, this.jointTex);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      }
+      gl.bindTexture(gl.TEXTURE_2D, this.jointTex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 4, joints.length / 16, 0, gl.RGBA, gl.FLOAT, joints);
+      gl.activeTexture(gl.TEXTURE0);
+    }
     gl.uniformMatrix4fv(this.u('u_model'), false, new Float32Array(m));
     gl.uniformMatrix3fv(this.u('u_normalMat'), false, new Float32Array(normalMatrix(m)));
     gl.uniform4f(this.u('u_color'), mat.color[0], mat.color[1], mat.color[2], mat.color[3]);

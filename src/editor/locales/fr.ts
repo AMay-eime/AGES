@@ -784,6 +784,8 @@ export default {
   "カメラ": "Caméra",
   "3D シーン": "Scène 3D",
   "モデル": "Modèle",
+  "動きの名前（空なら元の姿勢）": "Nom de l’animation (vide = pose de repos)",
+  "このモデルに動きはありません": "Ce modèle n’a pas d’animation",
   // ---- 本体の標準の部品・表・シェーダーの説明（std-descs.ts。TD で訳す） ----
   "位置・向き・大きさ（標準）": "Position, rotation, taille (standard)",
   "横位置(px。parent があれば親から見た位置)": "Position horizontale (px ; relative au parent si parent est défini)",

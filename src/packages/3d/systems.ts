@@ -31,7 +31,41 @@ export const camera3d = defineSystem({
   },
 });
 
-export const SYSTEMS_3D = [camera3d];
+/**
+ * モデルの動きの時刻を進める（Model3D.clip）。くり返しは長さで折り返し、くり返さない動きは最後で止まって done になる。
+ * clip が変わったら、前の動きのその時の姿勢を覚えて、fade 秒で混ぜる
+ */
+export const model3d = defineSystem({
+  name: 'model3d',
+  desc: 'モデルの動き（Model3D.clip）の時刻を進める（3d）',
+  writes: ['Model3D'],
+  update(ctx) {
+    for (const e of ctx.world.entities.values()) {
+      const c = e.c.Model3D as { model: string; clip: string; speed: number; loop: boolean; fade: number; time: number; done: boolean; playing: string; prevClip: string; prevTime: number; fadeLeft: number } | undefined;
+      if (!c) continue;
+      if ((c.clip ?? '') !== (c.playing ?? '')) {
+        // 始まり（前の動きがない）は、書いてある time から。切り替えは、前の動きを覚えて 0 秒から
+        if (c.playing) { c.prevClip = c.playing; c.prevTime = c.time ?? 0; c.fadeLeft = c.fade ?? 0; c.time = 0; }
+        c.playing = c.clip ?? '';
+        c.done = false;
+        continue;
+      }
+      if ((c.fadeLeft ?? 0) > 0) c.fadeLeft = Math.max(0, c.fadeLeft - ctx.dt);
+      if (!c.clip) continue;
+      const step = ctx.dt * (c.speed ?? 1);
+      // 長さ（モデルの要約から。モデルがない・動きの名前が違うなら分からないので、進めるだけ）
+      const len = ctx.world.registry.models.get(c.model)?.[c.clip];
+      let t = (c.time ?? 0) + step;
+      if (len !== undefined && len > 0) {
+        if (c.loop !== false) { t = ((t % len) + len) % len; c.done = false; }
+        else { c.done = step >= 0 ? t >= len : t <= 0; t = Math.max(0, Math.min(len, t)); }
+      }
+      c.time = t;
+    }
+  },
+});
+
+export const SYSTEMS_3D = [camera3d, model3d];
 
 /** 3D の部品は Transform3D と一緒に使う（なければ描かれない・照らさない） */
 export const needsTransform3D = defineCheck({
@@ -46,4 +80,22 @@ export const needsTransform3D = defineCheck({
   },
 });
 
-export const CHECKS_3D = [needsTransform3D];
+/** Model3D.clip に書いた動きが、モデルの中にあるか（名前の間違いは、動かないだけで気づきにくい） */
+export const clipExists = defineCheck({
+  name: '3d-clip',
+  desc: 'Model3D.clip の動きがモデルの中にある',
+  run(view) {
+    const out: string[] = [];
+    const bad = (c: Record<string, unknown>): string | null => {
+      const m = c.Model3D as { model?: string; clip?: string } | undefined;
+      const clips = m?.clip && m.model ? view.asset?.(m.model)?.model?.clips : undefined;
+      if (!m || !clips || clips.includes(m.clip!)) return null;
+      return `Model3D.clip: ${m.model} に動き ${m.clip} がありません（${clips.length ? `あるのは ${clips.join(' ')}` : 'このモデルに動きはありません'}）`;
+    };
+    for (const p of view.prefabs()) { const b = bad(p.components); if (b) out.push(`@${p.name}.${b}`); }
+    for (const name of view.scenes) for (const e of view.scene(name)?.entities ?? []) { const b = bad(e.components ?? {}); if (b) out.push(`${name}#${e.id}.${b}`); }
+    return out;
+  },
+});
+
+export const CHECKS_3D = [needsTransform3D, clipExists];

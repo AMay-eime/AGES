@@ -572,6 +572,15 @@ export function widget(app: App, f: Field, value: unknown, commit: (v: unknown, 
         wrap.append(t, h('datalist', { id }, rows.map((r) => h('option', { value: r.id }))), show);
         return { el: wrap, set: (v) => { t.value = String(v ?? ''); preview(String(v ?? '')); } };
       }
+      // モデルの動き（Model3D.clip）: そのモデルの中の動きの名前から選べる
+      if (ctx.comp === 'Model3D' && ctx.field === 'clip') {
+        const clips = Object.entries(app.registry.models.get(String(ctx.holder.Model3D?.model ?? '')) ?? {});
+        const id = `clips-${Math.random().toString(36).slice(2)}`;
+        const t = h('input', { type: 'text', value: String(value ?? ''), list: id, placeholder: clips.length ? T('動きの名前（空なら元の姿勢）') : T('このモデルに動きはありません') }) as HTMLInputElement;
+        t.addEventListener('change', () => commit(t.value.trim(), true));
+        wrap.append(t, h('datalist', { id }, clips.map(([name, sec]) => h('option', { value: name }, T('{0}秒', Math.round(sec * 100) / 100)))));
+        return { el: wrap, set: (v) => { t.value = String(v ?? ''); } };
+      }
       // UI の親・隣に付ける相手は、同じシーンの UI の物から選ぶ
       if (f.type === 'ref' && ctx.comp === 'UI') {
         const ids = (app.sceneView(app.scene)?.entities ?? []).filter((e) => e.components.UI && e.components.UI !== ctx.holder.UI).map((e) => e.id);

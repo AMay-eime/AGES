@@ -11,7 +11,7 @@ import type { Op, Change } from '../core/patch.ts';
 import { modal, toast, h } from './ui/dom.ts';
 import { AudioPlayer } from '../audio/player.ts';
 import { DEFAULT_SOUND, playCmd, type SoundSettings } from '../core/audio.ts';
-import { assetRefs, preloadSet } from '../core/assets.ts';
+import { assetRefs, modelsOf, preloadSet } from '../core/assets.ts';
 import { shaderMap, type ShaderDef } from '../core/shader.ts';
 import { LocalStore } from '../core/save.ts';
 import { languagesOf } from '../core/i18n.ts';
@@ -166,6 +166,7 @@ export class App {
       this.registry.tableData = new Map(Object.entries(s.tables ?? {}));
       this.registry.images = new Map(s.assets.filter((a) => a.w && a.h).map((a) => [a.path, { w: a.w!, h: a.h! }]));
       this.registry.shaders = shaderMap(s.assets.flatMap((a) => (a.shader ? [{ ...a.shader, path: a.path }] : [])));
+      this.registry.models = modelsOf(s.assets);
       this.registry.setLanguages(languagesOf(s.config));
     }
     if (!this.scene || !s.scenes[this.scene]) this.scene = s.config.startScene in s.scenes ? s.config.startScene : Object.keys(s.scenes)[0] ?? '';

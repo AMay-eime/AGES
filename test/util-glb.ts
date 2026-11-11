@@ -36,6 +36,8 @@ export interface GlbOptions {
   translation?: [number, number, number];
   scale?: [number, number, number];
   clips?: string[];
+  /** 骨2本（下半分は骨0、上半分は骨1）と、動き bend（骨1 が z 軸まわりに 1秒で 90度）・slide（骨0 が 1秒で x へ 2m） */
+  skinned?: boolean;
 }
 
 /** 1m の箱のモデル */
@@ -46,6 +48,14 @@ export function makeGlb(o: GlbOptions = {}): Uint8Array {
   for (let i = 0; i < n; i++) { pos.set(g.vertices.subarray(i * 8, i * 8 + 3), i * 3); nor.set(g.vertices.subarray(i * 8 + 3, i * 8 + 6), i * 3); uv.set(g.vertices.subarray(i * 8 + 6, i * 8 + 8), i * 2); }
   const chunks: Uint8Array[] = [new Uint8Array(pos.buffer), new Uint8Array(nor.buffer), new Uint8Array(uv.buffer), new Uint8Array(g.indices.buffer)];
   if (o.image) chunks.push(o.image);
+  const base = chunks.length;
+  if (o.skinned) {
+    const joints = new Uint8Array(n * 4), weights = new Float32Array(n * 4);
+    for (let i = 0; i < n; i++) { joints[i * 4] = pos[i * 3 + 1] > 0 ? 1 : 0; weights[i * 4] = 1; }
+    const ibm = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0.5, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    const h = Math.SQRT1_2;
+    chunks.push(joints, new Uint8Array(weights.buffer), new Uint8Array(ibm.buffer), new Uint8Array(new Float32Array([0, 1]).buffer), new Uint8Array(new Float32Array([0, 0, 0, 1, 0, 0, h, h]).buffer), new Uint8Array(new Float32Array([0, -0.5, 0, 2, -0.5, 0]).buffer));
+  }
   const views: { buffer: 0; byteOffset: number; byteLength: number }[] = [];
   let off = 0;
   for (const c of chunks) { views.push({ buffer: 0, byteOffset: off, byteLength: c.length }); off += Math.ceil(c.length / 4) * 4; }
@@ -54,9 +64,17 @@ export function makeGlb(o: GlbOptions = {}): Uint8Array {
   const json = {
     asset: { version: '2.0' },
     scene: 0,
-    scenes: [{ nodes: [0] }],
-    nodes: [{ name: 'box', mesh: 0, ...(o.translation ? { translation: o.translation } : {}), ...(o.scale ? { scale: o.scale } : {}) }],
-    meshes: [{ primitives: [{ attributes: { POSITION: 0, NORMAL: 1, TEXCOORD_0: 2 }, indices: 3, material: 0 }] }],
+    scenes: [{ nodes: o.skinned ? [0, 1] : [0] }],
+    nodes: [{ name: 'box', mesh: 0, ...(o.skinned ? { skin: 0 } : {}), ...(o.translation ? { translation: o.translation } : {}), ...(o.scale ? { scale: o.scale } : {}) },
+      ...(o.skinned ? [{ name: 'lower', translation: [0, -0.5, 0], children: [2] }, { name: 'upper', translation: [0, 0.5, 0] }] : [])],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0, NORMAL: 1, TEXCOORD_0: 2, ...(o.skinned ? { JOINTS_0: 4, WEIGHTS_0: 5 } : {}) }, indices: 3, material: 0 }] }],
+    ...(o.skinned ? {
+      skins: [{ joints: [1, 2], inverseBindMatrices: 6 }],
+      animations: [
+        { name: 'bend', channels: [{ sampler: 0, target: { node: 2, path: 'rotation' } }], samplers: [{ input: 7, output: 8, interpolation: 'LINEAR' }] },
+        { name: 'slide', channels: [{ sampler: 0, target: { node: 1, path: 'translation' } }], samplers: [{ input: 7, output: 9 }] },
+      ],
+    } : {}),
     materials: [{ pbrMetallicRoughness: { baseColorFactor: o.color ?? [1, 1, 1, 1], ...(o.image ? { baseColorTexture: { index: 0 } } : {}) }, ...(o.unlit ? { extensions: { KHR_materials_unlit: {} } } : {}) }],
     ...(o.image ? { textures: [{ source: 0 }], images: [{ bufferView: 4, mimeType: 'image/png' }] } : {}),
     ...(o.clips ? { animations: o.clips.map((name) => ({ name, channels: [], samplers: [] })) } : {}),
@@ -65,6 +83,14 @@ export function makeGlb(o: GlbOptions = {}): Uint8Array {
       { bufferView: 1, componentType: 5126, count: n, type: 'VEC3' },
       { bufferView: 2, componentType: 5126, count: n, type: 'VEC2' },
       { bufferView: 3, componentType: 5123, count: g.indices.length, type: 'SCALAR' },
+      ...(o.skinned ? [
+        { bufferView: base, componentType: 5121, count: n, type: 'VEC4' },
+        { bufferView: base + 1, componentType: 5126, count: n, type: 'VEC4' },
+        { bufferView: base + 2, componentType: 5126, count: 2, type: 'MAT4' },
+        { bufferView: base + 3, componentType: 5126, count: 2, type: 'SCALAR' },
+        { bufferView: base + 4, componentType: 5126, count: 2, type: 'VEC4' },
+        { bufferView: base + 5, componentType: 5126, count: 2, type: 'VEC3' },
+      ] : []),
     ],
     bufferViews: views,
     buffers: [{ byteLength: bin.length }],

@@ -148,7 +148,7 @@ export function makeTools(defaultProject: string): Tool[] {
         properties: {
           ...dirProp,
           folder: { type: 'string', description: 'このフォルダの中だけ（例 assets/ships）' },
-          kind: { type: 'string', enum: ['image', 'sound', 'font'] },
+          kind: { type: 'string', description: 'image sound font shader model' },
           unused: { type: 'boolean' },
           refs: { type: 'string', description: '使っている所を見るファイルかフォルダ' },
         },

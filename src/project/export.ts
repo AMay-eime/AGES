@@ -119,7 +119,7 @@ export async function exportProject(p: Project, opts: ExportOptions = {}): Promi
     prefabs: Object.fromEntries(p.docs.prefabs),
     tables: Object.fromEntries(p.docs.tables),
     sheets: Object.fromEntries(p.registry.sheets),
-    assets: p.assets.map((a) => ({ path: a.path, kind: a.kind, ...(a.w ? { w: a.w } : {}), ...(a.h ? { h: a.h } : {}), ...(a.shader ? { shader: a.shader } : {}) })),
+    assets: p.assets.map((a) => ({ path: a.path, kind: a.kind, ...(a.w ? { w: a.w } : {}), ...(a.h ? { h: a.h } : {}), ...(a.shader ? { shader: a.shader } : {}), ...(a.model?.clips.length ? { model: { clips: a.model.clips, clipSec: a.model.clipSec } } : {}) })),
     codeRefs,
   };
   await writeFile(join(web, 'project.json'), JSON.stringify(bundle));

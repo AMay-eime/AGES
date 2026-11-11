@@ -20,7 +20,7 @@ export interface AssetInfo {
   /** シェーダーの宣言（説明・調整できる値・中身） */
   shader?: ShaderDef;
   /** 3D のモデルの要約（大きさ m・中心・三角形の数・動きの名前。開かずに置き方を決められるように） */
-  model?: { size: [number, number, number]; center: [number, number, number]; tris: number; clips: string[] };
+  model?: { size: [number, number, number]; center: [number, number, number]; tris: number; clips: string[]; clipSec?: number[] };
 }
 
 const SKIP = new Set(['.git', '.ages', 'node_modules']);
