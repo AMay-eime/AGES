@@ -3,19 +3,23 @@
 // 作る順番は docs/PLAN.md の段階4（いまは位置・回転とカメラまで。描画はこれから）
 import { definePackage } from '../../core/packages.ts';
 import { COMPONENTS_3D } from './components.ts';
-import { SYSTEMS_3D } from './systems.ts';
+import { CHECKS_3D, SYSTEMS_3D } from './systems.ts';
+import { createLayer3D } from './render.ts';
 
-export { Transform3D, Camera3D } from './components.ts';
+export { Transform3D, Camera3D, Mesh3D, Light3D, Environment3D } from './components.ts';
 export * as math3 from './math.ts';
 export type { Vec3, Mat4 } from './math.ts';
 export { matrixOf, worldPosition, forwardOf, lookAt, cameraOf, toScreen, screenRay, worldMatrix, localMatrix, type CameraView3, type Pose3 } from './space.ts';
 
 export default definePackage({
   name: '3d',
-  desc: '3D（作っている途中。いまは位置・回転とカメラまでで、画面にはまだ何も描かない）',
+  desc: '3D（作っている途中。基本の形・光・カメラまで。モデル（glTF）・影・当たり判定はまだ）',
   components: COMPONENTS_3D,
   systems: SYSTEMS_3D,
+  checks: CHECKS_3D,
+  render: createLayer3D,
   toc: [
     '3D の位置・回転・親子とカメラ: Transform3D・Camera3D と `ages/3d` の worldPosition・lookAt・toScreen。Y が上・単位は m・物の前は +Z → `3d`',
+    '3D の形と光: Mesh3D（箱・球・円柱・カプセル・板）・Light3D（太陽・点）・Environment3D（全体の明るさ・霧） → `3d-draw`',
   ],
 });

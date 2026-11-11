@@ -60,7 +60,7 @@ async function shoot(cfg: ShotConfig): Promise<ShotResult> {
   const canvas = document.getElementById('c') as HTMLCanvasElement;
   canvas.width = Math.round(v.width * scale);
   canvas.height = Math.round(v.height * scale);
-  const renderer = new Renderer(canvas, { urlOf, sheets: registry.sheets, filter: v.filter, shaders: registry.shaders });
+  const renderer = new Renderer(canvas, { urlOf, sheets: registry.sheets, filter: v.filter, shaders: registry.shaders, packages: registry.packages });
 
   const store = new MemoryStore(cfg.save ?? {});
   const doc = cfg.spawns?.length ? tryoutScene() : state.scenes[cfg.scene];

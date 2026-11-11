@@ -62,7 +62,7 @@ async function main(): Promise<void> {
   const urlOf = (path: string) => new URL(path.split('/').map(encodeURIComponent).join('/'), location.href).href;
   const canvas = document.getElementById('game') as HTMLCanvasElement;
   canvas.style.imageRendering = v.filter === 'nearest' ? 'pixelated' : 'auto';
-  const renderer = new Renderer(canvas, { urlOf, sheets: registry.sheets, filter: v.filter, shaders: registry.shaders });
+  const renderer = new Renderer(canvas, { urlOf, sheets: registry.sheets, filter: v.filter, shaders: registry.shaders, packages: registry.packages });
   const audio = new AudioPlayer(urlOf);
 
   // 画面の大きさに合わせる（view.fit。エディタのゲームの画面と同じ計算）

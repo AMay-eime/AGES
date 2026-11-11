@@ -96,3 +96,38 @@ export const systems: GameModule['systems'] = [walk];
   assert.match(await cmdSchema(dir, ['Transform3D']), /^Transform3D: .*（使い方: guide:3d）\n {2}x num=0/m);
   assert.match(await cmdSchema(dir, ['guide']), /^ {2}3d: .*（Transform3D Camera3D）$/m);
 });
+
+test('描画: 基本の形・光が画面に出て、2D の UI が上に重なる（ages run --shot）。Transform3D のない部品は ⚠', { skip: (await import('../src/cli/shot.ts')).findChrome() ? false : 'Chrome がない' }, async () => {
+  const { decodePng } = await import('../src/project/png.ts');
+  const dir = join(await mkdtemp(join(tmpdir(), 'ages-3d-')), 'g');
+  await cmdInit(dir, 'g');
+  const cfg = join(dir, 'ages.project.json');
+  const c = JSON.parse(await readFile(cfg, 'utf8'));
+  await writeFile(cfg, JSON.stringify({ ...c, packages: ['3d'], view: { ...c.view, width: 400, height: 300, background: '#9fc4e8' } }, null, 2) + '\n');
+  const look = m.lookRotation([0, 3, 8], [0, 1, 0], true);
+  const ent = (id: string, components: Record<string, Record<string, unknown>>) => ({ op: 'addEntity' as const, scene: 'main', entity: { id, components } });
+  await cmdPatch(dir, [
+    ent('ground', { Transform3D: {}, Mesh3D: { shape: 'plane', size: [40, 1, 40], color: '#00ff00', unlit: true } }),
+    ent('ball', { Transform3D: { y: 1 }, Mesh3D: { shape: 'sphere', size: [2, 2, 2], color: '#ff0000', unlit: true } }),
+    ent('lit', { Transform3D: { x: 3, y: 0.5 }, Mesh3D: { shape: 'box', color: '#ffffff' } }),
+    ent('cam', { Transform3D: { y: 3, z: 8, rx: look.rx, ry: look.ry }, Camera3D: {} }),
+    ent('hud', { Shape: { kind: 'rect', w: 40, h: 20, color: '#0000ff' }, UI: { anchor: 'topLeft', x: 0, y: 0 } }),
+    ent('ghost', { Mesh3D: {} }),
+  ], false);
+  assert.match(await cmdCheck(dir), /⚠ 3d-transform: main#ghost: Mesh3D があるのに Transform3D がありません/);
+  const out = await cmdRun(dir, { frames: '1', shot: '1', 'shot-dir': join(dir, 'shots') });
+  assert.match(out, /shot f1: \S+main-f1\.png 400x300/);
+  const png = decodePng(await readFile(join(dir, 'shots', 'main-f1.png')));
+  const at = (x: number, y: number) => [...png.data.subarray((y * png.w + x) * 4, (y * png.w + x) * 4 + 3)];
+  assert.deepEqual([png.w, png.h], [400, 300]);
+  assert.deepEqual(at(200, 150), [255, 0, 0], '真ん中は球（光を受けない赤）');
+  assert.deepEqual(at(200, 280), [0, 255, 0], '下は床');
+  assert.deepEqual(at(380, 10), [0x9f, 0xc4, 0xe8], '上は背景の色（空）');
+  assert.deepEqual(at(10, 5), [0, 0, 255], '2D の UI は 3D の上');
+  // 光を受ける箱: 上の面は明るく、白より暗い（既定の太陽と全体の明るさ）
+  const { toScreen, cameraFrom } = await import('../src/packages/3d/space.ts');
+  const cam = cameraFrom('cam', m.compose([0, 3, 8], [look.rx, look.ry, 0]), {}, 400 / 300);
+  const top = toScreen(cam, [3, 1, 0], 400, 300)!;
+  const px = at(Math.round(top.x), Math.round(top.y));
+  assert.ok(px[0] > 120 && px[1] > 120 && px[0] !== 0x9f, `箱の上の面 ${px}`);
+});

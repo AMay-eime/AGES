@@ -151,6 +151,7 @@ export class Registry {
       r.systems.push(s);
     }
     for (const s of STD_SYSTEMS) r.systems.push(s);
+    for (const pk of packages) for (const c of pk.checks ?? []) r.checks.push(c);
     for (const c of mod.checks ?? []) {
       if (typeof c?.run !== 'function' || !c.name) throw new Error('checks には defineCheck({ name, desc, run }) を並べます');
       if (r.checks.some((x) => x.name === c.name)) throw new Error(`検証 ${c.name} が2回定義されています`);

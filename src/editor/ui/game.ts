@@ -722,6 +722,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     const selId = app.sel?.kind === 'scene' ? app.sel.id : '';
     const particles = p ? { dt: p.paused || p.loading ? 0 : dt } : { dt, preview: selId && w.get(selId)?.c.Particles ? [selId] : [] };
     const td = performance.now();
+    renderer.usePackages(app.registry?.packages ?? []);
     renderer.draw(w, { background: app.state.config.view.background, design: d, view: viewMode === 'free' ? free : undefined, overlay, particles, post: viewMode !== 'free' });
     app.perf.drawMs = performance.now() - td;
     app.perf.draws = renderer.stats.draws;

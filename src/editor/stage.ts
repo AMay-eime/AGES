@@ -101,7 +101,7 @@ export function createStage(app: App, el: HTMLElement, init: StageOptions): Stag
   const ensureRenderer = () => {
     if (renderer || rendererError || !app.state?.config || !app.registry) return;
     try {
-      renderer = new Renderer(canvas, { urlOf: (p) => app.assetUrl(p), sheets: app.registry.sheets, filter: app.state.config.view.filter, shaders: app.registry.shaders });
+      renderer = new Renderer(canvas, { urlOf: (p) => app.assetUrl(p), sheets: app.registry.sheets, filter: app.state.config.view.filter, shaders: app.registry.shaders, packages: app.registry.packages });
     } catch (e) {
       rendererError = T('この画面では描けません（WebGL2）: {0}', (e as Error).message);
     }
