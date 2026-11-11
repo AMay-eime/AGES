@@ -1,0 +1,14 @@
+{
+  "assets/models/": {
+    "by": "stock",
+    "license": "CC0",
+    "from": "Kenney「Starter Kit 3D Platformer」 https://github.com/KenneyNL/Starter-Kit-3D-Platformer",
+    "who": "ai"
+  },
+  "assets/sounds/": {
+    "by": "stock",
+    "license": "CC0",
+    "from": "Kenney「Starter Kit 3D Platformer」 https://github.com/KenneyNL/Starter-Kit-3D-Platformer",
+    "who": "ai"
+  }
+}

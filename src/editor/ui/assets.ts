@@ -6,6 +6,10 @@ import { clear, h, menu, modal, toast } from './dom.ts';
 import { assetRefs, baseOf, checkAssetPath, dirOf, extOf, isUnder, kindOf, RESERVED_DIRS } from '../../core/assets.ts';
 import { ASSET_LABEL, brief, type AssetKind } from '../../core/schema.ts';
 import { T } from '../i18n.ts';
+import { ORIGIN_BY, originOf, type OriginBy, type OriginInput } from '../../core/origin.ts';
+
+/** 出どころの名前（エディタの言語で） */
+const ORIGIN_LABEL = (by: OriginBy): string => ({ own: T('自作'), ai: T('AI 生成'), stock: T('配布・購入の素材'), commission: T('人に頼んだ') })[by];
 
 /** ドラッグで運ぶアセットの場所（ゲームの画面・インスペクタ・フォルダへ落とせる） */
 export const ASSET_MIME = 'application/x-ages-asset';
@@ -347,6 +351,36 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
       const t = r.match(/^\$([^.]+)\.([^.]+)/);
       if (t) app.emit('openTable', { name: t[1], row: t[2] });
     };
+    // 出どころ（自作・AI 生成・素材・人に頼んだ）。ストアの申告とクレジットのための記録。シェーダーはコードなので出さない
+    const origin = (): HTMLElement | null => {
+      if (a.kind === 'shader') return null;
+      const og = originOf(app.state.origins ?? {}, a.path), cur = og?.origin;
+      const save = async (path: string, input: OriginInput) => {
+        const r = await fetch('/api/origin', { method: 'POST', body: JSON.stringify({ path, origin: input }) });
+        const j = (await r.json()) as { error?: string };
+        if (j.error) toast(j.error);
+        await app.refresh();
+      };
+      const by = h('select', { title: T('この素材をどう用意したか（ストアへの申告とクレジットのための記録）') },
+        h('option', { value: '' }, T('未記入')),
+        ...ORIGIN_BY.map((b) => h('option', { value: b }, ORIGIN_LABEL(b)))) as HTMLSelectElement;
+      by.value = cur?.by ?? '';
+      const values = (): OriginInput => ({ by: by.value || 'none', tool: tool.value, license: license.value, from: from.value });
+      const field = (key: 'tool' | 'license' | 'from', hint: string) => {
+        const el = h('input', { type: 'text', placeholder: hint, title: hint, value: cur?.[key] ?? '', style: 'flex:1;min-width:90px' }) as HTMLInputElement;
+        el.addEventListener('change', () => { if (by.value) void save(a.path, values()); });
+        return el;
+      };
+      const tool = field('tool', T('使った道具（AI の名前など）')), license = field('license', T('ライセンス（CC0 など）')), from = field('from', T('入手元（作者・配布元・URL）'));
+      by.addEventListener('change', () => { if (by.value || originOf(app.state.origins ?? {}, a.path)?.key === a.path) void save(a.path, values()); });
+      const dir = dirOf(a.path);
+      return h('div', { class: 'origin', style: 'margin:6px 0' },
+        h('div', { class: 'row', style: 'gap:4px;flex-wrap:wrap' },
+          h('span', { style: cur ? '' : 'color:var(--bad)' }, T('出どころ')), by,
+          dir ? h('button', { title: T('同じフォルダの素材すべてを、この出どころにする（ファイルごとに書いたものは、そのまま）'), onclick: () => { if (by.value) void save(dir + '/', values()); } }, T('フォルダ全部に')) : null),
+        h('div', { class: 'row', style: 'gap:4px;flex-wrap:wrap;margin-top:4px' }, tool, license, from),
+        og && og.key !== a.path ? h('div', { class: 'muted' }, T('フォルダ {0} の記録', og.key)) : null);
+    };
     clear(side,
       preview,
       h('div', { class: 'side-path' }, a.path),
@@ -360,6 +394,7 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
         app.state.locks[`file:${a.path}`]
           ? h('button', { onclick: () => app.openLocks(`file:${a.path}`), title: T('ロックを見る・外す（ロックマネージャーで）') }, '🔒')
           : h('button', { onclick: () => app.lock([`file:${a.path}`], 'assets'), title: T('このファイルそのものをロックする（差し替え・移動・削除ができなくなります。外すのはロックマネージャーで）') }, '🔓')),
+      origin(),
       h('div', { class: 'muted' }, refs.length ? T('使っている所 {0}', refs.length) : T('使っている所はありません')),
       h('ul', { class: 'refs' }, refs.map((r) => h('li', {}, r.endsWith('（コード）') ? h('span', {}, r.replace(/（コード）$/, T('（コード）'))) : h('a', { onclick: () => go(r) }, r)))));
   };

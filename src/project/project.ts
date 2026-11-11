@@ -30,6 +30,7 @@ import { shaderMap } from '../core/shader.ts';
 import { besideLoop } from '../core/ui.ts';
 import type { SaveStore } from '../core/save.ts';
 import { LANG_RE, codeTextRefs, languagesOf, missingText } from '../core/i18n.ts';
+import { moveOrigins, readOrigins, writeOrigins } from './origin.ts';
 
 // ゲームコードの import ... from 'ages' を、どのフォルダにあるプロジェクトからでもこのエンジンに向ける
 const AGES_INDEX = new URL('../index.ts', import.meta.url).href;
@@ -851,6 +852,7 @@ export class Project {
         rollback(`ファイルを${f.to === null ? '消せません' : '動かせません'}（${f.from}）: ${(e as Error).message}`);
       }
     }
+    await this.followOrigins(fileMoves);
     await this.saveDirty(result.dirty);
     const opName = opts.tx?.undoOf ? 'undo' : opts.tx?.redoOf ? 'redo' : ops.length === 1 ? ops[0].op : 'batch';
     const tx = this.journal.newId();
@@ -932,6 +934,14 @@ export class Project {
   }
 
   /** 言語ごとの未訳（訳が空の行） */
+  /** ファイルの場所が変わったら、出どころの記録（assets.origin.json）の場所も変える */
+  private async followOrigins(moves: FileMove[]): Promise<void> {
+    const list = moves.flatMap((m) => (m.kind === 'move' ? [{ from: m.from, to: m.to, dir: m.dir }] : []));
+    if (!list.length) return;
+    const o = await readOrigins(this.dir);
+    if (moveOrigins(o, list)) await writeOrigins(this.dir, o);
+  }
+
   missingText(): Map<string, string[]> {
     return missingText(this.registry.tableView('text').rows as never, languagesOf(this.config));
   }
@@ -1088,6 +1098,7 @@ export class Project {
       throw new Error(`${meta.redoOf ? 'やり直す' : '元に戻す'}と問題が出るので止めました: ${introduced.join(' / ')}`);
     }
     const dirty = new Set<string>([...next.keys()]);
+    await this.followOrigins(files);
     await this.saveDirty(dirty);
     const tx = this.journal.newId();
     const docs: Record<string, DocState> = {};

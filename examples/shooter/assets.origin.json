@@ -1,0 +1,24 @@
+{
+  "$text.en": {
+    "by": "ai",
+    "tool": "Claude",
+    "who": "ai"
+  },
+  "$text.ja": {
+    "by": "ai",
+    "tool": "Claude",
+    "who": "ai"
+  },
+  "assets/kenney-pixel-shmup/": {
+    "by": "stock",
+    "license": "CC0",
+    "from": "Kenney「Pixel Shmup」 https://kenney.nl/assets/pixel-shmup",
+    "who": "ai"
+  },
+  "assets/sounds/": {
+    "by": "ai",
+    "tool": "Claude",
+    "note": "AI が書いたスクリプト tools/make-sounds.ts で合成した仮の音",
+    "who": "ai"
+  }
+}

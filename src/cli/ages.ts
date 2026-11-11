@@ -40,6 +40,7 @@ export { parseParams } from '../core/runinput.ts';
 import { RUN_DATE, formatDate, parseDate } from '../core/clock.ts';
 import { captureShots, findChrome } from './shot.ts';
 import { Profile } from '../core/profile.ts';
+import { originReport, originSummary, readOrigins, setOrigin, writeOrigins } from '../project/origin.ts';
 import type { DrawStats } from '../editor/shot.ts';
 import { MemoryStore } from '../core/save.ts';
 import { languagesOf } from '../core/i18n.ts';
@@ -76,6 +77,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   pin    <dir> [--repo URL] [--commit SHA] [--force]  版だけ同梱の形に（ages.mjs が本体を .ages/engine に取ってくる。GitHub との連携用）。AGENTS.md は手で直されていなければ本体の版に合わせる（--force で直されていても）
   ui     <dir> [シーン]               UI の配置（四角・置き方）と、重なり・はみ出し。直すのは patch の dockUI / attachUI
   assets <dir> [フォルダ] [--kind image|sound|font|shader|model] [--unused] [--refs 場所]   アセットの一覧（使っている所の数）・使っている所
+               [--origin [ファイル | フォルダ | $text.言語 --by own|ai|stock|commission [--tool AIの名前] [--license CC0] [--from 入手元] [--note 一言]]]   出どころ（自作・AI 生成・素材・人に頼んだ）の一覧と記録
   space  <dir> [シーン] [--near id [--radius 3]] [--only id,id] [--frames n] [--keys …]   （追加パッケージ 3d を入れたプロジェクト）3D の空間を文字で確かめる
   sheet  <dir> <画像>                 画像の切り方（コマの名前・位置・基準点・動き）を見る
   slice  <dir> <画像> --grid 32x32 | --count 4x6 | --auto  画像を切る（前と同じ場所のコマは名前を引き継ぐ）
@@ -269,6 +271,10 @@ export async function cmdExport(dir: string, flags: Record<string, string | bool
     '  Web: このフォルダを丸ごと置けば遊べる（itch.io なら zip にして HTML のゲームとして上げる）。手元で試すなら --serve'];
   if (r.desktop) lines.push(`  デスクトップ: ${relative(process.cwd(), r.desktop) || r.desktop}（exe の作り方は中の README.md。Rust と Tauri の道具が要る）`);
   lines.push(...r.notes.map((n) => `  ${n}`));
+  // ストアの申告（生成 AI を使ったか）のためのまとめ。未記入があっても止めない
+  const og = originSummary(await readOrigins(p.dir), p.assets, languagesOf(p.config));
+  if (og.total) lines.push(`  出どころ: 生成 AI を使った物は ${og.ai || 'なし'}${og.missing ? `（未記入 ${og.missing}件）` : ''}。一覧とクレジットは ages assets <dir> --origin`);
+  if (og.missing) lines.push(`⚠ 出どころが未記入のアセットが ${og.missing}件あります（ストアの申告の前に埋める）`);
   if (flags.check) {
     const fps = p.config.fps;
     const c = await checkExport(r.web, fps * 3);
@@ -499,6 +505,18 @@ export async function cmdUndo(dir: string, f: Args['flags']): Promise<string> {
 /** アセットの一覧（フォルダごと・使っている所の数）。refs を渡すと、そのアセットを使っている所 */
 export async function cmdAssets(dir: string, folder: string | undefined, f: Args['flags']): Promise<string> {
   const p = await Project.load(dir);
+  // 出どころ（自作・AI 生成・素材）: --origin だけなら一覧、場所と --by で書く
+  if (f.origin !== undefined) {
+    const o = await readOrigins(p.dir), langs = languagesOf(p.config);
+    if (typeof f.origin === 'string') {
+      const str = (k: string) => (typeof f[k] === 'string' ? (f[k] as string) : undefined);
+      if (str('by') === undefined && ['tool', 'license', 'from', 'note'].every((k) => str(k) === undefined)) throw new Error('書く中身がありません（--by own|ai|stock|commission と、--tool・--license・--from・--note）。一覧は場所を付けずに ages assets <dir> --origin');
+      const r = setOrigin(o, p.assets, langs, f.origin, { by: str('by'), tool: str('tool'), license: str('license'), from: str('from'), note: str('note') }, AI_ACTOR.kind === 'ai' ? 'ai' : 'human', f.force === true);
+      await writeOrigins(p.dir, o);
+      return r.text;
+    }
+    return originReport(o, p.assets, langs, p.registry.tableView('text').rows.length).join('\n');
+  }
   const code = await p.codeRefs();
   if (typeof f.refs === 'string') {
     const path = f.refs;
@@ -856,7 +874,9 @@ export async function cmdCheck(dir: string): Promise<string> {
   const events = eventWarnings(p.registry.systems, files, codeDefs(files)).map((m) => `\n⚠ ${m}`).join('');
   const ver = versionNote(p.config.engine);
   const verNote = ver ? `\n${ver}` : '';
-  return withLockReport(p, (errs.length ? errs.map((e) => `error: ${e}`).join('\n') : `ok（シーン${p.docs.scenes.size} プレハブ${p.docs.prefabs.size} コンポーネント${p.registry.components.size} システム${p.registry.systems.length}）`) + warns.map((w) => `\n⚠ ${w}`).join('') + own + events + note + missNote + verNote);
+  const og = originSummary(await readOrigins(p.dir), p.assets, languagesOf(p.config));
+  const ogNote = og.missing ? `\n⚠ 出どころが未記入のアセット ${og.missing}件（自作・AI 生成・素材のどれか。ages assets <dir> --origin）` : '';
+  return withLockReport(p, (errs.length ? errs.map((e) => `error: ${e}`).join('\n') : `ok（シーン${p.docs.scenes.size} プレハブ${p.docs.prefabs.size} コンポーネント${p.registry.components.size} システム${p.registry.systems.length}）`) + warns.map((w) => `\n⚠ ${w}`).join('') + own + events + ogNote + note + missNote + verNote);
 }
 
 function imageOf(p: Project, image: string): { w: number; h: number } {

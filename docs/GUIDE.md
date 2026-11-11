@@ -93,6 +93,9 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
 - アセットが多い（40個より多い）と、地図にはフォルダごとの数だけが出る。1つずつは `ages assets <dir> assets/images/Enemies` のようにフォルダで引く
 - 場所を変える・消すときは、ファイルを直接動かさず patch の `moveAsset` / `removeAsset`（使っている値と切り方も直る。使われているものは消せない）
 - 新しいファイルは assets/ の下に置くだけでよい。`🔒ファイル` の付いたアセットは、差し替え・移動・削除ができない
+- **出どころを書く**: アセットを足したら、そのときに `ages assets <dir> --origin <ファイル | フォルダ> --by own|ai|stock|commission`（自作・AI 生成・配布や購入の素材・人に頼んだ）。AI が作った画像・音は `--by ai --tool 使った AI の名前`、素材集は フォルダごとに `--by stock --license CC0 --from "作者・URL"`。MCP は ages_assets の `origin: { path, by, tool, license, from, note }`（`origin: true` で一覧）
+- 出どころは、ストアの申告（プレイヤーに届く物に生成 AI を使ったか。翻訳も入る）とクレジットのための記録（`assets.origin.json`。Git で共有）。使用者に聞かないと分からないもの（前からあるファイルなど）は、推測で書かずに聞く。AI に翻訳させた言語は `--origin '$text.en' --by ai --tool …`
+- 未記入は `ages check` と書き出しで ⚠ が出るだけで、止まらない。一覧は `ages assets <dir> --origin`（★ は人が書いた記録。変えるには人に確かめて `--force`）。`moveAsset` で場所を変えると、記録もついていく
 
 ## tween: 値を時間で変える演出
 - 点滅・はねる・薄くして消すなどは `ctx.tween(物, { 'Sprite.alpha': 0 }, '名前')`。自分でフレームを数えない

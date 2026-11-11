@@ -4,6 +4,16 @@ import { cmdAssets, cmdUndo, cmdCheck, cmdUi, cmdGet, cmdInitPinned, cmdLog, cmd
 import { parseLiteral, splitCell, type Op } from '../core/patch.ts';
 
 /** 使い方の説明（MCP の initialize で毎回渡る）。短く保つ: 機能ごとの手順は ages_schema の guide で要るときに引く */
+/** ages_assets の origin: true で一覧、{path, by, tool, license, from, note, force} で書く */
+function originFlags(o: unknown): Record<string, string | true> {
+  if (o === undefined || o === false) return {};
+  if (o === true || typeof o !== 'object' || !o) return { origin: typeof o === 'string' ? o : true };
+  const v = o as Record<string, unknown>, f: Record<string, string | true> = { origin: v.path ? String(v.path) : true };
+  for (const k of ['by', 'tool', 'license', 'from', 'note']) if (v[k] !== undefined) f[k] = String(v[k]);
+  if (v.force) f.force = true;
+  return f;
+}
+
 export function makeInstructions(defaultProject: string): string {
   return `AGES は、AIと人が一緒に速くゲームを作るためのゲームエンジン兼エディタ。道具の dir を省くと ${defaultProject}。
 - ゲームの企画を受けたら、いきなりコードを書かない。まず ages_init でプロジェクトを作り、EDITOR-PLAN.md で「どんなエディタが必要か」を使用者と決める（「一緒に決めるか、AIにおまかせか」を最初に聞く。おまかせを自分から選ばない）。合意するまでゲームのコードは書かない
@@ -159,9 +169,10 @@ export function makeTools(defaultProject: string): Tool[] {
           kind: { type: 'string', description: 'image sound font shader model' },
           unused: { type: 'boolean' },
           refs: { type: 'string', description: '使っている所を見るファイルかフォルダ' },
+          origin: { description: '出どころ（guide:assets）' },
         },
       },
-      run: (a, dir) => cmdAssets(dir, a.folder, { ...(a.kind ? { kind: a.kind } : {}), ...(a.unused ? { unused: true } : {}), ...(a.refs ? { refs: a.refs } : {}) }),
+      run: (a, dir) => cmdAssets(dir, a.folder, { ...(a.kind ? { kind: a.kind } : {}), ...(a.unused ? { unused: true } : {}), ...(a.refs ? { refs: a.refs } : {}), ...originFlags(a.origin) }),
     },
     {
       name: 'ages_sheet',

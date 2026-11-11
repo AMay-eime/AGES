@@ -6,6 +6,8 @@ import { Project } from '../project/project.ts';
 import { readTouched, readLog, type Actor } from '../project/oplog.ts';
 import type { Op } from '../core/patch.ts';
 import { eventWarnings } from '../project/events.ts';
+import { readOrigins, setOrigin, writeOrigins, type OriginInput } from '../project/origin.ts';
+import { languagesOf } from '../core/i18n.ts';
 
 const port = parentPort!;
 let project: Project;
@@ -45,6 +47,7 @@ async function state() {
     sheets: Object.fromEntries(project.registry.sheets),
     tables: Object.fromEntries(project.docs.tables),
     assets: project.assets,
+    origins: await readOrigins(project.dir),
     saves: [...project.saves.keys()],
     codeRefs: heavy.codeRefs,
     issues: heavy.issues,
@@ -84,6 +87,13 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   },
   async lockCandidates(text: string) {
     return project.lockCandidates(text);
+  },
+  /** 出どころを書く（エディタの人から） */
+  async origin(target: string, input: OriginInput) {
+    const o = await readOrigins(project.dir);
+    const r = setOrigin(o, project.assets, languagesOf(project.config), target, input, 'human');
+    await writeOrigins(project.dir, o);
+    return r;
   },
   async upload(actor: Actor, rel: string, data: Uint8Array) {
     return project.upload(rel, Buffer.from(data), actor);
