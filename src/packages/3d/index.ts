@@ -6,7 +6,8 @@ import { COMPONENTS_3D } from './components.ts';
 import { CHECKS_3D, SYSTEMS_3D } from './systems.ts';
 import { createLayer3D } from './render.ts';
 
-export { Transform3D, Camera3D, Mesh3D, Model3D, Light3D, Environment3D, Collider3D } from './components.ts';
+export { Transform3D, Camera3D, Mesh3D, Model3D, Light3D, Environment3D, Collider3D, Particles3D } from './components.ts';
+export { burst3 } from './particles.ts';
 export { hit3, shapeOf, shapeFrom, overlap3, contains3, rayHit3, sphereShape, boxShapeAt, type Shape3, type RayHit3 } from './collide.ts';
 export * as math3 from './math.ts';
 export type { Vec3, Mat4 } from './math.ts';
@@ -15,7 +16,7 @@ export { matrixOf, worldPosition, forwardOf, lookAt, cameraOf, toScreen, screenR
 
 export default definePackage({
   name: '3d',
-  desc: '3D（作っている途中。基本の形・光と影・カメラ・モデル（.glb）とその動き・当たり判定まで。物理は入れない）',
+  desc: '3D（作っている途中。基本の形・光と影・カメラ・モデル（.glb）とその動き・当たり判定・パーティクルまで。物理は入れない）',
   components: COMPONENTS_3D,
   systems: SYSTEMS_3D,
   checks: CHECKS_3D,
@@ -27,6 +28,7 @@ export default definePackage({
     '3D の形と光と影: Mesh3D（箱・球・円柱・カプセル・板）・Light3D（太陽・点。影は太陽だけ）・Environment3D（全体の明るさ・霧） → `3d-draw`',
     'モデル（.glb）と動き: Model3D（clip で動きを再生・切り替え）。大きさ・中心・動きの名前は `ages assets` で見る（開かない） → `3d-model`',
     '3D の当たり判定: Collider3D（箱・球・カプセル）と `ages/3d` の hit3（重なり・範囲・線）。押し返し・重力はゲームのコードで → `3d-hit`',
+    '3D のパーティクル（火花・煙）: Particles3D（カメラを向く粒。burst・rate）と `ages/3d` の burst3 → `3d-fx`',
     '3D の空間を文字で確かめる: `ages space <dir> --near 置いた物のID`（まわりの物だけ。位置・大きさ・何の上か・浮き・沈み・画面のどこに映るか・当たり判定のずれ）。置いた直後に → `3d-space`',
   ],
 });

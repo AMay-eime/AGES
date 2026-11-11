@@ -586,3 +586,170 @@ test('まとめて描く・空の球: 同じ形の物が、物ごとの色で出
   assert.deepEqual(at(0, 1.6), [0, 0, 0], '霧のかかる箱は真っ黒');
   assert.deepEqual(at(-2, -1.6), [32, 64, 255], '何もない所は空の球の内側（霧なし）');
 });
+
+test('パーティクルの動き: 合図の数だけ出る・円すいの向き・重力・寿命・上限・物についていく・作り直された世界', async () => {
+  const { ParticleSim3D, burst3 } = await import('../src/packages/3d/particles.ts');
+  const { Particles3D } = await import('../src/packages/3d/components.ts');
+  const defaults = Object.fromEntries(Object.entries(Particles3D.fields).map(([k, f]) => [k, structuredClone((f as { default: unknown }).default)]));
+  const make = (over: Record<string, unknown>, pose: Record<string, number> = {}) => {
+    const fx = { id: 'fx', c: { Transform3D: { x: 0, y: 0, z: 0, ...pose }, Particles3D: { ...defaults, ...over } as Record<string, any> } };
+    const world = { entities: new Map([['fx', fx]]), get: (id: string) => world.entities.get(id) } as any;
+    return { world, fx, p: fx.c.Particles3D, t: fx.c.Transform3D as Record<string, number> };
+  };
+  // 現れたフレームの合図（bursts 1・since 0）で burst の数だけ。前からあった合図（since が大きい）は出し直さない
+  let a = make({ burst: 12, bursts: 1, since: 0, age: 1, spread: 20, direction: [1, 0, 0], speed: 3, speedJitter: 0, lifetime: 1, lifetimeJitter: 0 });
+  let sim = new ParticleSim3D();
+  sim.update(a.world, 1 / 60);
+  assert.equal(sim.count(), 12);
+  const old = make({ burst: 12, bursts: 3, since: 500, age: 600 });
+  const sim2 = new ParticleSim3D();
+  sim2.update(old.world, 1 / 60);
+  assert.equal(sim2.count(), 0);
+  // 向き: +X を軸に 20 度の円すい（軸との角度は 10 度まで）。速さは 3
+  for (const q of sim.emitters.get('fx')!.parts) {
+    near([Math.hypot(q.vx, q.vy, q.vz)], [3], 1e-9);
+    assert.ok(q.vx / 3 >= Math.cos((10.001 * Math.PI) / 180), `円すいの外: ${q.vx}`);
+  }
+  // 物を回すと、向きも回る（ry 90 で +X は −Z へ）。world が true の粒は、物が動いてもその場に残る
+  a = make({ burst: 5, bursts: 1, since: 0, age: 1, spread: 0, direction: [1, 0, 0], speed: 2, speedJitter: 0, lifetime: 1, lifetimeJitter: 0 }, { ry: 90, x: 4 });
+  sim = new ParticleSim3D();
+  sim.update(a.world, 0);
+  near([sim.emitters.get('fx')!.parts[0].vx, sim.emitters.get('fx')!.parts[0].vy, sim.emitters.get('fx')!.parts[0].vz], [0, 0, -2], 1e-9);
+  a.t.x = 10; a.p.age = 2; a.p.since = 1;
+  sim.update(a.world, 0.5);
+  near(ParticleSim3D.position(sim.emitters.get('fx')!, sim.emitters.get('fx')!.parts[0]), [4, 0, -1], 1e-9);
+  // 寿命で消える。物が消えても、出ている粒は消えるまで残る
+  a.world.entities.delete('fx');
+  sim.update(a.world, 0.4);
+  assert.equal(sim.count(), 5);
+  sim.update(a.world, 0.2);
+  assert.deepEqual([sim.count(), sim.emitters.size], [0, 0]);
+  // world が false の粒は、物についていく
+  a = make({ burst: 1, bursts: 1, since: 0, age: 1, world: false, speed: 0, lifetime: 5 });
+  sim = new ParticleSim3D();
+  sim.update(a.world, 0);
+  a.t.x = 7; a.p.age = 2;
+  sim.update(a.world, 0.1);
+  near(ParticleSim3D.position(sim.emitters.get('fx')!, sim.emitters.get('fx')!.parts[0]), [7, 0, 0], 1e-9);
+  // 出し続ける: 1秒に 60 → 0.5秒で 30。重力で落ちる。上限 max で止まる。playing を false で止まる
+  a = make({ rate: 60, age: 1, speed: 0, gravity: [0, -10, 0], lifetime: 10, lifetimeJitter: 0, max: 40 });
+  sim = new ParticleSim3D();
+  for (let i = 0; i < 30; i++) { a.p.age++; sim.update(a.world, 1 / 60); }
+  assert.equal(sim.count(), 30);
+  assert.ok(sim.emitters.get('fx')!.parts[0].y < -0.9, '重力で落ちる');
+  for (let i = 0; i < 30; i++) { a.p.age++; sim.update(a.world, 1 / 60); }
+  assert.equal(sim.count(), 40);
+  // burst3: 合図が増える。数を書くとその数
+  a = make({ burst: 3, age: 50, lifetime: 10 });
+  sim = new ParticleSim3D();
+  sim.update(a.world, 1 / 60);
+  burst3(a.world, 'fx');
+  sim.update(a.world, 1 / 60);
+  assert.deepEqual([a.p.bursts, sim.count()], [1, 3]);
+  burst3(a.world, 'fx', 10);
+  sim.update(a.world, 1 / 60);
+  assert.equal(sim.count(), 13);
+  // 世界が作り直された（age が戻った）: 粒は消え、新しい合図で出し直す
+  a.p.bursts = 1; a.p.burstCount = 0; a.p.since = 0; a.p.age = 1;
+  sim.update(a.world, 1 / 60);
+  assert.equal(sim.count(), 3);
+  // 編集中（previewIds を渡す）: 選んだ物だけが出し、粒がなくなったらまた出す
+  a = make({ burst: 4, lifetime: 0.2, lifetimeJitter: 0 });
+  sim = new ParticleSim3D();
+  sim.update(a.world, 0.05, []);
+  assert.equal(sim.emitters.size, 0);
+  sim.update(a.world, 0.05, ['fx']);
+  assert.equal(sim.count(), 4);
+  for (let i = 0; i < 5; i++) sim.update(a.world, 0.05, ['fx']);
+  assert.equal(sim.count(), 0);
+  for (let i = 0; i < 9; i++) sim.update(a.world, 0.05, ['fx']);
+  assert.equal(sim.count(), 4, 'なくなって 0.4 秒でまた出る');
+  // 見た目: 出たとき → 消えるときの間
+  const look = ParticleSim3D.look({ ...defaults, sizeStart: 1, sizeEnd: 3, colorStart: '#ff0000', colorEnd: '#0000ff', alphaStart: 1, alphaEnd: 0 } as any, { age: 0.5, life: 1 } as any);
+  near([look.size, ...look.color, look.alpha], [2, 0.5, 0, 0.5, 0.5], 1e-9);
+});
+
+test('パーティクルの合図: 現れたら burst・autoDestroy で消える・burst3（ages run）。Transform3D がないと ⚠', async () => {
+  const dir = join(await mkdtemp(join(tmpdir(), 'ages-3d-')), 'g');
+  await cmdInit(dir, 'g');
+  const cfg = join(dir, 'ages.project.json');
+  await writeFile(cfg, JSON.stringify({ ...JSON.parse(await readFile(cfg, 'utf8')), packages: ['3d'] }, null, 2) + '\n');
+  await writeFile(join(dir, 'game', 'index.ts'), `import { defineComponent, defineSystem, type GameModule } from 'ages';
+import { burst3 } from 'ages/3d';
+const Timer = defineComponent({ name: 'Timer', desc: '数える', fields: { n: { type: 'int', default: 0 } } });
+const fire = defineSystem({ name: 'fire', desc: '40フレーム目に出す・50フレーム目に爆発を置く', reads: ['Timer'], writes: ['Particles3D'], update(ctx) {
+  for (const e of ctx.world.query('Timer')) {
+    const t = e.c.Timer as { n: number };
+    t.n++;
+    if (t.n === 40) burst3(ctx.world, 'torch', 7);
+    if (t.n === 50) ctx.spawn('boom', { Transform3D: { x: 3 } });
+  }
+} });
+export const components: GameModule['components'] = [Timer];
+export const systems: GameModule['systems'] = [fire];
+`);
+  const ent = (id: string, components: Record<string, Record<string, unknown>>) => ({ op: 'addEntity' as const, scene: 'main', entity: { id, components } });
+  await cmdPatch(dir, [
+    { op: 'addPrefab', name: 'boom', components: { Transform3D: {}, Particles3D: { burst: 20, lifetime: 0.5, lifetimeJitter: 0, autoDestroy: true } } } as any,
+    ent('torch', { Transform3D: { y: 1 }, Particles3D: { rate: 20 }, Timer: {} }),
+    ent('first', { Transform3D: {}, Particles3D: { burst: 5, lifetime: 0.5, lifetimeJitter: 0, autoDestroy: true } }),
+  ], false);
+  assert.match(await cmdCheck(dir), /^ok/);
+  const run = async (frames: number) => {
+    const out = await cmdRun(dir, { frames: String(frames), watch: 'torch.Particles3D.bursts,torch.Particles3D.burstCount,first.Particles3D.bursts', every: String(frames) });
+    return { out, end: (name: string) => new RegExp(`watch ${name.replaceAll('.', '\\.')}: .* → (.*)$`, 'm').exec(out)?.[1] };
+  };
+  // 現れたフレームに1回。出し続けるだけの物（burst 0）は合図を立てない
+  let r = await run(10);
+  assert.deepEqual([r.end('first.Particles3D.bursts'), r.end('torch.Particles3D.bursts')], ['1', '0']);
+  // 0.5秒（30フレーム）で first は消える。40フレーム目に burst3
+  r = await run(45);
+  assert.deepEqual([r.end('torch.Particles3D.bursts'), r.end('torch.Particles3D.burstCount')], ['1', '7']);
+  assert.doesNotMatch(r.out, /first\.Particles3D\.bursts: .* → 1$/m);
+  // 50フレーム目に置いた爆発は、0.5秒で消える（物が残らない）
+  const before = await cmdRun(dir, { frames: '60' }), after = await cmdRun(dir, { frames: '100' });
+  const count = (out: string) => Number(/^entities: (\d+)/m.exec(out)?.[1] ?? NaN);
+  assert.deepEqual([count(before), count(after)], [2, 1], `${before}\n----\n${after}`);
+
+  await cmdPatch(dir, [ent('bad', { Particles3D: { burst: 3 } })], false);
+  assert.match(await cmdCheck(dir), /⚠ .*main#bad.*Transform3D/);
+});
+
+test('パーティクルの描画: カメラを向く板が出る・光る重ね方・物の後ろは隠れる（ages run --shot）', { skip: (await import('../src/cli/shot.ts')).findChrome() ? false : 'Chrome がない' }, async () => {
+  const { decodePng } = await import('../src/project/png.ts');
+  const dir = join(await mkdtemp(join(tmpdir(), 'ages-3d-')), 'g');
+  await cmdInit(dir, 'g');
+  const cfg = join(dir, 'ages.project.json');
+  const c = JSON.parse(await readFile(cfg, 'utf8'));
+  await writeFile(cfg, JSON.stringify({ ...c, packages: ['3d'], view: { ...c.view, width: 400, height: 300, background: '#000000' } }, null, 2) + '\n');
+  const ent = (id: string, components: Record<string, Record<string, unknown>>) => ({ op: 'addEntity' as const, scene: 'main', entity: { id, components } });
+  const flat = { unlit: true, shadow: false };
+  // 動かない・消えない四角の粒を1つずつ
+  const still = { burst: 1, speed: 0, lifetime: 30, lifetimeJitter: 0, sizeStart: 1, sizeEnd: 1, alphaEnd: 1, shape: 'square' };
+  await cmdPatch(dir, [
+    // 普通に重ねる赤い粒（半分透ける）: 黒の上で半分の赤
+    ent('smoke', { Transform3D: { x: -2 }, Particles3D: { ...still, colorStart: '#ff0000', colorEnd: '#ff0000', alphaStart: 0.5, alphaEnd: 0.5, blend: 'normal' } }),
+    // 光る緑の粒が、青い箱の手前に: 足し算で水色
+    ent('wall', { Transform3D: { z: -1 }, Mesh3D: { color: '#0000ff', ...flat } }),
+    ent('spark', { Transform3D: {}, Particles3D: { ...still, colorStart: '#00ff00', colorEnd: '#00ff00' } }),
+    // 箱の後ろの粒は隠れる
+    ent('cover', { Transform3D: { x: 2 }, Mesh3D: { color: '#ffff00', ...flat } }),
+    ent('hidden', { Transform3D: { x: 2, z: -2 }, Particles3D: { ...still, sizeStart: 0.5, sizeEnd: 0.5 } }),
+    // 丸い粒: 中心は色、角は出ない
+    ent('dot', { Transform3D: { y: 1.5 }, Particles3D: { ...still, shape: 'circle', colorStart: '#ff00ff', colorEnd: '#ff00ff' } }),
+    ent('cam', { Transform3D: { z: 6, rx: 0 }, Camera3D: {} }),
+  ], false);
+  assert.match(await cmdCheck(dir), /^ok/);
+  await cmdRun(dir, { frames: '2', shot: '2', 'shot-dir': join(dir, 'shots') });
+  const png = decodePng(await readFile(join(dir, 'shots', 'main-f2.png')));
+  const cam = cameraFrom('cam', m.compose([0, 0, 6], [0, 0, 0]), {}, 400 / 300);
+  const at = (x: number, y: number, z = 0) => { const s = toScreen(cam, [x, y, z], 400, 300)!; const o = (Math.round(s.y) * png.w + Math.round(s.x)) * 4; return [...png.data.subarray(o, o + 3)]; };
+  const close = (got: number[], want: number[], msg?: string) => assert.ok(got.every((v, i) => Math.abs(v - want[i]) <= 2), `${msg ?? ''} ${got} ≠ ${want}`);
+  close(at(-2, 0), [128, 0, 0], '半分透ける赤');
+  close(at(-2, 0.4), [128, 0, 0], '四角の中');
+  close(at(-2, 0.7), [0, 0, 0], '四角の外');
+  close(at(0, 0), [0, 255, 255], '光る緑 + 青い箱');
+  close(at(2, 0, 0.5), [255, 255, 0], '箱の後ろの粒は見えない');
+  close(at(0, 1.5), [255, 0, 255], '丸の中心');
+  close(at(0.45, 1.95), [0, 0, 0], '丸の角は出ない');
+});

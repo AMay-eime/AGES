@@ -92,6 +92,7 @@ async function shoot(cfg: ShotConfig): Promise<ShotResult> {
         const { input } = play.at(game, v.width, v.height);
         game.step(input);
         renderer.particles.update(game.world, dt);
+        for (const l of renderer.layers) l.update?.(game.world, dt);
       }
       const hash = game.hash();
       const snapshot = cfg.dump ? game.snapshot() : undefined;

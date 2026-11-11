@@ -68,9 +68,13 @@ export function mount(app: App): Panel {
   const selected = (): string[] => (app.sel?.kind === 'scene' && app.sel.scene === app.scene ? app.selectedIds() : []);
 
   // ---- 描く ----
+  let drawnAt = 0;
   const draw = () => {
     const win = el.ownerDocument.defaultView ?? window;
     win.requestAnimationFrame(draw);
+    // パーティクルは実時間で動かす（選んだ物だけ、試しに出す）
+    const now = win.performance.now(), dt = Math.min(0.1, drawnAt ? (now - drawnAt) / 1000 : 0);
+    drawnAt = now;
     if (!el.isConnected || wrap.clientWidth < 2 || wrap.clientHeight < 2 || glError) return;
     const w = world();
     if (!w || !app.registry) return;
@@ -82,7 +86,7 @@ export function mount(app: App): Panel {
       renderer.usePackages(app.registry.packages);
       cam = camera();
       show();
-      renderer.draw(only3D(w), { background: app.state.config.view.background, post: false, layers: { '3d': { camera: cam, grid: { center: view.target, half: Math.max(10, view.dist * 1.5) } } } });
+      renderer.draw(only3D(w), { background: app.state.config.view.background, post: false, particles: app.play ? { dt: app.play.paused || app.play.loading ? 0 : dt } : { dt, preview: selected() }, layers: { '3d': { camera: cam, grid: { center: view.target, half: Math.max(10, view.dist * 1.5) } } } });
     } catch (e) {
       glError = (e as Error).message;
       hint.textContent = glError;
@@ -136,7 +140,7 @@ export function mount(app: App): Panel {
       const fwd = m3.normalize(m3.transformDirection(m, [0, 0, 1]));
       if (e.c.Light3D?.kind === 'sun') line(m3.positionOf(m), m3.add(m3.positionOf(m), m3.scale(fwd, unitAt(m3.positionOf(m), 40))), '#ffd75a', 2);
       if (e.c.Camera3D) line(m3.positionOf(m), m3.add(m3.positionOf(m), m3.scale(fwd, -unitAt(m3.positionOf(m), 40))), '#9fd0ff', 2);
-      g.fillText(e.c.Camera3D ? '🎥' : e.c.Light3D ? (e.c.Light3D.kind === 'sun' ? '☀' : '💡') : '◇', p.x, p.y);
+      g.fillText(e.c.Camera3D ? '🎥' : e.c.Light3D ? (e.c.Light3D.kind === 'sun' ? '☀' : '💡') : e.c.Particles3D ? '✨' : '◇', p.x, p.y);
     }
     // 当たり判定の形（緑の線。選んでいる物は濃く）
     const sel = selected();
@@ -451,6 +455,7 @@ export function mount(app: App): Panel {
       shape(T('板（床）'), 'plane', [20, 1, 20], 0),
       [T('太陽の光'), add('sun', { Transform3D: { ...at3(8), rx: 50, ry: -30 }, Light3D: { kind: 'sun' } })],
       [T('点の光'), add('lamp', { Transform3D: at3(2), Light3D: { kind: 'point' } })],
+      [T('パーティクル（粒）'), add('fx', { Transform3D: at3(1), Particles3D: { rate: 30 } })],
       ...(selected().length ? [[T('当たり判定を、選んだ物の形に合わせて付ける'), fitCollider] as [string, () => void]] : []),
       [T('カメラ'), add('camera', { Transform3D: { x: round(cam.pos[0], 10), y: round(cam.pos[1], 10), z: round(cam.pos[2], 10), rx: round(view.pitch, 10), ry: round(view.yaw, 10) }, Camera3D: {} })],
     ]);

@@ -25,6 +25,10 @@ export interface LayerFrame {
 export interface RenderLayer {
   name: string;
   draw(frame: LayerFrame): void;
+  /**
+   * 時間を進める（粒など、描く側だけの動き。dt 秒）。previewIds は編集中に選んでいる物（ゲームを動かしていないとき）
+   */
+  update?(world: World, dt: number, previewIds?: string[]): void;
   /** アセットが変わった（path を省くと全部）。読み直す */
   invalidate?(path?: string): void;
   /** 読み込み中のもの（画像・モデル）が読み込み終わるまで待つ（画面を撮る前に） */

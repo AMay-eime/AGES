@@ -12,6 +12,7 @@ import { halfExtents } from './pick.ts';
 import { parseGlb, type GltfModel } from './gltf.ts';
 import { jointMatrices, modelPose } from './animation.ts';
 import { translation } from './math.ts';
+import { ParticleSim3D } from './particles.ts';
 
 const MAX_POINT = 8;
 /** 影の地図の1辺（画素） */
@@ -144,6 +145,51 @@ void main() {
   o_color = vec4(rgb * base.a, base.a);
 }`;
 
+/** パーティクル（カメラを向く板。1粒 = 中心と大きさ・色・回転） */
+const PART_VS = `#version 300 es
+layout(location = 0) in vec2 a_corner;
+layout(location = 1) in vec4 a_center;
+layout(location = 2) in vec4 a_pcolor;
+layout(location = 3) in float a_rot;
+uniform mat4 u_viewProj;
+uniform vec3 u_right;
+uniform vec3 u_up;
+out vec2 v_uv;
+out vec4 v_color;
+out vec3 v_world;
+void main() {
+  float c = cos(a_rot), s = sin(a_rot);
+  vec2 q = vec2(a_corner.x * c - a_corner.y * s, a_corner.x * s + a_corner.y * c) * a_center.w;
+  v_world = a_center.xyz + u_right * q.x + u_up * q.y;
+  v_uv = vec2(a_corner.x + 0.5, 0.5 - a_corner.y);
+  v_color = a_pcolor;
+  gl_Position = u_viewProj * vec4(v_world, 1.0);
+}`;
+const PART_FS = `#version 300 es
+precision highp float;
+in vec2 v_uv;
+in vec4 v_color;
+in vec3 v_world;
+uniform sampler2D u_tex;
+uniform float u_round;
+uniform float u_add;
+uniform vec3 u_camPos;
+uniform vec4 u_fog;
+uniform vec3 u_fogColor;
+out vec4 o_color;
+void main() {
+  vec4 t = texture(u_tex, v_uv);
+  float a = v_color.a * t.a;
+  // 丸: ふちをやわらかく
+  if (u_round > 0.5) a *= smoothstep(1.0, 0.55, length(v_uv - 0.5) * 2.0);
+  vec3 rgb = v_color.rgb * t.rgb;
+  float f = u_fog.z > 0.5 ? clamp((distance(u_camPos, v_world) - u_fog.x) / max(u_fog.y - u_fog.x, 0.0001), 0.0, 1.0) : 0.0;
+  // 光る重ね方は、霧の中では薄くなる。普通の重ね方は、霧の色に近づく
+  if (u_add > 0.5) o_color = vec4(rgb * a * (1.0 - f), 0.0);
+  else o_color = vec4(mix(rgb, u_fogColor, f) * a, a);
+}`;
+const PART_FLOATS = 9;
+
 /** 影の地図に描くとき（奥行きだけ） */
 const DEPTH_FS = `#version 300 es
 precision mediump float;
@@ -179,7 +225,7 @@ interface Tex { tex: WebGLTexture; loaded: Promise<void> }
 /** 1回の描画で描く物 */
 interface Item { m: Mat4; mesh: Mesh; mat: Mat; depth: number; clear: boolean; cast: boolean; joints?: Float32Array; /** 世界の座標で囲む球（画面の外なら描かない） */ center: Vec3; radius: number }
 /** 1回の描画の数（速さの目安。ages run --perf に出る） */
-export interface Stats3D { things: number; shown: number; draws: number; tris: number }
+export interface Stats3D { things: number; shown: number; draws: number; tris: number; /** 出ている粒の数 */ particles: number }
 interface Lights { sun: { dir: Vec3; color: Vec3; shadow: boolean; range: number } | null; pos: number[]; col: number[]; range: number[]; env: Record<string, any> | undefined }
 
 /** 3D の層への指示（DrawOptions.layers['3d']） */
@@ -197,10 +243,12 @@ export class Layer3D implements RenderLayer {
   readonly name = '3d';
   draws = 0;
   /** 前の draw の数（置いた物・画面に入っていた物・描いた回数・三角形） */
-  stats: Stats3D = { things: 0, shown: 0, draws: 0, tris: 0 };
+  stats: Stats3D = { things: 0, shown: 0, draws: 0, tris: 0, particles: 0 };
   /** 前の draw で使ったカメラと、描いた物 */
   camera: CameraView3 | null = null;
   drawn: Drawn3D[] = [];
+  /** パーティクル（粒を動かすのは描く側） */
+  readonly sim = new ParticleSim3D();
   private gl: WebGL2RenderingContext;
   private host: LayerHost;
   private prog: WebGLProgram;
@@ -464,6 +512,10 @@ export class Layer3D implements RenderLayer {
     return t.tex;
   }
 
+  update(world: LayerFrame['world'], dt: number, previewIds?: string[]): void {
+    this.sim.update(world, dt, previewIds);
+  }
+
   invalidate(path?: string): void {
     for (const [k, t] of this.textures) if (!path || k === path || k.startsWith(`${path}#`)) { this.gl.deleteTexture(t.tex); this.textures.delete(k); }
     for (const k of [...this.models.keys()]) if (!path || k === path) this.models.delete(k);
@@ -514,7 +566,7 @@ export class Layer3D implements RenderLayer {
 
   draw(f: LayerFrame): void {
     this.draws = 0;
-    this.stats = { things: 0, shown: 0, draws: 0, tris: 0 };
+    this.stats = { things: 0, shown: 0, draws: 0, tris: 0, particles: 0 };
     this.drawn = [];
     const world = f.world;
     const opts = (f.options ?? {}) as Layer3DOptions;
@@ -562,7 +614,7 @@ export class Layer3D implements RenderLayer {
         this.drawn.push({ id: e.id, matrix: multiply(wm, translation(model.center)), shape: 'box', size: model.size });
       }
     }
-    if (!items.length && !opts.grid) return;
+    if (!items.length && !opts.grid && !this.sim.count()) return;
 
     const gl = this.gl, W = f.width, H = f.height;
     const L = this.findLights(world);
@@ -626,6 +678,7 @@ export class Layer3D implements RenderLayer {
       for (const x of clear) this.one(x.m, x.mesh, x.mat, x.joints);
       gl.depthMask(true);
     }
+    this.particles(cam, L.env, f.background);
     gl.enable(gl.CULL_FACE);
     if (opts.grid) this.grid(opts.grid.center, opts.grid.half);
     gl.bindVertexArray(null);
@@ -647,6 +700,76 @@ export class Layer3D implements RenderLayer {
     gl.bindVertexArray(null);
     this.draws++;
     this.stats.draws = this.draws;
+  }
+
+  private partProg: WebGLProgram | null = null;
+  private partVao: WebGLVertexArrayObject | null = null;
+  private partBuf: WebGLBuffer | null = null;
+  private partLoc = new Map<string, WebGLUniformLocation | null>();
+  /** パーティクル（カメラを向く板。奥行きは比べるが書き込まない。出し口ごとに1回で描く。影は落とさない） */
+  private particles(cam: CameraView3, env: Record<string, any> | undefined, background: string): void {
+    const ems = [...this.sim.emitters.values()].filter((em) => em.parts.length);
+    if (!ems.length) return;
+    const gl = this.gl;
+    if (!this.partProg) {
+      this.partProg = program(gl, PART_VS, PART_FS);
+      this.partVao = gl.createVertexArray()!;
+      gl.bindVertexArray(this.partVao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer()!);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5]), gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(0);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+      this.partBuf = gl.createBuffer()!;
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.partBuf);
+      for (const [i, k, o] of [[1, 4, 0], [2, 4, 4], [3, 1, 8]]) {
+        gl.enableVertexAttribArray(i);
+        gl.vertexAttribPointer(i, k, gl.FLOAT, false, PART_FLOATS * 4, o * 4);
+        gl.vertexAttribDivisor(i, 1);
+      }
+    }
+    const u = (name: string) => {
+      if (!this.partLoc.has(name)) this.partLoc.set(name, gl.getUniformLocation(this.partProg!, name));
+      return this.partLoc.get(name)!;
+    };
+    gl.useProgram(this.partProg);
+    gl.bindVertexArray(this.partVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.partBuf);
+    const v = cam.view;
+    gl.uniformMatrix4fv(u('u_viewProj'), false, new Float32Array(cam.viewProj));
+    gl.uniform3f(u('u_right'), v[0], v[4], v[8]);
+    gl.uniform3f(u('u_up'), v[1], v[5], v[9]);
+    gl.uniform3fv(u('u_camPos'), cam.pos);
+    gl.uniform4f(u('u_fog'), env?.fogNear ?? 20, env?.fogFar ?? 80, env?.fog ? 1 : 0, 0);
+    gl.uniform3fv(u('u_fogColor'), rgb(background));
+    gl.uniform1i(u('u_tex'), 0);
+    gl.enable(gl.BLEND);
+    gl.depthMask(false);
+    gl.disable(gl.CULL_FACE);
+    const far = (p: Vec3) => (p[0] - cam.pos[0]) * cam.dir[0] + (p[1] - cam.pos[1]) * cam.dir[1] + (p[2] - cam.pos[2]) * cam.dir[2];
+    // 奥の出し口から。普通に重ねる粒は、粒も奥から
+    const order = ems.map((em) => ({ em, d: far([em.matrix[12], em.matrix[13], em.matrix[14]]) })).sort((a, b) => b.d - a.d);
+    for (const { em } of order) {
+      const p = em.p, add = p.blend !== 'normal';
+      const rows = em.parts.map((q) => { const pos = ParticleSim3D.position(em, q); return { q, pos, d: far(pos) }; });
+      if (!add) rows.sort((a, b) => b.d - a.d);
+      const data = new Float32Array(rows.length * PART_FLOATS);
+      rows.forEach(({ q, pos }, i) => {
+        const look = ParticleSim3D.look(p, q);
+        data.set([pos[0], pos[1], pos[2], look.size, look.color[0], look.color[1], look.color[2], look.alpha, q.rot * (Math.PI / 180)], i * PART_FLOATS);
+      });
+      gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+      if (add) gl.blendFuncSeparate(gl.ONE, gl.ONE, gl.ZERO, gl.ONE);
+      else gl.blendFuncSeparate(gl.ONE, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      gl.uniform1f(u('u_add'), add ? 1 : 0);
+      gl.uniform1f(u('u_round'), p.shape === 'circle' ? 1 : 0);
+      gl.bindTexture(gl.TEXTURE_2D, p.shape === 'image' && p.image ? this.texture(p.image) : this.white);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, rows.length);
+      this.draws++;
+      this.stats.tris += rows.length * 2;
+      this.stats.particles += rows.length;
+    }
+    gl.depthMask(true);
+    gl.useProgram(this.prog);
   }
 
   private gridVao: WebGLVertexArrayObject | null = null;

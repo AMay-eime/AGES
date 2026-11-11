@@ -256,6 +256,7 @@ export class Renderer {
     if (this.layers.length) {
       const fb = passes.size ? this.target(W, H, cur) : null;
       for (const l of this.layers) {
+        if (o.particles) l.update?.(world, o.particles.dt, o.particles.preview);
         l.draw({ world, width: W, height: H, framebuffer: fb, background: o.background, options: o.layers?.[l.name] });
         this.stats.draws += l.draws ?? 0;
       }

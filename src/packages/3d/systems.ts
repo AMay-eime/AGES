@@ -95,15 +95,37 @@ export const collide3d = defineSystem({
   },
 });
 
-export const SYSTEMS_3D = [camera3d, model3d, collide3d];
+/**
+ * 3D のパーティクルの合図（Particles3D）: 現れたフレームに burst の数だけ出す合図を立て、autoDestroy なら出し終わって粒が消えたころに物を消す。
+ * 粒そのものは描く側が動かす（ゲームの結果に関わらない）
+ */
+export const particles3d = defineSystem({
+  name: 'particles3d',
+  desc: 'Particles3D の物が現れたら burst の数だけ出し、autoDestroy なら出し終わって粒が消えたころに物を消す（3d）',
+  writes: ['Particles3D'],
+  update(ctx) {
+    for (const e of ctx.world.entities.values()) {
+      const p = e.c.Particles3D as { burst: number; rate: number; playing: boolean; duration: number; lifetime: number; lifetimeJitter: number; autoDestroy: boolean; bursts: number; burstCount: number; since: number; age: number } | undefined;
+      if (!p) continue;
+      if ((p.age ?? 0) === 0 && p.burst > 0) { p.bursts = (p.bursts ?? 0) + 1; p.burstCount = 0; p.since = 0; }
+      else if ((p.since ?? 9999) < 9999) p.since++;
+      p.age = (p.age ?? 0) + 1;
+      if (!p.autoDestroy) continue;
+      const emitting = p.rate > 0 && p.playing !== false ? (p.duration < 0 ? Infinity : p.duration) : 0;
+      if (p.age >= Math.ceil((emitting + p.lifetime * (1 + p.lifetimeJitter)) / ctx.dt)) ctx.destroy(e.id);
+    }
+  },
+});
+
+export const SYSTEMS_3D = [camera3d, model3d, collide3d, particles3d];
 
 /** 3D の部品は Transform3D と一緒に使う（なければ描かれない・照らさない） */
 export const needsTransform3D = defineCheck({
   name: '3d-transform',
-  desc: 'Mesh3D・Model3D・Camera3D・Light3D・Collider3D の物には Transform3D が要る',
+  desc: 'Mesh3D・Model3D・Camera3D・Light3D・Collider3D・Particles3D の物には Transform3D が要る',
   run(view) {
     const out: string[] = [];
-    const lacks = (c: Record<string, unknown>) => (['Mesh3D', 'Model3D', 'Camera3D', 'Light3D', 'Collider3D'] as const).filter((k) => k in c && !('Transform3D' in c));
+    const lacks = (c: Record<string, unknown>) => (['Mesh3D', 'Model3D', 'Camera3D', 'Light3D', 'Collider3D', 'Particles3D'] as const).filter((k) => k in c && !('Transform3D' in c));
     for (const p of view.prefabs()) for (const k of lacks(p.components)) out.push(`@${p.name}: ${k} があるのに Transform3D がありません（位置が決まらず、使われません）`);
     for (const name of view.scenes) for (const e of view.scene(name)?.entities ?? []) for (const k of lacks(e.components ?? {})) out.push(`${name}#${e.id}: ${k} があるのに Transform3D がありません（位置が決まらず、使われません）`);
     return out;
