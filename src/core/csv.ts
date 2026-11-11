@@ -49,6 +49,7 @@ export function parseCell(f: Field, text: string, at: string): unknown {
     case 'bool': v = /^(true|1|yes|y|はい|○|◯)$/i.test(s) ? true : /^(false|0|no|n|いいえ|×|✕)$/i.test(s) ? false : s; break;
     case 'frame': v = /^\d+$/.test(s) ? Number(s) : s; break;
     case 'vec2': v = s.startsWith('[') ? safeJson(s) : s.split(/[,\s]+/).map(Number); break;
+    case 'vec3': v = s.startsWith('[') ? safeJson(s) : s.split(/[,\s]+/).map(Number); break;
     case 'ref': v = s; break;
     case 'list': case 'struct': case 'oneOf': case 'matrix': v = safeJson(s); break;
     default: v = s;

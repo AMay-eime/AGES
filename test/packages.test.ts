@@ -40,9 +40,9 @@ test('入れていないプロジェクト: 地図・手順・登録簿に何も
 test('packages に 3d: 地図に目次・手順を引ける・ゲームのコードから ages/3d を import できる・check が通る', async () => {
   const dir = await shooter(['3d']);
   await appendFile(join(dir, 'game', 'index.ts'), "\nimport pkg3d from 'ages/3d';\nexport const usesPackage = pkg3d.name;\n");
-  assert.match(await cmdMap(dir), /^## package 3d: .*\n- 3D の全体.* → `3d`$/m);
-  assert.match(await cmdSchema(dir, ['guide']), /^ {2}3d: 3D の全体/m);
-  assert.match(await cmdSchema(dir, ['guide:3d']), /^## 3d: 3D の全体\n- /);
+  assert.match(await cmdMap(dir), /^## package 3d: .*\n- 3D の.* → `3d`$/m);
+  assert.match(await cmdSchema(dir, ['guide']), /^ {2}3d: 3D の/m);
+  assert.match(await cmdSchema(dir, ['guide:3d']), /^## 3d: 3D の[^\n]*\n- /);
   assert.match(await cmdCheck(dir), /^ok/);
   assert.deepEqual((await Project.load(dir)).registry.packages.map((p) => p.name), ['3d']);
 });

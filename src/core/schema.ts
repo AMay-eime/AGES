@@ -11,6 +11,7 @@ export type Field =
   | { type: 'enum'; default: string; options: string[]; desc?: string }
   | { type: 'color'; default: string; desc?: string }
   | { type: 'vec2'; default: [number, number]; desc?: string }
+  | { type: 'vec3'; default: [number, number, number]; desc?: string }
   | { type: 'ref'; default: string | null; desc?: string }
   /** プレハブの名前。tags を書くと、エディタで選ぶ一覧がそのタグ（どれか）を持つプレハブだけになる（検証は名前だけ） */
   | { type: 'prefab'; default: string; tags?: string[]; desc?: string }
@@ -34,7 +35,7 @@ export type Field =
   | OneOfField;
 
 /** 型の名前の一覧（エディタ拡張の欄の見せ方で、型で選ぶときの名前） */
-export const FIELD_TYPES = ['number', 'int', 'bool', 'string', 'enum', 'color', 'vec2', 'ref', 'prefab', 'asset', 'frame', 'row', 'scene', 'ease', 'input', 'params', 'matrix', 'list', 'struct', 'oneOf'] as const satisfies readonly Field['type'][];
+export const FIELD_TYPES = ['number', 'int', 'bool', 'string', 'enum', 'color', 'vec2', 'vec3', 'ref', 'prefab', 'asset', 'frame', 'row', 'scene', 'ease', 'input', 'params', 'matrix', 'list', 'struct', 'oneOf'] as const satisfies readonly Field['type'][];
 
 /** リスト（同じ型の値の並び）。min / max は長さ */
 export interface ListField {
@@ -185,6 +186,10 @@ export function checkAt(at: string, f: Field, v: unknown): string | null {
       return Array.isArray(v) && v.length === 2 && v.every((n) => typeof n === 'number' && Number.isFinite(n))
         ? null
         : `${at} は [x, y] の数値2つが必要です`;
+    case 'vec3':
+      return Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === 'number' && Number.isFinite(n))
+        ? null
+        : `${at} は [x, y, z] の数値3つが必要です`;
     case 'ref':
       return v === null || typeof v === 'string' ? null : `${at} はエンティティID（文字列）か null が必要です`;
     case 'prefab':
@@ -333,6 +338,7 @@ export function typeOf(f: Field): string {
 export function brief(f: Field): string {
   switch (f.type) {
     case 'vec2': return `vec2=${JSON.stringify(f.default)}`;
+    case 'vec3': return `vec3=${JSON.stringify(f.default)}`;
     case 'frame': return `frame(番号か名前)=${JSON.stringify(f.default)}`;
     case 'matrix': {
       const size = f.rows !== undefined || f.cols !== undefined ? ` ${f.rows ?? '?'}x${f.cols ?? '?'}固定` : '';
