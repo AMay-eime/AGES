@@ -377,7 +377,13 @@ function typeBlock(b: CodeBlock | undefined): boolean {
 /** 比べるための形（小文字・記号なし・終わりの s なし）。shot_patterns と ShotPattern を同じに見る */
 export const loose = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, '').replace(/s$/, '');
 
-/** 行の中身（前後の空白なし・長ければ切る） */
-export function lineText(f: CodeFile, line: number, max = 120): string {
-  return squeeze(f.text.slice(f.lines[line - 1], (f.lines[line] ?? f.text.length + 1) - 1), max);
+/** 行の中身（前後の空白なし・長ければ切る）。at（文字の位置）を渡すと、長い行はその前後を出す（使っている所が切れないように） */
+export function lineText(f: CodeFile, line: number, max = 120, at?: number): string {
+  const start = f.lines[line - 1], raw = f.text.slice(start, (f.lines[line] ?? f.text.length + 1) - 1);
+  const lead = /^\s*/.exec(raw)![0].length, text = raw.slice(lead).replace(/\s+$/, '');
+  if (text.length <= max || at === undefined) return squeeze(text, max);
+  const col = Math.max(0, at - start - lead);
+  if (col < max - 30) return squeeze(text, max);
+  const from = Math.max(0, Math.min(text.length - max, col - Math.floor(max * 0.6)));
+  return `${from > 0 ? '…' : ''}${text.slice(from, from + max).replace(/\s+/g, ' ')}${from + max < text.length ? '…' : ''}`;
 }

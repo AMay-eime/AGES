@@ -25,7 +25,7 @@ export function indexCode(files: [string, string][]): CodeFile[] {
 const range = (b: CodeBlock) => (b.endLine > b.line ? `${b.line}-${b.endLine}` : `${b.line}`);
 
 /** 使っている所を、ファイル → 関数 ごとにまとめて書く */
-function useLines(uses: { file: CodeFile; line: number; how?: string; block?: CodeBlock }[], o: CodeOptions, max: number): string[] {
+function useLines(uses: { file: CodeFile; line: number; at?: number; how?: string; block?: CodeBlock }[], o: CodeOptions, max: number): string[] {
   const out: string[] = [];
   let file = '', block: CodeBlock | undefined | null = null, n = 0;
   // 同じ行にいくつもあれば1行に（書く > 入れる > 呼ぶ > 読む の順で1つ）
@@ -47,7 +47,7 @@ function useLines(uses: { file: CodeFile; line: number; how?: string; block?: Co
     const a = o.around ?? 0;
     if (a > 0) {
       for (let l = Math.max(1, u.line - a); l <= Math.min(u.file.lines.length, u.line + a); l++) out.push(`    ${l}${l === u.line ? `${u.how ? ' ' + u.how : ''}>` : '|'} ${lineText(u.file, l, 140)}`);
-    } else out.push(`    ${u.line}${u.how ? ' ' + u.how : ''}  ${lineText(u.file, u.line)}`);
+    } else out.push(`    ${u.line}${u.how ? ' ' + u.how : ''}  ${lineText(u.file, u.line, 120, u.at)}`);
   }
   if (n > max) out.push(`ほか ${n - max} か所（--max ${Math.min(500, n)} で全部）`);
   return out;
@@ -80,8 +80,10 @@ function outline(f: CodeFile): string[] {
 function fieldLine(files: CodeFile[], kind: 'component' | 'table', owner: string, field: string): string {
   for (const f of files) for (const b of f.blocks) {
     if (b.kind !== kind || b.name !== owner) continue;
-    const m = new RegExp(`(?<![\\w$])${field}\\s*:`).exec(f.code.slice(b.start, b.end));
-    return `${f.path}:${m ? lineOf(f, b.start + m.index) : b.line}`;
+    // 行の頭の 名前:（欄の宣言）を先に。image: { kind: 'image' } のような、中の同じ名前を拾わないように
+    const body = f.code.slice(b.start, b.end);
+    const m = new RegExp(`^[ \\t]*${field}\\s*:`, 'm').exec(body) ?? new RegExp(`(?<![\\w$])${field}\\s*:`).exec(body);
+    return `${f.path}:${m ? lineOf(f, b.start + m.index + m[0].length - 1) : b.line}`;
   }
   return '';
 }
@@ -148,10 +150,17 @@ export function codeQuery(p: Project, files: CodeFile[], queries: string[], o: C
       const rows = table ? p.docs.tables.get(owner)?.rows.length : undefined;
       out.push(`${q} — ${table ? `表 $${owner} の列` : `部品 ${owner} の欄`} ${brief(def)}${at ? `（${at}）` : ''}${def.desc ? ' ' + def.desc : ''}${rows !== undefined ? `。値は data/${owner}.table.json（${rows}行）` : ''}`);
       const others = new Set(Object.keys(table ? table.columns : comp!.fields).filter((k) => k !== field));
+      // 選ぶ値（enum）のうち、ほかの表・部品の同じ名前の欄にない値。その値と比べている行は、この欄のもの（b.kind === 'skillEnergy'）
+      const opts = (d: unknown): string[] => ((d as { type?: string; options?: unknown[] })?.type === 'enum' ? ((d as { options?: unknown[] }).options ?? []).map(String) : []);
+      const elsewhere = new Set([
+        ...[...p.registry.tables.values()].filter((t) => !(table && t.name === owner)).flatMap((t) => opts(t.columns[field])),
+        ...[...p.registry.components.values()].filter((c) => !(comp && c.name === owner)).flatMap((c) => opts(c.fields[field])),
+      ]);
+      const distinct = opts(def).filter((v) => !elsewhere.has(v) && v.length >= 3);
       const uses = findUses(files, field, true).filter((u) => !inOtherDecl(u, owner));
       // 宣言そのもの（表・部品の宣言の中の 名前:）は除く
       const real = uses.filter((u) => !isDeclOf(u, owner, table ? 'table' : 'component'));
-      const rank = new Map(real.map((u) => [u, sureness(u, owner, others)]));
+      const rank = new Map(real.map((u) => [u, sureness(u, owner, others, distinct)]));
       const strong = real.filter((u) => rank.get(u) === 2), nearby = real.filter((u) => rank.get(u) === 1), far = real.filter((u) => rank.get(u) === 0);
       const shown = o.all ? [...strong, ...nearby, ...far] : strong.length ? strong : nearby.length ? nearby : far;
       const count = (us: CodeUse[]) => new Set(us.map((u) => `${u.file.path}:${u.line}`)).size;
@@ -208,16 +217,19 @@ function inOtherDecl(u: CodeUse, owner: string): boolean {
 
 /**
  * その欄が owner（表・部品）のものだと、どれだけ言えるか。型がなくても（Record<string, any> でも）分かるように、形から見る:
- * 2 = 分かる（e.c.部品.欄 のように手前に名前がある・元の変数の宣言に名前がある・同じ変数から読んでいる欄の半分以上（2つ以上）が owner の欄）
+ * 2 = 分かる（e.c.部品.欄 のように手前に名前がある・元の変数の宣言に名前がある・同じ変数から読んでいる欄の半分以上（2つ以上）が owner の欄・この欄だけの値と比べている）
  * 1 = 同じ関数の中に owner の名前がある ／ 0 = 名前だけ同じ
  */
-function sureness(u: CodeUse, owner: string, others: Set<string>): 0 | 1 | 2 {
+function sureness(u: CodeUse, owner: string, others: Set<string>, distinct: string[] = []): 0 | 1 | 2 {
   const f = u.file, key = loose(owner);
   let top = u.block;
   while (top?.parent) top = top.parent;
   const from = top ? top.start : f.lines[Math.max(0, u.line - 9)], to = top ? top.end : f.lines[Math.min(f.lines.length - 1, u.line + 8)];
   const lineAt = f.lines[u.line - 1];
   const before = f.bare.slice(lineAt, u.at);
+  // この欄だけの値と比べている（.kind === 'skillEnergy'）
+  const tail = f.bare.slice(u.at, Math.min(f.lines[u.line] ?? f.bare.length, u.at + 60));
+  if (distinct.some((v) => new RegExp(`^[\\w$]+\\s*[!=]==?\\s*['"\`]${v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"\`]`).test(tail))) return 2;
   // 手前のつながり（e.c.Health. / ctx.table('bullets').get(id). / def.）
   const chain = /((?:[\w$]+|\([^()]*\)|\[[^[\]]*\]|\?\.|\.|!)+?)\s*\??\.\s*$/.exec(before)?.[1] ?? '';
   if (!chain) {

@@ -117,6 +117,8 @@ const Enemy = defineComponent({ name: 'Enemy', desc: '敵', fields: {
   hp: { type: 'int', default: 3, desc: '体力' },
 } });
 export const patterns = defineTable({ name: 'patterns', desc: '撃ち方', columns: {
+  icon: { type: 'asset', kind: 'image', default: '', desc: '絵' },
+  kind: { type: 'enum', options: ['plain', 'homing'], default: 'plain', desc: '種類' },
   speed: { type: 'number', default: -1, desc: '撃つ速さ' },
   way: { type: 'int', default: 1, desc: '同時に撃つ数' },
   angle: { type: 'number', default: 180, desc: '向き' },
@@ -154,6 +156,9 @@ export function fire(ctx: any, p: Row): void {
 export function eta(view: Row): number {
   return view.height / view.speed;
 }
+/** 追いかける撃ち方か（行の形が分からない所でも、この列だけの値と比べていれば拾う） */
+export const chases = (rows: Row[], extra: number, another: number, yetAnother: number, padding: number): Row[] => rows.filter((r) => extra + another + yetAnother + padding > 0 && r.kind === 'homing');
+export const plainItem = (item: Row): boolean => item.kind === 'box';
 `);
   return dir;
 }
@@ -164,44 +169,48 @@ test('ages code: 欄・列は、型がなくても形から見分ける（手前
   let out = await cmdCode(dir, ['Bullet.speed']);
   assert.match(out, /^Bullet\.speed — 部品 Bullet の欄 .*（game\/index\.ts:5） 速さ$/m);
   assert.match(out, /^使っている所 2（Bullet のものと分かる所だけ。名前だけ同じ所がほかに 4: --all で出す）$/m);
-  assert.match(out, /^game\/index\.ts\n  advance\(22-25\)\n    23 書  b\.speed \+= b\.accel \* dt;$/m);
+  assert.match(out, /^game\/index\.ts\n  advance\(24-27\)\n    25 書  b\.speed \+= b\.accel \* dt;$/m);
   assert.match(out, /^game\/shot\.ts\n  fire\(3-7\)\n    6 読  for \(let i = 0; i < p\.way; i\+\+\) ctx\.spawn/m);
   assert.doesNotMatch(out, /en\.speed|view\.speed|p\.speed >= 0/);
 
   out = await cmdCode(dir, ['Enemy.speed']);
   assert.match(out, /^使っている所 2（Enemy のものと分かる所だけ/m);
-  assert.match(out, /  enemies\(29-35\)\n    32 読  if \(en\.hp > 0 && en\.speed > 0\).*\n    33 書  e\.c\.Enemy\.speed = 2;$/m);
+  assert.match(out, /  enemies\(31-37\)\n    34 読  if \(en\.hp > 0 && en\.speed > 0\).*\n    35 書  e\.c\.Enemy\.speed = 2;$/m);
 
   // 表の列: 同じ変数 p から way・angle も読んでいる
   out = await cmdCode(dir, ['$patterns.speed']);
-  assert.match(out, /^\$patterns\.speed — 表 \$patterns の列 .*（game\/index\.ts:14） 撃つ速さ$/m);
+  assert.match(out, /^\$patterns\.speed — 表 \$patterns の列 .*（game\/index\.ts:16） 撃つ速さ$/m);
   assert.match(out, /^使っている所 1（patterns のものと分かる所だけ。名前だけ同じ所がほかに 5: --all で出す）\ngame\/shot\.ts\n  fire\(3-7\)\n    5 読  const speed = p\.speed >= 0 \? p\.speed : 3;$/m);
   // --all で全部
   out = await cmdCode(dir, ['$patterns.speed'], { all: true });
   assert.match(out, /^使っている所 6$/m);
   assert.match(out, /view\.height \/ view\.speed/);
+  // 選ぶ値の列: この列だけの値と比べている所は拾う（item.kind === 'box' は別）。宣言の行は、中の kind: 'image' ではなく列の行。長い行は使っている所の前後を出す
+  out = await cmdCode(dir, ['$patterns.kind']);
+  assert.match(out, /^\$patterns\.kind — 表 \$patterns の列 .*（game\/index\.ts:15） 種類$/m);
+  assert.match(out, /^使っている所 1（patterns のものと分かる所だけ。名前だけ同じ所がほかに 1: --all で出す）\ngame\/shot\.ts\n  chases\(13\)\n    13 読  ….*r\.kind === 'homing'\);$/m);
   // ない表・ない列
   assert.match(await cmdCode(dir, ['$pattern.speed']), /表 \$pattern はありません（近いもの: \$patterns）/);
-  assert.match(await cmdCode(dir, ['$patterns.sped']), /表 \$patterns に列 sped はありません（あるのは speed way angle bullet）/);
+  assert.match(await cmdCode(dir, ['$patterns.sped']), /表 \$patterns に列 sped はありません（あるのは icon kind speed way angle bullet）/);
 });
 
 test('ages code: 名前で宣言と使っている所（--body で中身）・ファイルの目次・コメントから探す・ないときの案内', async () => {
   const dir = await project();
   let out = await cmdCode(dir, ['fire']);
-  assert.match(out, /^fire — 関数（game\/shot\.ts:3-7・5行） 撃つ: 撃ち方の行から弾を出す\n  export function fire\(ctx: any, p: Row\): void\n使っている所 1\ngame\/index\.ts\n  enemies\(29-35\)\n    32 呼  /m);
+  assert.match(out, /^fire — 関数（game\/shot\.ts:3-7・5行） 撃つ: 撃ち方の行から弾を出す\n  export function fire\(ctx: any, p: Row\): void\n使っている所 1\ngame\/index\.ts\n  enemies\(31-37\)\n    34 呼  /m);
   out = await cmdCode(dir, ['fire'], { body: true });
   assert.match(out, /^3\| export function fire\(ctx: any, p: Row\): void \{\n4\|   \/\/ 速さは撃ち方の speed\n/m);
   assert.match(out, /^7\| \}$/m);
   // システムは名前で。親.名前 が見つからなければ（1行に書いた update）、親を出す
-  assert.match(await cmdCode(dir, ['moveBullets']), /^moveBullets — システム（game\/index\.ts:26-28）/m);
-  assert.match(await cmdCode(dir, ['enemies.update'], { body: true }), /^enemies — システム（game\/index\.ts:29-35・7行）\n29\| const enemies = defineSystem/m);
+  assert.match(await cmdCode(dir, ['moveBullets']), /^moveBullets — システム（game\/index\.ts:28-30）/m);
+  assert.match(await cmdCode(dir, ['enemies.update'], { body: true }), /^enemies — システム（game\/index\.ts:31-37・7行）\n31\| const enemies = defineSystem/m);
   // 同じ名前の宣言がいくつもあるとき（Row）はそれぞれ
-  assert.match(await cmdCode(dir, ['Row']), /Row — 型（game\/index\.ts:20）[\s\S]*Row — 型（game\/shot\.ts:1）/);
+  assert.match(await cmdCode(dir, ['Row']), /Row — 型（game\/index\.ts:22）[\s\S]*Row — 型（game\/shot\.ts:1）/);
 
   // ファイルの目次
   out = await cmdCode(dir, ['game/shot.ts']);
-  assert.match(out, /^game\/shot\.ts（12行）\n  1 type Row = Record<string, any>;\n  3-7 export function fire\(ctx: any, p: Row\): void — 撃つ: 撃ち方の行から弾を出す\n  9-11 export function eta\(view: Row\): number — 画面の端までの時間$/m);
-  assert.match(await cmdCode(dir, ['shot.ts']), /^game\/shot\.ts（12行）/, '名前だけでも');
+  assert.match(out, /^game\/shot\.ts（15行）\n  1 type Row = Record<string, any>;\n  3-7 export function fire\(ctx: any, p: Row\): void — 撃つ: 撃ち方の行から弾を出す\n  9-11 export function eta\(view: Row\): number — 画面の端までの時間$/m);
+  assert.match(await cmdCode(dir, ['shot.ts']), /^game\/shot\.ts（15行）/, '名前だけでも');
   assert.match(await cmdCode(dir, ['game/shoot.ts']), /というファイルはコード（game\/・editor\/）にありません/);
 
   // 日本語の語: 説明にある宣言を先に、ほかの行は後に（語はまとめて、全部を含むもの）
@@ -212,7 +221,7 @@ test('ages code: 名前で宣言と使っている所（--body で中身）・�
   assert.match(out, /    4  \/\/ 速さは撃ち方の speed/);
 
   // ないとき: 名前に含むものを出す。なければ ages find を案内
-  assert.match(await cmdCode(dir, ['bullets']), /「bullets」という名前はありません。名前に含むもの 2:\n  game\/index\.ts:4-8 Bullet\n  game\/index\.ts:26-28 moveBullets/);
+  assert.match(await cmdCode(dir, ['bullets']), /「bullets」という名前はありません。名前に含むもの 2:\n  game\/index\.ts:4-8 Bullet\n  game\/index\.ts:28-30 moveBullets/);
   assert.match(await cmdCode(dir, ['zzz']), /「zzz」はコード（game\/・editor\/）にありません（データの名前・説明から探すのは ages find/);
   await assert.rejects(() => cmdCode(dir, []), /引くものを書いてください/);
   assert.ok((await cmdMap(dir)).length > 0);
