@@ -9,6 +9,8 @@ import { layoutUI, type UiRect } from '../core/ui.ts';
 import { collectDrawables, cornersOf, dashSpans, dashedBands, ellipsePerimeter, lineCorners, pointInCorners, ringPiece, spriteGeometry, strokeBands, tileSpans, type Corners } from './geom.ts';
 import { ParticleSim } from './particles.ts';
 import { STD_SHADERS, codeHash, wrapShader, type ShaderDef } from '../core/shader.ts';
+import type { PackageDef } from '../core/packages.ts';
+import type { RenderLayer } from './layer.ts';
 
 export interface RendererOptions {
   /** アセットの場所（assets/ship.png）から読み込むURLを作る */
@@ -21,6 +23,8 @@ export interface RendererOptions {
   shaders?: Map<string, ShaderDef>;
   /** シェーダーをコンパイルした結果（error が null なら通った）。中身が変わるたびに1回 */
   onShaderResult?(path: string, hash: string, error: string | null): void;
+  /** 入れている追加パッケージ（registry.packages）。描く層（3D など）を持つものがあれば、2D の下に描く */
+  packages?: PackageDef[];
 }
 
 /** コンパイルしたシェーダー */
@@ -87,6 +91,8 @@ export interface DrawOptions {
   overlay?: { color: string; alpha: number } | null;
   /** 画面全体の後処理（PostEffect）をかけるか（既定 true。エディタの自由な視点ではかけない） */
   post?: boolean;
+  /** 追加パッケージの層への指示（層の名前 → 指示。例 { '3d': { camera } }） */
+  layers?: Record<string, unknown>;
   /**
    * パーティクルを動かす。dt は進める秒数（一時停止中は 0）。
    * preview は編集中（ゲームを動かしていない）に試しに粒を出す物（エディタで選んだ物）。渡さなければ再生中として rate の分も出す。
@@ -107,6 +113,9 @@ export class Renderer {
   private camIndex = 0;
   /** UI を描いている間（切り抜きの後に、切り取りを外して戻す） */
   private uiPass = false;
+  /** 2D の下（背景の上）に描く層（追加パッケージ 3d など） */
+  readonly layers: RenderLayer[] = [];
+  private vao: WebGLVertexArrayObject | null = null;
   private prog: WebGLProgram;
   private vbo: WebGLBuffer;
   private verts = new Float32Array(MAX_QUADS * 4 * FLOATS);
@@ -163,6 +172,7 @@ export class Renderer {
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
     const vao = gl.createVertexArray();
+    this.vao = vao;
     gl.bindVertexArray(vao);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
     // 頂点の並びはどのシェーダーでも同じ場所に結びつける（効果のシェーダーも同じ頂点で描く）
@@ -178,6 +188,31 @@ export class Renderer {
     this.circle = this.fromCanvas(this.makeCanvas(128, 128, (g) => { g.fillStyle = '#fff'; g.beginPath(); g.arc(64, 64, 63, 0, Math.PI * 2); g.fill(); }), 'linear');
     this.missing = this.fromCanvas(this.makeCanvas(2, 2, (g) => { g.fillStyle = '#ff00ff'; g.fillRect(0, 0, 1, 1); g.fillRect(1, 1, 1, 1); g.fillStyle = '#000'; g.fillRect(1, 0, 1, 1); g.fillRect(0, 1, 1, 1); }), 'nearest');
     this.measure = this.makeCanvas(1, 1, () => {}).getContext('2d')!;
+    this.usePackages(opts.packages ?? []);
+  }
+
+  private layerOf = new Map<string, RenderLayer>();
+  /** 入れている追加パッケージに合わせて、層を作る・外す（エディタで設定が変わったとき。同じなら何もしない） */
+  usePackages(packages: PackageDef[]): void {
+    const want = packages.filter((pk) => pk.render);
+    if (want.length === this.layerOf.size && want.every((pk) => this.layerOf.has(pk.name))) return;
+    for (const pk of want) if (!this.layerOf.has(pk.name)) this.layerOf.set(pk.name, pk.render!({ gl: this.gl, urlOf: (p) => this.opts.urlOf(p) }));
+    for (const name of [...this.layerOf.keys()]) if (!want.some((pk) => pk.name === name)) this.layerOf.delete(name);
+    this.layers.splice(0, this.layers.length, ...this.layerOf.values());
+    this.restore2D();
+  }
+
+  /** 層が描いた後で、2D の描画が当てにしている GL の状態に戻す */
+  private restore2D(): void {
+    const gl = this.gl;
+    gl.bindVertexArray(this.vao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.CULL_FACE);
+    gl.depthMask(true);
+    gl.colorMask(true, true, true, true);
+    gl.enable(gl.BLEND);
+    gl.activeTexture(gl.TEXTURE0);
   }
 
   /** 画像が読み込み済みなら、その大きさ */
@@ -189,6 +224,7 @@ export class Renderer {
   /** 画像を読み直す（ファイルが変わったとき） */
   invalidate(path?: string): void {
     for (const [k, t] of this.textures) if (!path || k === path) { this.gl.deleteTexture(t.tex); this.textures.delete(k); }
+    for (const l of this.layers) l.invalidate?.(path);
   }
 
   /**
@@ -217,6 +253,17 @@ export class Renderer {
     gl.disable(gl.SCISSOR_TEST);
     gl.clearColor(r, g, b, 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
+    if (this.layers.length) {
+      const fb = passes.size ? this.target(W, H, cur) : null;
+      for (const l of this.layers) {
+        l.draw({ world, width: W, height: H, framebuffer: fb, background: o.background, options: o.layers?.[l.name] });
+        this.stats.draws += l.draws ?? 0;
+      }
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+      gl.viewport(0, 0, W, H);
+      gl.disable(gl.SCISSOR_TEST);
+      this.restore2D();
+    }
     gl.useProgram(this.prog);
     gl.uniform2f(gl.getUniformLocation(this.prog, 'u_res'), W, H);
     if (o.particles) this.particles.update(world, o.particles.dt, o.particles.preview);
@@ -282,7 +329,7 @@ export class Renderer {
   async settled(): Promise<void> {
     for (let i = 0; i < 4; i++) {
       const n = this.textures.size + this.fontLoads.length;
-      await Promise.all([...[...this.textures.values()].map((t) => t.loaded), ...this.fontLoads]);
+      await Promise.all([...[...this.textures.values()].map((t) => t.loaded), ...this.fontLoads, ...this.layers.map((l) => l.settled?.())]);
       if (this.textures.size + this.fontLoads.length === n) return;
     }
   }
