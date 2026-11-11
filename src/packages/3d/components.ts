@@ -102,4 +102,19 @@ export const Environment3D = defineComponent({
   },
 });
 
-export const COMPONENTS_3D = [Transform3D, Camera3D, Mesh3D, Model3D, Light3D, Environment3D];
+export const Collider3D = defineComponent({
+  name: 'Collider3D',
+  desc: '3D の当たり判定の形（3d）。箱・球・カプセルで、Transform3D の位置・回転・倍率がかかる。重なり・線は ages/3d の hit3 で調べる（押し返しはしない）',
+  fields: {
+    shape: { type: 'enum', default: 'box', options: ['box', 'sphere', 'capsule'], desc: '形。box=箱 / sphere=球 / capsule=カプセル（キャラクター。縦が高さ）' },
+    size: { type: 'vec3', default: [1, 1, 1], desc: '大きさ（m。Mesh3D と同じ書き方）。箱は幅・高さ・奥行き、球・カプセルは 太さ(x)・高さ(y)' },
+    offset: { type: 'vec3', default: [0, 0, 0], desc: '中心のずれ（m。回転・倍率がかかる。足元が原点のモデルなら、高さの半分だけ上へ）' },
+    group: { type: 'string', default: '', desc: 'グループの名前（例 player wall coin）。相手を絞るのに使う' },
+    with: { type: 'list', of: { type: 'string', default: '' }, default: [], desc: 'このグループとの重なりを毎フレーム記録する（touching・entered に入る）' },
+    enabled: { type: 'bool', default: true, desc: '判定するか' },
+    touching: { type: 'list', of: { type: 'string', default: '' }, default: [], desc: 'いま重なっている相手の ID（with のグループ。自動で変化）' },
+    entered: { type: 'list', of: { type: 'string', default: '' }, default: [], desc: 'このフレームに重なり始めた相手の ID（自動で変化。hit3.entered で読む）' },
+  },
+});
+
+export const COMPONENTS_3D = [Transform3D, Camera3D, Mesh3D, Model3D, Light3D, Environment3D, Collider3D];

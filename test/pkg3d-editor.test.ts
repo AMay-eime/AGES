@@ -130,6 +130,19 @@ test('3D シーン: 選ぶ・動かす・回す・大きさ・視点・足す', 
     await ev(`[...document.querySelectorAll('.menu div')].find((x) => x.textContent === '箱').click()`);
     await waitFor('added', 8000, async () => ((await saved('box2')) ? true : undefined));
     assert.equal(await ev(`ages.selectedIds().join()`), 'box2');
+
+    // 当たり判定を、選んだ物の形に合わせて付ける（球なら球・同じ太さ）
+    const collider = async (id: string) => JSON.parse(await readFile(join(dir, 'scenes', 'main.scene.json'), 'utf8')).entities.find((e: { id: string }) => e.id === id)?.components.Collider3D;
+    await ev(`ages.select({ kind: 'scene', scene: 'main', id: 'ball' })`);
+    await ev(`[...document.querySelectorAll('.toolbar button')].find((x) => x.textContent === '＋ 足す').click()`);
+    await ev(`[...document.querySelectorAll('.menu div')].find((x) => x.textContent === '当たり判定を、選んだ物の形に合わせて付ける').click()`);
+    await waitFor('collider', 8000, async () => ((await collider('ball')) ? true : undefined));
+    assert.deepEqual(await collider('ball'), { shape: 'sphere', size: [1, 1, 1] });
+    // 床（板）は薄い箱に。上の面が床の高さに合う
+    await ev(`ages.select({ kind: 'scene', scene: 'main', id: 'ground' })`);
+    await ev(`ages.scene3d.fitCollider()`);
+    await waitFor('collider', 8000, async () => ((await collider('ground')) ? true : undefined));
+    assert.deepEqual(await collider('ground'), { shape: 'box', size: [20, 0.2, 20], offset: [0, -0.1, 0] });
   });
 });
 

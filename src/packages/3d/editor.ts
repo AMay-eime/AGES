@@ -15,6 +15,7 @@ import type { Mat4, Vec3 } from './math.ts';
 import { cameraFrom, matrixOf, screenRay, toScreen, worldMatrix, type CameraView3, type Pose3 } from './space.ts';
 import { halfExtents, pickSolids, type Solid } from './pick.ts';
 import type { Layer3D } from './render.ts';
+import { shapeOf, wireOf } from './collide.ts';
 
 type Tool = 'move' | 'rotate' | 'scale';
 type Handle = { kind: Tool; axis: 0 | 1 | 2 | 3 };
@@ -137,8 +138,15 @@ export function mount(app: App): Panel {
       if (e.c.Camera3D) line(m3.positionOf(m), m3.add(m3.positionOf(m), m3.scale(fwd, -unitAt(m3.positionOf(m), 40))), '#9fd0ff', 2);
       g.fillText(e.c.Camera3D ? '🎥' : e.c.Light3D ? (e.c.Light3D.kind === 'sun' ? '☀' : '💡') : '◇', p.x, p.y);
     }
-    // 選んでいる物の枠
+    // 当たり判定の形（緑の線。選んでいる物は濃く）
     const sel = selected();
+    for (const e of w.entities.values()) {
+      const sh = e.c.Collider3D ? shapeOf(w, e) : null;
+      if (!sh) continue;
+      const color = sel.includes(e.id) ? '#5dff8a' : 'rgba(93,255,138,0.35)';
+      for (const [a, b] of wireOf(sh)) line(a, b, color, sel.includes(e.id) ? 1.5 : 1);
+    }
+    // 選んでいる物の枠
     const drawn = new Map((layer()?.drawn ?? []).map((d) => [d.id, d]));
     for (const id of sel) {
       const d = drawn.get(id);
@@ -399,6 +407,29 @@ export function mount(app: App): Panel {
       .then((r) => { if (r) app.select({ kind: 'scene', scene: app.scene, id }); });
   });
 
+  /** 選んだ物に、見た目に合う当たり判定を付ける（形はあとでインスペクタで直せる） */
+  const fitCollider = async () => {
+    const id = selected()[0], w = world();
+    const e = id && w ? w.entities.get(id) : undefined;
+    if (!e) return;
+    const mesh = e.c.Mesh3D as { shape?: string; size?: Vec3 } | undefined, model = e.c.Model3D as { model?: string } | undefined;
+    const info = model?.model ? app.state.assets.find((a) => a.path === model.model)?.model : undefined;
+    let values: Record<string, unknown>;
+    if (mesh) {
+      const size = mesh.size ?? [1, 1, 1];
+      values = mesh.shape === 'sphere' ? { shape: 'sphere', size: [size[0], size[0], size[0]] }
+        : mesh.shape === 'capsule' ? { shape: 'capsule', size: [size[0], size[1], size[0]] }
+        : mesh.shape === 'plane' ? { shape: 'box', size: [size[0], 0.2, size[2]], offset: [0, -0.1, 0] }
+        : mesh.shape === 'cylinder' ? { shape: 'box', size: [size[0], size[1], size[0]] }
+        : { shape: 'box', size };
+    } else if (info) values = { shape: 'box', size: info.size.map((v) => round(v, 1000)), offset: info.center.map((v) => round(v, 1000)) };
+    else values = { shape: 'box', size: [1, 1, 1] };
+    const target = `${app.scene}#${id}`;
+    await app.patch(e.c.Collider3D
+      ? Object.entries(values).map(([k, v]) => ({ op: 'set' as const, path: `${target}.Collider3D.${k}`, value: v }))
+      : [{ op: 'addComponent' as const, target, component: 'Collider3D', values }], 'scene3d');
+  };
+
   /** 形・光・カメラを足す（見ている点に） */
   const addMenu = (e: MouseEvent) => {
     if (app.play) { toast(T('再生中は足せません（止めてから）'), 'warn'); return; }
@@ -420,6 +451,7 @@ export function mount(app: App): Panel {
       shape(T('板（床）'), 'plane', [20, 1, 20], 0),
       [T('太陽の光'), add('sun', { Transform3D: { ...at3(8), rx: 50, ry: -30 }, Light3D: { kind: 'sun' } })],
       [T('点の光'), add('lamp', { Transform3D: at3(2), Light3D: { kind: 'point' } })],
+      ...(selected().length ? [[T('当たり判定を、選んだ物の形に合わせて付ける'), fitCollider] as [string, () => void]] : []),
       [T('カメラ'), add('camera', { Transform3D: { x: round(cam.pos[0], 10), y: round(cam.pos[1], 10), z: round(cam.pos[2], 10), rx: round(view.pitch, 10), ry: round(view.yaw, 10) }, Camera3D: {} })],
     ]);
   };
@@ -428,7 +460,7 @@ export function mount(app: App): Panel {
   // 確かめ・拡張用（視点・クリックの位置の物・描いた物）
   const client = (p: { x: number; y: number } | null) => { if (!p) return null; const r = canvas.getBoundingClientRect(), k = canvas.width / Math.max(1, r.width); return { x: r.left + p.x / k, y: r.top + p.y / k }; };
   (app as unknown as { scene3d?: unknown }).scene3d = {
-    view, camera: () => cam, pickAt, frame, setTool, worldMatrix, canvas,
+    view, camera: () => cam, pickAt, frame, setTool, worldMatrix, canvas, fitCollider,
     /** 物の位置が映っている所（ブラウザの窓の px） */
     screenOf: (id: string) => { cam = camera(); const w = world(), m = w && matrixOf(w, id); return m ? client(px(m3.positionOf(m))) : null; },
     /** ギズモの取っ手の先（軸 0〜2）。回す道具なら輪の上の点（t は 0〜1） */

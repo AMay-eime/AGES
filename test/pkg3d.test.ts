@@ -333,3 +333,110 @@ test('影: 太陽の影が床に落ちる。日なたの明るさは影なしと
   assert.ok(Math.abs(off(0, 0) - off(2, 0)) <= 2, `影なし ${off(0, 0)} ${off(2, 0)}`);
   for (const [x, z] of [[2, 0], [-3, 1], [1.5, 2.5], [4, -4]]) assert.ok(Math.abs(off(x, z) - on(x, z)) <= 2, `日なた (${x}, ${z}): 影あり ${on(x, z)} 影なし ${off(x, z)}`);
 });
+
+test('当たり判定の形: 箱・球・カプセルの重なり、点、線（当たった所と面の向き）', async () => {
+  const { shapeFrom, overlap3, contains3, rayHit3, sphereShape, boxShapeAt } = await import('../src/packages/3d/collide.ts');
+  const at = (shape: string, pos: [number, number, number], size: [number, number, number] = [1, 1, 1], rot: [number, number, number] = [0, 0, 0], scale: [number, number, number] = [1, 1, 1]) => shapeFrom({ shape, size }, m.compose(pos, rot, scale));
+  // 球どうし: 太さ 1（半径 0.5）。中心が 1 より近ければ重なる（ちょうど触れているだけは重ならない）
+  assert.equal(overlap3(at('sphere', [0, 0, 0]), at('sphere', [0.99, 0, 0])), true);
+  assert.equal(overlap3(at('sphere', [0, 0, 0]), at('sphere', [1, 0, 0])), false);
+  // 倍率がかかる（2倍の球は半径 1）
+  assert.equal(overlap3(at('sphere', [0, 0, 0], [1, 1, 1], [0, 0, 0], [2, 2, 2]), at('sphere', [1.4, 0, 0])), true);
+  // カプセル（太さ 1・高さ 3）: 芯は y = -1〜1。横に寝かせると x に伸びる
+  const cap = at('capsule', [0, 0, 0], [1, 3, 1]);
+  assert.equal(overlap3(cap, at('sphere', [0, 1.9, 0])), true, '上の丸み');
+  assert.equal(overlap3(cap, at('sphere', [0, 2.1, 0])), false);
+  assert.equal(overlap3(cap, at('sphere', [0.9, 0.5, 0])), true, '胴');
+  assert.equal(overlap3(at('capsule', [0, 0, 0], [1, 3, 1], [0, 0, 90]), at('sphere', [1.9, 0, 0])), true, '寝かせたカプセル');
+  assert.equal(overlap3(cap, at('capsule', [0.95, 2, 0], [1, 3, 1])), true, 'カプセルどうし');
+  assert.equal(overlap3(cap, at('capsule', [1.05, 2, 0], [1, 3, 1])), false);
+  // 箱と球: 角の近く（箱の角 [0.5,0.5,0.5] から球の中心まで 0.49 / 0.52）
+  const box = at('box', [0, 0, 0]);
+  const k = 1 / Math.sqrt(3);
+  assert.equal(overlap3(box, at('sphere', [0.5 + 0.49 * k, 0.5 + 0.49 * k, 0.5 + 0.49 * k])), true);
+  assert.equal(overlap3(box, at('sphere', [0.5 + 0.52 * k, 0.5 + 0.52 * k, 0.5 + 0.52 * k])), false);
+  assert.equal(overlap3(at('box', [0, 0, 0], [4, 4, 4]), at('sphere', [0, 0, 0], [0.2, 0.2, 0.2])), true, '中にすっぽり入っている');
+  // 箱とカプセル: 箱の上をまたぐ、寝かせたカプセル
+  assert.equal(overlap3(box, at('capsule', [0, 0.95, 0], [1, 4, 1], [0, 0, 90])), true);
+  assert.equal(overlap3(box, at('capsule', [0, 1.05, 0], [1, 4, 1], [0, 0, 90])), false);
+  // 箱どうし: 45度回した箱は、角が x へ 0.707 まで出る。外枠は重なっても、形は離れていることがある
+  const turned = (x: number, z = 0) => at('box', [x, 0, z], [1, 1, 1], [0, 45, 0]);
+  assert.equal(overlap3(box, turned(1.2)), true);
+  assert.equal(overlap3(box, turned(1.21)), false);
+  assert.equal(overlap3(box, turned(1.1, 1.1)), false, '外枠は重なるが、角どうしは離れている');
+  assert.equal(overlap3(box, turned(0.8, 0.8)), true);
+  // 点
+  assert.equal(contains3(turned(0), [0.69, 0, 0]), true);
+  assert.equal(contains3(turned(0), [0.49, 0, 0.49]), false);
+  assert.equal(contains3(cap, [0, 1.4, 0]), true);
+  // 検索用の形
+  assert.equal(overlap3(sphereShape([0, 0, 0], 0.5), boxShapeAt([0.9, 0, 0], [1, 1, 1])), true);
+  // 線: 箱の手前の面に当たる（t は 0〜1、面の向きは線が来た側）
+  const hb = rayHit3(box, [0, 0, 5], [0, 0, -5])!;
+  near([hb.t, ...hb.normal], [0.45, 0, 0, 1]);
+  near(rayHit3(turned(0), [5, 0, 0], [-5, 0, 0])!.normal.map(Math.abs), [Math.SQRT1_2, 0, Math.SQRT1_2], 1e-9);
+  assert.equal(rayHit3(box, [0, 2, 5], [0, 2, -5]), null);
+  assert.equal(rayHit3(box, [0, 0, 5], [0, 0, 1]), null, '届かない');
+  // 球: 上から落とすと、てっぺんに当たり、面は上を向く
+  const hs = rayHit3(at('sphere', [0, 0, 0], [2, 2, 2]), [0, 5, 0], [0, -5, 0])!;
+  near([hs.t, ...hs.normal], [0.4, 0, 1, 0]);
+  // カプセル: 胴（横から）と丸み（上から）
+  const hc = rayHit3(cap, [5, 0.5, 0], [-5, 0.5, 0])!;
+  near([hc.t, ...hc.normal], [0.45, 1, 0, 0]);
+  near([rayHit3(cap, [0, 5, 0], [0, -5, 0])!.t], [0.35]);
+  // 始まりが中なら 0
+  assert.equal(rayHit3(box, [0, 0, 0], [0, 0, 5])!.t, 0);
+});
+
+test('当たり判定: hit3 の検索と、with の記録（touching・entered）。グループの間違いは ⚠（ages run）', async () => {
+  const dir = join(await mkdtemp(join(tmpdir(), 'ages-3d-')), 'g');
+  await cmdInit(dir, 'g');
+  const cfg = join(dir, 'ages.project.json');
+  await writeFile(cfg, JSON.stringify({ ...JSON.parse(await readFile(cfg, 'utf8')), packages: ['3d'] }, null, 2) + '\n');
+  await writeFile(join(dir, 'game', 'index.ts'), `import { defineComponent, defineSystem, type GameModule } from 'ages';
+import { hit3 } from 'ages/3d';
+const Probe = defineComponent({ name: 'Probe', desc: '検索の結果を書く', fields: {
+  speed: { type: 'number', default: 2 }, got: { type: 'int', default: 0 }, seen: { type: 'string', default: '' }, ground: { type: 'number', default: -1 }, near: { type: 'string', default: '' }, wall: { type: 'string', default: '' },
+} });
+const walk = defineSystem({ name: 'walk', desc: '+X へ歩き、コインを拾う', reads: ['Probe'], writes: ['Transform3D'], update(ctx) {
+  const e = ctx.world.entities.get('player')!, p = e.c.Probe, t = e.c.Transform3D;
+  // 先に、前のフレームの終わりに重なり始めたコインを拾う
+  for (const id of hit3.entered(ctx.world, 'player', 'coin')) { p.got++; ctx.destroy(id); }
+  t.x += p.speed * ctx.dt;
+  p.seen = hit3.overlaps(ctx.world, 'player').join(',');
+  p.ground = hit3.ray(ctx.world, [t.x, t.y, t.z], [t.x, t.y - 10, t.z], 'ground')?.dist ?? -1;
+  p.near = hit3.sphere(ctx.world, [t.x, t.y, t.z], 3, 'coin').join(',');
+  p.wall = hit3.ray(ctx.world, [t.x, t.y + 1, t.z], [t.x + 20, t.y + 1, t.z], 'wall')?.id ?? '';
+} });
+export const components: GameModule['components'] = [Probe];
+export const systems: GameModule['systems'] = [walk];
+`);
+  const ent = (id: string, components: Record<string, Record<string, unknown>>) => ({ op: 'addEntity' as const, scene: 'main', entity: { id, components } });
+  await cmdPatch(dir, [
+    // 足元が原点のキャラクター（高さ 1.8 のカプセルを 0.9 上へ）
+    ent('player', { Transform3D: {}, Collider3D: { shape: 'capsule', size: [0.8, 1.8, 0.8], offset: [0, 0.9, 0], group: 'player', with: ['coin'] }, Probe: {} }),
+    ent('floor', { Transform3D: { y: -0.5 }, Collider3D: { size: [40, 1, 40], group: 'ground' } }),
+    ent('coin1', { Transform3D: { x: 2, y: 1 }, Collider3D: { shape: 'sphere', size: [0.6, 0.6, 0.6], group: 'coin' } }),
+    ent('coin2', { Transform3D: { x: 4, y: 1 }, Collider3D: { shape: 'sphere', size: [0.6, 0.6, 0.6], group: 'coin' } }),
+    ent('far', { Transform3D: { x: 4, y: 1, z: 5 }, Collider3D: { shape: 'sphere', size: [0.6, 0.6, 0.6], group: 'coin' } }),
+    ent('wall', { Transform3D: { x: 8, y: 1 }, Collider3D: { size: [1, 2, 6], group: 'wall' } }),
+  ], false);
+  assert.match(await cmdCheck(dir), /^ok/);
+  const run = async (frames: number) => {
+    const out = await cmdRun(dir, { frames: String(frames), watch: 'player.Probe.got,player.Probe.seen,player.Probe.ground,player.Probe.near,player.Probe.wall,player.Transform3D.x,player.Collider3D.touching', every: String(frames) });
+    return (name: string) => new RegExp(`watch player\\.${name.replaceAll('.', '\\.')}: .* → (.*)$`, 'm').exec(out)?.[1];
+  };
+  // 0.5秒（x = 1）: まだ届かない（コインの左はし 1.7、カプセルの右はし 1.4）。足元の地面まで 0（原点が床の上）
+  let end = await run(30);
+  assert.deepEqual([end('Probe.got'), end('Probe.seen'), end('Probe.near'), end('Probe.wall')], ['0', '', 'coin1,coin2', 'wall']);
+  near([Number(end('Probe.ground'))], [0], 1e-9);
+  // 2秒（x = 4）: 2つ拾った。遠くのコイン（z = 5）は拾っていない
+  end = await run(120);
+  assert.deepEqual([end('Probe.got'), end('Probe.near')], ['2', '']);
+  // 4秒（x = 8）: 壁の中（押し返しはない）。重なっているのは壁
+  end = await run(240);
+  assert.equal(end('Probe.seen'), 'wall');
+
+  await cmdPatch(dir, [{ op: 'set', path: 'main#player.Collider3D.with', value: ['coin', 'enemy'] }], false);
+  assert.match(await cmdCheck(dir), /⚠ 3d-group: main#player\.Collider3D\.with: グループ enemy の Collider3D がどこにもありません（あるのは player ground coin wall）/);
+});
