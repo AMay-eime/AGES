@@ -1,0 +1,4 @@
+assets/models（.glb と Textures/colormap.png）・assets/sounds（.ogg）:
+  Kenney "Starter Kit 3D Platformer" (https://github.com/KenneyNL/Starter-Kit-3D-Platformer)
+  Creative Commons Zero (CC0) — https://creativecommons.org/publicdomain/zero/1.0/
+  Kenney (www.kenney.nl)

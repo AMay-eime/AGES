@@ -1,0 +1,7 @@
+{
+  "name": "tweens",
+  "rows": [
+    {"id":"pop","time":0.25,"ease":"outBack","desc":"例: 大きくなって戻る。ctx.tween(id, { 'Transform.sx': 1, 'Transform.sy': 1 }, { preset: 'pop', from: { 'Transform.sx': 1.3, 'Transform.sy': 1.3 } })"},
+    {"id":"fadeOut","time":0.3,"ease":"inQuad","desc":"例: 薄くして消す。ctx.tween(id, { 'Sprite.alpha': 0 }, { preset: 'fadeOut', destroy: true })"}
+  ]
+}

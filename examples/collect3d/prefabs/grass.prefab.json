@@ -1,0 +1,13 @@
+{
+  "name": "grass",
+  "tags": [
+    "decor"
+  ],
+  "components": {
+    "Transform3D": {},
+    "Model3D": {
+      "model": "assets/models/grass.glb",
+      "shadow": false
+    }
+  }
+}

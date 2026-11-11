@@ -1,0 +1,27 @@
+{
+  "name": "coin",
+  "tags": [
+    "pickup"
+  ],
+  "components": {
+    "Transform3D": {},
+    "Model3D": {
+      "model": "assets/models/coin.glb"
+    },
+    "Collider3D": {
+      "shape": "sphere",
+      "size": [
+        0.5,
+        0.5,
+        0.5
+      ],
+      "offset": [
+        0,
+        0.21,
+        0
+      ],
+      "group": "coin"
+    },
+    "Spin": {}
+  }
+}

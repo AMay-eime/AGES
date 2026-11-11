@@ -1,0 +1,425 @@
+{
+  "name": "main",
+  "entities": [
+    {
+      "id": "env",
+      "name": "env",
+      "components": {
+        "Environment3D": {
+          "sky": "#cfe6ff",
+          "ground": "#7a8a6a",
+          "ambient": 0.75
+        }
+      }
+    },
+    {
+      "id": "sun",
+      "name": "sun",
+      "components": {
+        "Transform3D": {
+          "y": 10,
+          "rx": 55,
+          "ry": -35
+        },
+        "Light3D": {
+          "intensity": 0.9,
+          "color": "#fff4dc"
+        }
+      }
+    },
+    {
+      "id": "player",
+      "name": "player",
+      "components": {
+        "Transform3D": {
+          "y": 0.5
+        },
+        "Model3D": {
+          "model": "assets/models/character.glb",
+          "clip": "idle"
+        },
+        "Collider3D": {
+          "shape": "capsule",
+          "size": [
+            0.6,
+            1,
+            0.6
+          ],
+          "offset": [
+            0,
+            0.5,
+            0
+          ],
+          "group": "player",
+          "with": [
+            "coin"
+          ]
+        },
+        "Player": {}
+      }
+    },
+    {
+      "id": "camera",
+      "name": "camera",
+      "components": {
+        "Transform3D": {
+          "y": 5,
+          "z": 7.5
+        },
+        "Camera3D": {
+          "follow": "player",
+          "offset": [
+            0,
+            4.5,
+            7.5
+          ],
+          "lag": 0.9,
+          "lookHeight": 0.8
+        }
+      }
+    },
+    {
+      "id": "island",
+      "name": "island",
+      "prefab": "island",
+      "components": {}
+    },
+    {
+      "id": "p1",
+      "name": "p1",
+      "prefab": "plat_s",
+      "components": {
+        "Transform3D": {
+          "x": 4.2,
+          "y": 0.4
+        }
+      }
+    },
+    {
+      "id": "p2",
+      "name": "p2",
+      "prefab": "plat_m",
+      "components": {
+        "Transform3D": {
+          "x": 8,
+          "y": 0.9,
+          "z": -1.5
+        }
+      }
+    },
+    {
+      "id": "p3",
+      "name": "p3",
+      "prefab": "plat_s",
+      "components": {
+        "Transform3D": {
+          "x": 11.5,
+          "y": 1.5,
+          "z": -4
+        }
+      }
+    },
+    {
+      "id": "p4",
+      "name": "p4",
+      "prefab": "plat_l",
+      "components": {
+        "Transform3D": {
+          "x": 12,
+          "y": 2,
+          "z": -9
+        }
+      }
+    },
+    {
+      "id": "p5",
+      "name": "p5",
+      "prefab": "plat_s",
+      "components": {
+        "Transform3D": {
+          "x": -4.5,
+          "y": 0.5,
+          "z": -1.5
+        }
+      }
+    },
+    {
+      "id": "p6",
+      "name": "p6",
+      "prefab": "plat_m",
+      "components": {
+        "Transform3D": {
+          "x": -8.5,
+          "y": 1.1,
+          "z": -3.5
+        }
+      }
+    },
+    {
+      "id": "brick1",
+      "name": "brick1",
+      "prefab": "brick",
+      "components": {
+        "Transform3D": {
+          "x": -1.2,
+          "y": 0.5,
+          "z": -1.4
+        }
+      }
+    },
+    {
+      "id": "brick2",
+      "name": "brick2",
+      "prefab": "brick",
+      "components": {
+        "Transform3D": {
+          "x": -0.2,
+          "y": 0.5,
+          "z": -1.4
+        }
+      }
+    },
+    {
+      "id": "brick3",
+      "name": "brick3",
+      "prefab": "brick",
+      "components": {
+        "Transform3D": {
+          "x": -0.2,
+          "y": 1.5,
+          "z": -1.4
+        }
+      }
+    },
+    {
+      "id": "coin1",
+      "name": "coin1",
+      "prefab": "coin",
+      "components": {
+        "Transform3D": {
+          "x": 1.6,
+          "y": 0.8,
+          "z": 0.8
+        }
+      }
+    },
+    {
+      "id": "coin2",
+      "name": "coin2",
+      "prefab": "coin",
+      "components": {
+        "Transform3D": {
+          "x": -0.2,
+          "y": 2.8,
+          "z": -1.4
+        }
+      }
+    },
+    {
+      "id": "coin3",
+      "name": "coin3",
+      "prefab": "coin",
+      "components": {
+        "Transform3D": {
+          "x": 4.2,
+          "y": 1.25
+        }
+      }
+    },
+    {
+      "id": "coin4",
+      "name": "coin4",
+      "prefab": "coin",
+      "components": {
+        "Transform3D": {
+          "x": 8,
+          "y": 1.75,
+          "z": -1.5
+        }
+      }
+    },
+    {
+      "id": "coin5",
+      "name": "coin5",
+      "prefab": "coin",
+      "components": {
+        "Transform3D": {
+          "x": 11.5,
+          "y": 2.35,
+          "z": -4
+        }
+      }
+    },
+    {
+      "id": "coin6",
+      "name": "coin6",
+      "prefab": "coin",
+      "components": {
+        "Transform3D": {
+          "x": 13.2,
+          "y": 2.85,
+          "z": -10
+        }
+      }
+    },
+    {
+      "id": "coin7",
+      "name": "coin7",
+      "prefab": "coin",
+      "components": {
+        "Transform3D": {
+          "x": -4.5,
+          "y": 1.35,
+          "z": -1.5
+        }
+      }
+    },
+    {
+      "id": "coin8",
+      "name": "coin8",
+      "prefab": "coin",
+      "components": {
+        "Transform3D": {
+          "x": -8.5,
+          "y": 1.95,
+          "z": -3.5
+        }
+      }
+    },
+    {
+      "id": "flag",
+      "name": "flag",
+      "components": {
+        "Transform3D": {
+          "x": 11,
+          "y": 2.55,
+          "z": -10
+        },
+        "Model3D": {
+          "model": "assets/models/flag.glb"
+        }
+      }
+    },
+    {
+      "id": "grass1",
+      "name": "grass1",
+      "prefab": "grass",
+      "components": {
+        "Transform3D": {
+          "x": 1.4,
+          "y": 0.5,
+          "z": -1.2
+        }
+      }
+    },
+    {
+      "id": "grass2",
+      "name": "grass2",
+      "prefab": "grass",
+      "components": {
+        "Transform3D": {
+          "x": -1.6,
+          "y": 0.5,
+          "z": 1.3,
+          "ry": 40
+        }
+      }
+    },
+    {
+      "id": "grass3",
+      "name": "grass3",
+      "prefab": "grass",
+      "components": {
+        "Transform3D": {
+          "x": 0.6,
+          "y": 0.5,
+          "z": 1.7,
+          "ry": -70
+        }
+      }
+    },
+    {
+      "id": "cloud1",
+      "name": "cloud1",
+      "prefab": "cloud",
+      "components": {
+        "Transform3D": {
+          "x": -7,
+          "y": 4,
+          "z": -14
+        }
+      }
+    },
+    {
+      "id": "cloud2",
+      "name": "cloud2",
+      "prefab": "cloud",
+      "components": {
+        "Transform3D": {
+          "x": 5,
+          "y": 6,
+          "z": -18,
+          "sx": 4,
+          "sy": 4,
+          "sz": 4
+        }
+      }
+    },
+    {
+      "id": "cloud3",
+      "name": "cloud3",
+      "prefab": "cloud",
+      "components": {
+        "Transform3D": {
+          "x": 17,
+          "y": 5,
+          "z": -16
+        }
+      }
+    },
+    {
+      "id": "count",
+      "name": "count",
+      "components": {
+        "Text": {
+          "text": "コイン 0 / 8",
+          "size": 28,
+          "bold": true,
+          "outline": 3,
+          "outlineColor": "#2a4a6a"
+        },
+        "UI": {
+          "anchor": "topLeft",
+          "x": 20,
+          "y": 16,
+          "w": 260,
+          "h": 40,
+          "block": false
+        }
+      }
+    },
+    {
+      "id": "clear",
+      "name": "clear",
+      "components": {
+        "Text": {
+          "text": "クリア！",
+          "size": 72,
+          "bold": true,
+          "align": "center",
+          "color": "#ffe14a",
+          "outline": 6,
+          "outlineColor": "#7a4a00"
+        },
+        "UI": {
+          "anchor": "center",
+          "y": -60,
+          "w": 480,
+          "h": 100,
+          "visible": false,
+          "block": false
+        }
+      }
+    }
+  ]
+}

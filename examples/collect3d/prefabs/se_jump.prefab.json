@@ -1,0 +1,9 @@
+{
+  "name": "se_jump",
+  "components": {
+    "Sound": {
+      "clip": "assets/sounds/jump.ogg",
+      "volume": 0.6
+    }
+  }
+}

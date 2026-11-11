@@ -1,0 +1,11 @@
+{
+  "name": "actions",
+  "rows": [
+    {"id":"move_x","kind":"axis","keys":["ArrowRight","KeyD","Pad.Right"],"negative":["ArrowLeft","KeyA","Pad.Left"],"analog":["Pad.LX"],"desc":"左右"},
+    {"id":"move_y","kind":"axis","keys":["ArrowDown","KeyS","Pad.Down"],"negative":["ArrowUp","KeyW","Pad.Up"],"analog":["Pad.LY"],"desc":"上下"},
+    {"id":"confirm","keys":["KeyZ","Enter","Space","Pad.A"],"desc":"決定"},
+    {"id":"cancel","keys":["KeyX","Backspace","Pad.B"],"desc":"取り消し"},
+    {"id":"pause","keys":["Escape","Pad.Start"],"desc":"一時停止"},
+    {"id":"jump","keys":["Space","KeyZ","Pad.A"],"desc":"跳ぶ"}
+  ]
+}

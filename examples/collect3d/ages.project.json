@@ -1,0 +1,22 @@
+{
+  "name": "collect3d",
+  "fps": 60,
+  "seed": 1,
+  "view": {
+    "width": 960,
+    "height": 540,
+    "background": "#9fd3f0"
+  },
+  "startScene": "main",
+  "game": "game/index.ts",
+  "editorWindows": [],
+  "engine": {
+    "compat": 2,
+    "version": "0.1.0",
+    "commit": "0924598",
+    "recorded": "2026-11-11"
+  },
+  "packages": [
+    "3d"
+  ]
+}

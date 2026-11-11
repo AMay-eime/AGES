@@ -1,0 +1,9 @@
+{
+  "name": "se_fall",
+  "components": {
+    "Sound": {
+      "clip": "assets/sounds/fall.ogg",
+      "volume": 0.8
+    }
+  }
+}
