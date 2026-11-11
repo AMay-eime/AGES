@@ -1,7 +1,7 @@
 // 最近の作業の場所（.ages/recent.json。Git で共有しない）。
 // 作業の場所は偏るので、AI が最近 探した・見た・変えた所を覚えておき、目次の地図に上位だけを出し、ages find の並びに使う。
 // 古さは日付ではなく操作の回数で決める（しばらく触らなかったプロジェクトに戻っても消えない。作業が進んだ分だけ古くなる）。
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 /** この回数の操作のあいだ一度も出てこなかった場所は、地図と ages find では使わない（入れ子の深い目次では長くする: recentFor） */
@@ -23,6 +23,8 @@ export function recentFor(depth: number): { show: number; window: number } {
 export interface RecentStore {
   /** これまでの操作の回数（探す・見る・変えるで1回ずつ） */
   n: number;
+  /** コードのファイルの、前に見たときの更新時刻（ファイルを直接直した場所を知るため） */
+  code?: Record<string, number>;
   /** 場所 → 使った回数と、最後に使った操作の番号 */
   places: Record<string, { hits: number; last: number }>;
 }
@@ -58,6 +60,43 @@ export async function noteRecent(root: string, places: string[]): Promise<void> 
   const tmp = `${fileOf(root)}.${process.pid}.tmp`;
   await writeFile(tmp, JSON.stringify(s) + '\n');
   await rename(tmp, fileOf(root));
+}
+
+/** この数より多くのファイルが一度に変わったときは、まとめての変更（取り込み・本体を上げた）とみて、場所に数えない */
+const CODE_BULK = 5;
+
+/**
+ * コードのファイル（game/・editor/ の .ts）を直接直した場所を覚える。AI はコードを自分の道具で直すので、AGES の命令を通らない。
+ * 命令のたびに更新時刻を前と比べ、変わっていたファイルを「変えた場所」に数える（初めてのとき・まとめての変更は、時刻を覚えるだけ）
+ */
+export async function noteCodeEdits(root: string): Promise<string[]> {
+  const now: Record<string, number> = {};
+  const walk = async (rel: string, depth: number): Promise<void> => {
+    let names: import('node:fs').Dirent[];
+    try { names = await readdir(join(root, rel), { withFileTypes: true }); } catch { return; }
+    for (const d of names) {
+      const r = `${rel}/${d.name}`;
+      if (d.isDirectory()) { if (depth < 6) await walk(r, depth + 1); } else if (d.name.endsWith('.ts')) {
+        try { now[r] = Math.round((await stat(join(root, r))).mtimeMs); } catch { /* 消えた */ }
+      }
+    }
+  };
+  await walk('game', 0);
+  await walk('editor', 0);
+  const s = await readRecent(root);
+  const before = s.code;
+  const changed = before ? Object.keys(now).filter((f) => before[f] !== now[f]) : [];
+  if (before && !changed.length && Object.keys(before).length === Object.keys(now).length) return [];
+  const places = changed.length <= CODE_BULK ? changed : [];
+  if (places.length) await noteRecent(root, places);
+  // 時刻を覚える（noteRecent が書いた後の中身に足す）
+  const t = await readRecent(root);
+  t.code = now;
+  await mkdir(join(root, '.ages'), { recursive: true });
+  const tmp = `${fileOf(root)}.${process.pid}.tmp`;
+  await writeFile(tmp, JSON.stringify(t) + '\n');
+  await rename(tmp, fileOf(root));
+  return places;
 }
 
 /** よく使った順（同じ回数なら新しい順）。window 回より前に最後に使った所は除く */

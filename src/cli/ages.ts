@@ -10,7 +10,7 @@ import { Project } from '../project/project.ts';
 import { indexDepth, renderAssets, renderMap, renderMapSection } from '../project/map.ts';
 import { findInProject } from '../project/find.ts';
 import { codeDefs } from '../project/codedefs.ts';
-import { noteRecent, placeOf, readRecent, recentFor, topRecent } from '../project/recent.ts';
+import { noteCodeEdits, noteRecent, placeOf, readRecent, recentFor, topRecent } from '../project/recent.ts';
 import { eventWarnings } from '../project/events.ts';
 import { focusLine, readFocus, withFocus } from '../project/focus.ts';
 import { exportProject, serveStatic } from '../project/export.ts';
@@ -906,6 +906,8 @@ export function talkArgs(f: Args['flags'], text?: string): TalkArgs {
 
 /** AI の編集に、いまの作業の ID を付ける（エディタで作業ごとにまとめる） */
 export async function useActiveTask(dir: string): Promise<void> {
+  // コードのファイルを直接直した場所も「最近の作業の場所」に（AI のコードの直しは AGES の命令を通らないので、命令のたびに見る）
+  if (existsSync(join(dir, 'ages.project.json'))) await noteCodeEdits(resolve(dir)).catch(() => {});
   if (!existsSync(join(dir, '.ages', 'talk.jsonl'))) { delete AI_ACTOR.task; return; }
   const k = activeTask(foldTalk(await readTalk(resolve(dir))), AI_ACTOR.who);
   if (k) AI_ACTOR.task = k.id; else delete AI_ACTOR.task;

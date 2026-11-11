@@ -20,8 +20,21 @@ import { buildTree, commonDir, fileKeys, findNode, isNode, keysOf, topLine, tree
 
 /** 地図の大きさの上限（文字）。超えるプロジェクトでは細かいところを省いた要約の地図、それでも超えるなら目次の地図にする（中身は節ごと・名前で引く） */
 export const MAP_BUDGET = 12000;
-/** 1つの節の大きさの上限（文字）。超えた節だけ、目次の1行にする（全体が MAP_BUDGET に収まっていても） */
-export const SECTION_MAX = 2500;
+/**
+ * 節の中身が、1つの作業で要る確率の仮の値（測らない。節を足す段階で置く。開発者の決定 2026-11-11）。
+ * 節を目次の1行にするしきい値は、この確率で決まる: 大きさ s が T(p) = (S + p·h) / (1 − p) を超えたら、畳むほうが得
+ * （S = 目次の1行の大きさ、h = 1回引く手間。畳んでも中身は ages map <dir> 節 で引ける）。
+ * よく要る節（シーン・システム・部品）は 2,500字まで開いたまま、あまり要らない節（アセット・シェーダー）は 400字ほどで畳む。
+ * エディタ拡張の節は、読み込めない拡張の ⚠ が出る所で、作る前に必ず見る所なので、高く置く
+ */
+export const SECTION_PRIOR: Record<MapSection, number> = { scenes: 0.87, systems: 0.87, components: 0.87, tables: 0.6, prefabs: 0.6, extensions: 0.87, shaders: 0.5, assets: 0.5 };
+/** 目次の1行の大きさと、1回引く手間（文字に直した仮の値） */
+const INDEX_LINE_COST = 60, LOOKUP_COST = 300;
+/** 節の大きさの上限（文字）。超えた節だけ、目次の1行にする（全体が MAP_BUDGET に収まっていても） */
+export function sectionMax(sec: MapSection): number {
+  const p = SECTION_PRIOR[sec];
+  return Math.round((INDEX_LINE_COST + p * LOOKUP_COST) / (1 - p));
+}
 
 /** 地図の節（ages map <dir> <節> で1つだけ引ける） */
 export const MAP_SECTIONS = ['components', 'shaders', 'systems', 'tables', 'prefabs', 'scenes', 'assets', 'extensions'] as const;
@@ -45,10 +58,10 @@ export interface MapInputs {
 
 export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, locks: Record<string, LockMark> = {}, code = new Map<string, string[]>(), windows: WindowInfo[] = [], gotos = new Map<string, string[]>(), budget = MAP_BUDGET, recent: MapInputs['recent'] = [], defs: MapInputs['defs'] = new Map(), recentWindow?: number): string {
   const ins: MapInputs = { touched, locks, code, windows, gotos, recent, defs, recentWindow };
-  const full = buildMap(p, ins, 'full');
-  if (full.length <= budget) return full;
-  const compact = buildMap(p, ins, 'compact');
-  return compact.length <= budget ? compact : buildMap(p, ins, 'index');
+  // どの形にするかは、節を畳む前の大きさで決める（畳んだ後の大きさで決めると、とても大きなプロジェクトが
+  // 「全部の節を畳んだ1枚」になり、目次の地図の見方の説明・最近の作業の場所が出なくなる）
+  const mode = mapMode(p, ins, budget);
+  return buildMap(p, ins, mode);
 }
 
 /** 節を1つだけ（目次の地図から引く）。大きなプロジェクトでは要約の形、小さければ詳しい形 */
@@ -56,7 +69,7 @@ export function renderMapSection(p: Project, section: string, ins: MapInputs = {
   const [head, ...path] = section.split('/').filter(Boolean);
   const name = (head ?? '').toLowerCase() as MapSection;
   if (!MAP_SECTIONS.includes(name)) throw new Error(`地図の節 ${section} はありません${suggest(head ?? '', [...MAP_SECTIONS])}（${MAP_SECTIONS.join(' ')}）`);
-  const mode: MapMode = buildMap(p, ins, 'full').length <= budget ? 'full' : buildMap(p, ins, 'compact').length <= budget ? 'compact' : 'index';
+  const mode = mapMode(p, ins, budget);
   // とても大きなプロジェクト（目次の地図）では、まとめの木から1枚（節/まとめ/…）
   // まとめの名前つき（節/まとめ/…）は、小さなプロジェクトでも木から1枚（節ごとの入れ子で目次になった節から引く）
   if ((mode === 'index' || path.length) && name !== 'assets') return treeSectionPage(p, withDefaults(ins), name, path);
@@ -74,7 +87,12 @@ const firstSentence = (s: string | undefined, max = 40): string => {
 type Ins = Required<MapInputs>;
 const withDefaults = (i: MapInputs): Ins => ({ touched: i.touched ?? {}, locks: i.locks ?? {}, code: i.code ?? new Map(), windows: i.windows ?? [], gotos: i.gotos ?? new Map(), recent: i.recent ?? [], recentWindow: i.recentWindow ?? RECENT_WINDOW, defs: i.defs ?? new Map() });
 
-export function buildMap(p: Project, inputs: MapInputs, mode: MapMode): string {
+/** 地図の形（節を畳む前の大きさで決める）: 1枚に収まれば full、要約で収まれば compact、収まらなければ目次 */
+function mapMode(p: Project, ins: MapInputs, budget: number): MapMode {
+  return buildMap(p, ins, 'full', false).length <= budget ? 'full' : buildMap(p, ins, 'compact', false).length <= budget ? 'compact' : 'index';
+}
+
+export function buildMap(p: Project, inputs: MapInputs, mode: MapMode, collapse = true): string {
   const ins = withDefaults(inputs);
   const c = p.config;
   const out: string[] = [];
@@ -85,9 +103,9 @@ export function buildMap(p: Project, inputs: MapInputs, mode: MapMode): string {
   for (const pk of p.registry.packages) out.push(`## package ${pk.name}: ${pk.desc}`, ...(pk.toc ?? []).map((l) => `- ${l}`));
   const sec = mode === 'index' ? indexLines(p, ins) : sectionLines(p, ins, mode);
   // 節ごとの入れ子: 全体は1枚に収まっても、1つの節だけが長いなら、その節だけ目次にする（置いた物の多いシーンなど）
-  if (mode !== 'index') {
+  if (mode !== 'index' && collapse) {
     for (const k of TREE_SECTIONS) {
-      if (sec[k].join('\n').length <= SECTION_MAX) continue;
+      if (sec[k].join('\n').length <= sectionMax(k)) continue;
       const line = indexTreeLine(p, ins, k);
       if (line) sec[k] = [`${line}（長いので目次。中身は ages map <dir> ${k}、まとめは ages map <dir> ${k}/名前）`];
     }
@@ -111,7 +129,7 @@ function notes(p: Project): string[] {
   const langs = languagesOf(p.config);
   if (langs.length > 1) {
     const miss = p.missingText();
-    out.push(`多言語（表 $text・ctx.t('名前')・Text.key）: ${langs.join(' ')}（既定 ${langs[0]}）${miss.size ? '。未訳 ' + [...miss].map(([l, ks]) => `${l}:${ks.length}件(${ks.slice(0, 5).join(',')}${ks.length > 5 ? '…' : ''})`).join(' ') + '（ages table <dir> text --empty 言語）' : '。未訳なし'}`);
+    out.push(`多言語（表 $text・ctx.t('名前')・Text.key）: ${langs.join(' ')}（既定 ${langs[0]}）${miss.size ? '。未訳 ' + [...miss].map(([l, ks]) => (ks.length > 5 ? `${l}:${ks.length}件` : `${l}:${ks.length}件(${ks.join(',')})`)).join(' ') + '（ages table <dir> text --empty 言語）' : '。未訳なし'}`);
   }
   // 保存データのファイル（その状態から始めて確かめる）
   if (p.saves.size) out.push(`保存データ（ages run --save で、その状態から始める）: ${[...p.saves].map(([path, v]) => (v.error ? `${path} ⚠` : `${path}(${Object.keys(v.data ?? {}).join(',')})`)).join('  ')}`);
@@ -197,13 +215,12 @@ function sectionLines(p: Project, ins: Ins, mode: 'full' | 'compact'): Record<Ma
     for (const [from, n] of same) r.scenes.push(`  ほか${n}体は ${from} と同じ`);
   }
 
-  if (p.assets.length > ASSET_LIST_MAX) {
-    // 多いときは1つずつ並べず、フォルダごとの数だけ（毎回読む1枚なので。1つずつは ages assets で引く）
+  // 多い・長いときは1つずつ並べず、フォルダごとの数だけ（毎回読む1枚なので。1つずつは ages assets で引く）
+  const assetList = p.assets.length && p.assets.length <= ASSET_LIST_MAX ? ['## assets（画像 幅x高さ・音 秒・シート 格子のコマの大きさ×数か、自由なコマ数と名前。使っている所は ages assets --refs）', ...renderAssets(p, { touched, locks, code })] : [];
+  if (assetList.length && assetList.join('\n').length <= sectionMax('assets')) r.assets.push(...assetList);
+  else if (p.assets.length) {
     r.assets.push(`## assets（${p.assets.length}個。フォルダごとの数。1つずつは ages assets <dir> [フォルダ] [--unused]）`);
     r.assets.push(...summarizeAssets(p, { touched, locks, code }));
-  } else if (p.assets.length) {
-    r.assets.push('## assets（画像 幅x高さ・音 秒・シート 格子のコマの大きさ×数か、自由なコマ数と名前。使っている所は ages assets --refs）');
-    r.assets.push(...renderAssets(p, { touched, locks, code }));
   }
   r.extensions.push(...extensionLines(p, windows));
   return r;
@@ -405,7 +422,7 @@ function indexTreeLine(p: Project, ins: Ins, sec: TreeSection): string | null {
 
 /** 目次の入れ子の深さ（節の木のまとめの段の数のいちばん深いもの。シーンの中の物の木は数えない）。目次でない地図は 0 */
 export function indexDepth(p: Project, inputs: MapInputs = {}, budget = MAP_BUDGET): number {
-  if (buildMap(p, inputs, 'compact').length <= budget) return 0;
+  if (buildMap(p, inputs, 'compact', false).length <= budget) return 0;
   const ins = withDefaults(inputs);
   const depth = (n: TreeNode): number => Math.max(0, ...n.entries.filter(isNode).map((k) => 1 + depth(k)));
   return Math.max(0, ...MAP_SECTIONS.filter((s): s is TreeSection => s !== 'assets').map((s) => depth(sectionTree(p, ins, s))));
