@@ -1,0 +1,25 @@
+{
+  "name": "plat_s",
+  "tags": [
+    "ground"
+  ],
+  "components": {
+    "Transform3D": {},
+    "Model3D": {
+      "model": "assets/models/platform.glb"
+    },
+    "Collider3D": {
+      "size": [
+        2,
+        0.55,
+        2
+      ],
+      "offset": [
+        0,
+        0.275,
+        0
+      ],
+      "group": "ground"
+    }
+  }
+}

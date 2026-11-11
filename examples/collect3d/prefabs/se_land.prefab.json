@@ -1,0 +1,9 @@
+{
+  "name": "se_land",
+  "components": {
+    "Sound": {
+      "clip": "assets/sounds/land.ogg",
+      "volume": 0.5
+    }
+  }
+}

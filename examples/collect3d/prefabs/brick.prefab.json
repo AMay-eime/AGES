@@ -1,0 +1,25 @@
+{
+  "name": "brick",
+  "tags": [
+    "wall"
+  ],
+  "components": {
+    "Transform3D": {},
+    "Model3D": {
+      "model": "assets/models/brick.glb"
+    },
+    "Collider3D": {
+      "size": [
+        1,
+        1,
+        1
+      ],
+      "offset": [
+        0,
+        0.5,
+        0
+      ],
+      "group": "wall"
+    }
+  }
+}

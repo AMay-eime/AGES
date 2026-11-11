@@ -325,7 +325,12 @@ export class InputPlayback {
 export function keysToEvents(spec: string, actions?: Map<string, ActionDef>): InputEvent[] {
   const timeline = new Map<number, InputEvent>();
   const at = (f: number) => timeline.get(f) ?? (timeline.set(f, { f }), timeline.get(f)!);
+  // 終わりを省いたボタンは、最後まで押したまま。その後に同じボタンをもう一度書いても何も起きないので、知らせる
+  const held = new Map<string, number>();
   const press = (a: number, b: number | null, k: string) => {
+    const from = held.get(k);
+    if (from !== undefined && a > from) throw new Error(`--keys の ${a}:…: ${k} は ${from} フレーム目から押したままです（終わりを省くと、最後まで押し続けます）。1回だけ押すなら ${from}-${from + 1}:… と ${a}-${a + 1}:… のように終わりを書きます`);
+    if (b === null) held.set(k, Math.min(a, held.get(k) ?? a));
     (at(a).d ??= []).push(k);
     if (b !== null) (at(b).u ??= []).push(k);
   };

@@ -1,0 +1,9 @@
+{
+  "name": "se_coin",
+  "components": {
+    "Sound": {
+      "clip": "assets/sounds/coin.ogg",
+      "volume": 0.7
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "cloud",
+  "tags": [
+    "decor"
+  ],
+  "components": {
+    "Transform3D": {
+      "sx": 3,
+      "sy": 3,
+      "sz": 3
+    },
+    "Model3D": {
+      "model": "assets/models/cloud.glb",
+      "shadow": false
+    }
+  }
+}
