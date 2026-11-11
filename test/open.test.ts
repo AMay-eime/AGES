@@ -136,14 +136,14 @@ test('ages init（命令）: 本体の版が GitHub にもあれば版だけ同�
 
   const dir = join(await mkdtemp(join(tmpdir(), 'ages-init-')), 'g');
   const cli = new URL('../bin/ages.js', import.meta.url).pathname;
-  const r = spawnSync(process.execPath, [cli, 'init', dir, '--name', 'g', '--no-pin'], { encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [cli, 'init', dir, '--name', 'g', '--no-pin', '--template', 'none'], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /AGES 本体を今の場所から指す形です。.*ages pin/);
   assert.equal(existsSync(join(dir, 'ages.mjs')), false);
   assert.match(await readFile(join(dir, LAUNCHER_WIN), 'utf8'), /if not exist ".*src\\editor\\server\.ts" \(/);
   // 既定: この本体が GitHub にもある版なら ages.mjs ができ、起動用は ages.mjs editor
   const dir2 = join(await mkdtemp(join(tmpdir(), 'ages-init-')), 'g');
-  const r2 = spawnSync(process.execPath, [cli, 'init', dir2, '--name', 'g'], { encoding: 'utf8' });
+  const r2 = spawnSync(process.execPath, [cli, 'init', dir2, '--name', 'g', '--template', 'none'], { encoding: 'utf8' });
   assert.equal(r2.status, 0, r2.stderr);
   assert.equal(existsSync(join(dir2, 'ages.mjs')), engineOnRemote());
   if (engineOnRemote()) assert.match(await readFile(join(dir2, LAUNCHER_WIN), 'utf8'), /^node ages\.mjs editor\r$/m);
