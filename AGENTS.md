@@ -69,6 +69,7 @@
 - 書き出し（Web・Steam 向けの exe）: `ages export` → `export`
 - 独自のエディタ拡張（パネル・欄・部品・表の行の見せ方）: `defineExtension`。作る前に地図の `## editor extensions` を見て、近いものを直す → `window`
 - エディタの人とのやり取り（作業を見せる・人に聞く・付箋に返事）: `ages talk` → `talk`
+- 3D など、入れたプロジェクトでだけ使える機能（追加パッケージ）: `ages.project.json` の packages → `packages`
 
 ## 役割分担
 

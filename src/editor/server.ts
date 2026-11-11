@@ -419,7 +419,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
   if (p === '/shot.html') return serveFile(res, join(EDITOR_DIR, 'shot.html'));
   if (p.startsWith('/editor/')) return serveFile(res, inside(EDITOR_DIR, p.slice('/editor/'.length)));
   // エンジン本体（src/core, src/std, src/render, src/audio, src/input, src/index.ts）はルートに置く。エディタのコードの相対 import がそのまま通る
-  if (/^\/(core|std|render|audio|input)\//.test(p) || p === '/index.ts') return serveFile(res, inside(SRC_DIR, p.slice(1)));
+  if (/^\/(core|std|render|audio|input|packages)\//.test(p) || p === '/index.ts') return serveFile(res, inside(SRC_DIR, p.slice(1)));
   const proj = p.match(/^\/project@\d+\/(.*)$/);
   if (proj) return serveFile(res, inside(projectDir, proj[1]));
 

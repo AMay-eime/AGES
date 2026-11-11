@@ -78,6 +78,8 @@ export function buildMap(p: Project, inputs: MapInputs, mode: MapMode): string {
   out.push(`# ${c.name}  fps${c.fps} seed${c.seed} view${c.view.width}x${c.view.height} start:${c.startScene} code:${c.game}`);
   if (mode === 'compact') out.push(`（大きなプロジェクトなので要約の地図。型・範囲・既定値・説明は ages schema <dir> 名前,名前、物・プレハブの中身は ages get <dir> 住所）`);
   if (mode === 'index') out.push(`（とても大きなプロジェクトなので目次の地図。名前/(数) はまとめで、中身は ages map <dir> 節/名前（例 ${indexExample(p, ins)}）、節の全体は ages map <dir> 節。名前・説明から探すのは ages find <dir> 語、型・範囲・説明は ages schema <dir> 名前、値は ages get <dir> 住所）`);
+  // 追加パッケージ（入れているときだけ）。機能の目次は AGENTS.md と同じ書き方（→ `項目` は ages schema <dir> guide:項目）
+  for (const pk of p.registry.packages) out.push(`## package ${pk.name}: ${pk.desc}`, ...(pk.toc ?? []).map((l) => `- ${l}`));
   const sec = mode === 'index' ? indexLines(p, ins) : sectionLines(p, ins, mode);
   out.push(...sec.components, ...sec.shaders, ...notes(p), ...sec.systems, ...sec.tables, ...sec.prefabs, ...sec.scenes, ...sec.assets, ...sec.extensions);
   if (mode === 'index') out.push(...markRoots(ins));

@@ -44,6 +44,8 @@ export interface ProjectConfig {
   startScene: string;
   game: string;
   editorWindows?: string[];
+  /** 追加パッケージ（例 ["3d"]。書いたものだけ読み込む。一覧は ages schema <dir> guide:packages） */
+  packages?: string[];
   /** 言語（$text の列。最初が既定の言語）。省くと ['ja']。名前は ja・en・zh_Hans・pt_BR の形 */
   languages?: string[];
   /** セーブ: settings='auto'（既定）なら、キーの割り当て・音量を変えたら自動で保存し、始めるときに戻す。'manual' なら自分で */

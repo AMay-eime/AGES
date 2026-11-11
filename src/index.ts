@@ -3,6 +3,7 @@
 export { defineComponent, defaultOf, type ComponentDef, type Field } from './core/schema.ts';
 export type { Op } from './core/patch.ts';
 export { defineSystem, defineCheck, type SystemDef, type GameModule, type CheckDef, type CheckView } from './core/registry.ts';
+export { definePackage, type PackageDef } from './core/packages.ts';
 export { defineTable, type TableDef, type TableView, type Row, type RowOf } from './core/table.ts';
 export type { Ctx } from './core/game.ts';
 export type { Pose } from './core/transform.ts';

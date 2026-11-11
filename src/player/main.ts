@@ -1,5 +1,6 @@
 // 書き出したゲームの再生（エディタなし・ゲームだけ）。ages export が書き出した project.json と game/ を読んで動かす。
 // Web（静的なファイル一式）でも、デスクトップ（Tauri の窓の中）でも同じ。動き方はエディタの再生と同じにする（同じ Game・同じ描画・同じ音）
+import { loadPackages } from '../packages/index.ts';
 import { Registry, type GameModule } from '../core/registry.ts';
 import { Game } from '../core/game.ts';
 import { Devices } from '../input/devices.ts';
@@ -47,7 +48,7 @@ window.addEventListener('unhandledrejection', (e) => fail(e.reason));
 async function main(): Promise<void> {
   const b = (await (await fetch('./project.json')).json()) as ExportBundle;
   const mod = (await import(new URL(b.entry, location.href).href)) as GameModule;
-  const registry = Registry.from(mod);
+  const registry = Registry.from(mod, [], await loadPackages(b.config.packages));
   registry.prefabs = new Map(Object.entries(b.prefabs));
   registry.scenes = new Map(Object.entries(b.scenes));
   registry.sheets = new Map(Object.entries(b.sheets));

@@ -12,7 +12,8 @@
     "erasableSyntaxOnly": true,
     "skipLibCheck": true,
     "paths": {
-      "ages": ["./src/index.ts"]
+      "ages": ["./src/index.ts"],
+      "ages/*": ["./src/packages/*/index.ts"]
     }
   },
   "include": ["src/**/*.ts", "examples/**/*.ts", "test/**/*.ts"]

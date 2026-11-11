@@ -18,6 +18,7 @@ import { languagesOf } from '../core/i18n.ts';
 import { resolveEntity } from '../core/variant.ts';
 import { T, lang } from './i18n.ts';
 import { AiModel } from './ai.ts';
+import { loadPackages } from '../packages/index.ts';
 
 export interface LockMark { who: string; t: string; value: unknown; note?: string }
 export interface TouchMark { who: string; t: string }
@@ -152,7 +153,7 @@ export class App {
     if (s.version !== this.loadedVersion) {
       try {
         const mod = (await import(`/project@${s.version}/${s.config.game}`)) as GameModule;
-        this.registry = Registry.from(mod);
+        this.registry = Registry.from(mod, [], await loadPackages(s.config.packages));
         this.loadedVersion = s.version;
       } catch (e) {
         toast(T('ゲームコードを読み込めません: {0}', (e as Error).message), 'bad', 8000);

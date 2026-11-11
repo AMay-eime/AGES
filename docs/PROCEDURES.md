@@ -110,6 +110,7 @@ rm -rf examples/shooter/.ages examples/shooter/recordings/*.json
 - **AI向けの出力は短く。** 一覧は1行1件、変化は「前→後」、長いJSONは `--dump` のときだけ
 - **毎回読む説明を増やさない。** 道具を増やさず、patch の op（`OP_DOCS` に書き方）・手順（docs/GUIDE.md の項目）・`ages run` の要約の行に足す。AGENTS.md には目次の1行だけ、地図には使っているときだけ出る行を足す。`test/budget.test.ts` の上限を超えたら、上げる前に削れるものを探し、上げるなら DECISIONS.md に理由を書く
 - **エディタの画面に出す文は、日本語の元の文を `T('…{0}…', 値)` で包み、`src/editor/locales/` の5つの言語（en・zh-Hans・zh-Hant・de・fr）にも訳を足す。** 鍵は日本語の文そのもの。サーバーから画面へ返す文は `trFor(言語)` の `tr`、本体の標準の説明は `TD`。プロジェクトが書いた文は訳さない。抜け・使っていない訳・{0} の数・繁体字への簡体字の混じりは `test/editor-i18n.test.ts` が知らせる
+- **追加パッケージ（src/packages/<名前>/）に機能を足すとき**: 部品・システム・表は index.ts の definePackage に、手順は同じフォルダの GUIDE.md（`## 項目: 題`）に、地図に出す目次は `toc` に1行。本体（src/core など）からパッケージを import しない（入れていないプロジェクトに読み込まれる）。入れていないプロジェクトの地図・道具・AGENTS.md を増やさない（test/packages.test.ts・test/budget.test.ts）
 - **値・物・行を出す要素には `data-ai="住所"` を付ける**（AI が変えた・触る予定・付箋の印が付く。ui/ai-panel.ts の paintAi）。人が入力する欄を含む要素には `data-path="住所"` も（入力中は AI が変えない）
 - **パネルの中の要素は、パネルの要素（el）から探す。** `document.getElementById`・`document.querySelector` で探さない（タブを別のウインドウに出すと見つからない。ui/popout.ts）。`window`・`document` で待つマウス・キーと、`toast`・`modal`・`menu`・`confirm` は、別のウインドウでもそのまま動く
 - **エラーには場所・範囲・候補を書く**（`suggest()` を使う）

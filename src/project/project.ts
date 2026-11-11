@@ -14,6 +14,7 @@ import { RUN_DATE, parseDate, type DateStart } from '../core/clock.ts';
 import { FIELD_TYPES, brief, checkAt, fieldAt, suggest, visit, type Field } from '../core/schema.ts';
 import { ROW_ID, type TableDoc } from '../core/table.ts';
 import { editingNow, readFocus } from './focus.ts';
+import { PACKAGE_LIST, loadPackages } from '../packages/index.ts';
 import { appendLog, localTime, lockedHits, markTouched, movePrefixTouched, moveTouched, readLocks as readLockFile, readLogLines, readTouched, writeLocks, type Actor, type LockMark, type LogEntry } from './oplog.ts';
 import { agesHome, lockDiff, verifyLocks, type LockIntegrity } from './seal.ts';
 import { scanAssets, type AssetInfo } from './assets.ts';
@@ -39,6 +40,9 @@ function hookAgesImport(): void {
   registerHooks({
     resolve(specifier, context, next) {
       if (specifier === 'ages') return { url: AGES_INDEX, shortCircuit: true };
+      // 追加パッケージ（import … from 'ages/3d'）
+      const pk = /^ages\/([a-z0-9-]+)$/.exec(specifier);
+      if (pk && pk[1] in PACKAGE_LIST) return { url: new URL(`../packages/${pk[1]}/index.ts`, import.meta.url).href, shortCircuit: true };
       return next(specifier, context);
     },
   });
@@ -74,7 +78,7 @@ export class Project {
     hookAgesImport();
     const url = pathToFileURL(join(this.dir, this.config.game)).href;
     const mod = (await import(url)) as GameModule;
-    this.registry = Registry.from(mod, []);
+    this.registry = Registry.from(mod, [], await loadPackages(this.config.packages));
     this.registry.setLanguages(languagesOf(this.config));
     this.registry.prefabs = prefabs;
     this.registry.scenes = this.docs.scenes;
@@ -933,6 +937,11 @@ export class Project {
   async checkCode(): Promise<string[]> {
     const errs: string[] = [];
     const files = await this.codeFiles();
+    // 追加パッケージを import しているのに、packages に書いていない（読み込まれず、部品が見つからない）
+    const on = new Set(this.config.packages ?? []);
+    for (const [file, text] of files) for (const m of text.matchAll(/from\s+['"]ages\/([a-z0-9-]+)['"]/g)) {
+      if (!on.has(m[1])) errs.push(`${file.replace(/^\//, '')}: 'ages/${m[1]}' を使うには、ages.project.json の packages に "${m[1]}" を足します${m[1] in PACKAGE_LIST ? '' : `（追加パッケージ ${m[1]} はありません。使えるのは ${Object.keys(PACKAGE_LIST).join(' ')}）`}`);
+    }
     for (const [name, at] of codeSceneRefs(files)) {
       if (!this.docs.scenes.has(name)) errs.push(`${at.join(', ')}: goto('${name}') のシーン ${name} はありません${suggest(name, [...this.docs.scenes.keys()])}`);
     }
