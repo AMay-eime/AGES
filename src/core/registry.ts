@@ -46,6 +46,8 @@ export interface CheckView {
   prefabs(tag?: string): PrefabDoc[];
   scene(name: string): SceneDoc | undefined;
   readonly scenes: string[];
+  /** 素材（場所 → 種類と、モデルなら動きの名前）。なければ undefined */
+  asset?(path: string): { kind: string; model?: { clips: string[] } } | undefined;
 }
 
 /** ゲーム独自の検証（ages check とエディタの ⚠ に出る。編集は止めない） */
@@ -90,6 +92,8 @@ export class Registry {
   shaders: Map<string, ShaderDef> = shaderMap();
   /** 画像の大きさ（場所 → 幅・高さ）。格子のシートのコマを求めるのに使う */
   images = new Map<string, { w: number; h: number }>();
+  /** モデルの動き（場所 → 動きの名前 → 長さ秒）。動きの時刻を進めるのに使う（追加パッケージ 3d） */
+  models = new Map<string, Record<string, number>>();
   /** 標準のコンポーネントの名前 */
   readonly std = new Set(STD_COMPONENTS.map((c) => c.name));
   /** 標準の表の名前 */

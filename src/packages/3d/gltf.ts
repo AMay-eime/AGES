@@ -1,7 +1,8 @@
 // glTF のモデル（.glb。1つにまとまった形）を読む。依存なし。Node でもブラウザでも同じに動く
 // （Node では要約 summarizeGlb を地図・ages assets に出し、ブラウザでは描く）。
 // 読むもの: メッシュ（位置・法線・UV・番号）、ノードの親子と位置、材質（色・画像・ざらつき・両面・透ける・光を受けない）、
-// 画像（中に入っているもの・外のファイル）、動きの名前。骨と動きの中身は animation.ts（これから）
+// 画像（中に入っているもの・外のファイル）、骨（スキン）、動き（アニメーション。位置・回転・倍率の鍵）。
+// 読まないもの: 表情（モーフ）・カメラ・光・圧縮（Draco・meshopt）。時刻から姿勢を求めるのは animation.ts
 import { composeQuat, identity, multiply, transformPoint, type Mat4, type Vec3 } from './math.ts';
 
 export interface GltfPrimitive {
@@ -11,6 +12,8 @@ export interface GltfPrimitive {
   material: number;
   min: Vec3;
   max: Vec3;
+  /** 骨で動くメッシュ: 頂点ごとに 骨の番号4つ + 重み4つ */
+  skin?: Float32Array;
 }
 export interface GltfMaterial {
   color: [number, number, number, number];
@@ -28,7 +31,14 @@ export interface GltfImage {
   data?: Uint8Array;
   mime?: string;
 }
-export interface GltfNode { name: string; local: Mat4; world: Mat4; children: number[]; mesh: number }
+export interface GltfNode {
+  name: string; local: Mat4; world: Mat4; children: number[]; mesh: number; parent: number; skin: number;
+  /** 位置・回転（クォータニオン）・倍率（動きで変わる。行列で書かれたノードは null で、動かない） */
+  trs: { t: number[]; r: number[]; s: number[] } | null;
+}
+export interface GltfSkin { joints: number[]; inverseBind: Mat4[] }
+export interface GltfChannel { node: number; path: 'translation' | 'rotation' | 'scale'; times: number[]; values: number[]; interp: 'LINEAR' | 'STEP' | 'CUBICSPLINE' }
+export interface GltfClip { name: string; duration: number; channels: GltfChannel[] }
 export interface GltfModel {
   nodes: GltfNode[];
   meshes: GltfPrimitive[][];
@@ -40,6 +50,10 @@ export interface GltfModel {
   tris: number;
   /** 動きの名前 */
   clips: string[];
+  animations: GltfClip[];
+  skins: GltfSkin[];
+  /** 親が先に来る順のノードの番号（世界の行列を求める順） */
+  order: number[];
 }
 
 interface Json { [k: string]: any }
@@ -92,6 +106,9 @@ function readAccessor(json: Json, bin: Uint8Array, index: number): { data: numbe
 
 export function parseGlb(buf: Uint8Array): GltfModel {
   const { json, bin } = splitGlb(buf);
+  // 圧縮されたモデルは読めない（頂点が別の形で入っている）。そのまま読むと形が壊れるので、ここで止める
+  const packed = ((json.extensionsRequired ?? []) as string[]).filter((x) => /draco|meshopt|quantization/i.test(x));
+  if (packed.length) throw new Error(`圧縮されたモデルは読めません（${packed.join(' ')}）。圧縮なしの GLB で書き出してください`);
   const materials: GltfMaterial[] = (json.materials ?? []).map((m: Json): GltfMaterial => {
     const pbr = m.pbrMetallicRoughness ?? {};
     const tex = pbr.baseColorTexture ? json.textures?.[pbr.baseColorTexture.index] : null;
@@ -135,7 +152,17 @@ export function parseGlb(buf: Uint8Array): GltfModel {
       if (uv) { vertices[i * 8 + 6] = uv[i * 2]; vertices[i * 8 + 7] = uv[i * 2 + 1]; }
     }
     tris += Math.floor(idx.length / 3);
-    return [{ vertices, indices: pos.count > 65535 ? new Uint32Array(idx) : new Uint16Array(idx), material: p.material ?? fallback, min, max }];
+    let skin: Float32Array | undefined;
+    if (p.attributes.JOINTS_0 !== undefined && p.attributes.WEIGHTS_0 !== undefined) {
+      const j = readAccessor({ ...json, accessors: json.accessors.map((a: Json, i: number) => (i === p.attributes.JOINTS_0 ? { ...a, normalized: false } : a)) }, bin, p.attributes.JOINTS_0).data;
+      const w = readAccessor(json, bin, p.attributes.WEIGHTS_0).data;
+      skin = new Float32Array(pos.count * 8);
+      for (let i = 0; i < pos.count; i++) {
+        const sum = w[i * 4] + w[i * 4 + 1] + w[i * 4 + 2] + w[i * 4 + 3] || 1;
+        for (let k = 0; k < 4; k++) { skin[i * 8 + k] = j[i * 4 + k]; skin[i * 8 + 4 + k] = w[i * 4 + k] / sum; }
+      }
+    }
+    return [{ vertices, indices: pos.count > 65535 ? new Uint32Array(idx) : new Uint16Array(idx), material: p.material ?? fallback, min, max, ...(skin ? { skin } : {}) }];
   }));
   // ノード（親から子へ、世界の行列を求める）
   const nodes: GltfNode[] = (json.nodes ?? []).map((n: Json): GltfNode => ({
@@ -144,13 +171,19 @@ export function parseGlb(buf: Uint8Array): GltfModel {
     world: identity(),
     children: n.children ?? [],
     mesh: n.mesh ?? -1,
+    parent: -1,
+    skin: n.skin ?? -1,
+    trs: n.matrix ? null : { t: [...(n.translation ?? [0, 0, 0])], r: [...(n.rotation ?? [0, 0, 0, 1])], s: [...(n.scale ?? [1, 1, 1])] },
   }));
+  nodes.forEach((n, i) => { for (const c of n.children) if (nodes[c]) nodes[c].parent = i; });
   const scene = json.scenes?.[json.scene ?? 0];
   const child = new Set(nodes.flatMap((n) => n.children));
   const roots: number[] = scene?.nodes ?? nodes.map((_, i) => i).filter((i) => !child.has(i));
+  const order: number[] = [];
   const walk = (i: number, parent: Mat4, depth: number) => {
     const n = nodes[i];
     if (!n || depth > 64) return;
+    order.push(i);
     n.world = multiply(parent, n.local);
     for (const c of n.children) walk(c, n.world, depth + 1);
   };
@@ -166,7 +199,20 @@ export function parseGlb(buf: Uint8Array): GltfModel {
     }
   }
   if (!Number.isFinite(min[0])) { min.fill(0); max.fill(0); }
-  return { nodes, meshes, materials, images, min, max, tris, clips: (json.animations ?? []).map((a: Json, i: number) => a.name ?? `clip${i}`) };
+  const skins: GltfSkin[] = (json.skins ?? []).map((sk: Json): GltfSkin => {
+    const joints: number[] = sk.joints ?? [];
+    const ib = sk.inverseBindMatrices !== undefined ? readAccessor(json, bin, sk.inverseBindMatrices).data : null;
+    return { joints, inverseBind: joints.map((_, k) => (ib ? ib.slice(k * 16, k * 16 + 16) : identity())) };
+  });
+  const animations: GltfClip[] = (json.animations ?? []).map((a: Json, i: number): GltfClip => {
+    const channels: GltfChannel[] = (a.channels ?? []).flatMap((ch: Json): GltfChannel[] => {
+      const sm = a.samplers?.[ch.sampler], path = ch.target?.path, node = ch.target?.node;
+      if (!sm || node === undefined || !nodes[node]?.trs || !['translation', 'rotation', 'scale'].includes(path)) return [];
+      return [{ node, path, times: readAccessor(json, bin, sm.input).data, values: readAccessor(json, bin, sm.output).data, interp: sm.interpolation ?? 'LINEAR' }];
+    });
+    return { name: a.name ?? `clip${i}`, duration: Math.max(0, ...channels.map((c) => c.times[c.times.length - 1] ?? 0)), channels };
+  });
+  return { nodes, meshes, materials, images, min, max, tris, clips: animations.map((a) => a.name), animations, skins, order };
 }
 
 /** 法線のないメッシュ: 面ごとの向きを頂点に足して平均する */
@@ -188,13 +234,14 @@ function flatNormals(pos: number[], idx: number[]): number[] {
 
 const r3 = (v: number): number => Math.round(v * 1000) / 1000 || 0;
 
-/** モデルの要約（大きさ m・中心・三角形の数・動きの名前）。地図・ages assets に出す */
-export function summarizeGlb(buf: Uint8Array): { size: [number, number, number]; center: [number, number, number]; tris: number; clips: string[] } {
+/** モデルの要約（大きさ m・中心・三角形の数・動きの名前と長さ 秒）。地図・ages assets に出し、動きの時刻を進めるのにも使う */
+export function summarizeGlb(buf: Uint8Array): { size: [number, number, number]; center: [number, number, number]; tris: number; clips: string[]; clipSec: number[] } {
   const m = parseGlb(buf);
   return {
     size: [r3(m.max[0] - m.min[0]), r3(m.max[1] - m.min[1]), r3(m.max[2] - m.min[2])],
     center: [r3((m.max[0] + m.min[0]) / 2), r3((m.max[1] + m.min[1]) / 2), r3((m.max[2] + m.min[2]) / 2)],
     tris: m.tris,
     clips: m.clips,
+    clipSec: m.animations.map((a) => Math.round(a.duration * 10000) / 10000),
   };
 }

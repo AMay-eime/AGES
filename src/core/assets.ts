@@ -14,6 +14,10 @@ export function kindOf(path: string): AssetKind | null {
   return null;
 }
 
+/** アセットの一覧から、モデルの動きの長さ（場所 → 名前 → 秒）を作る（登録簿の models に入れる） */
+export const modelsOf = (assets: { path: string; model?: { clips: string[]; clipSec?: number[] } }[]): Map<string, Record<string, number>> =>
+  new Map(assets.flatMap((a) => (a.model ? [[a.path, Object.fromEntries(a.model.clips.map((c, i) => [c, a.model!.clipSec?.[i] ?? 0]))] as [string, Record<string, number>]] : [])));
+
 export const extOf = (path: string) => { const m = path.match(/\.[^./]+$/); return m ? m[0].toLowerCase() : ''; };
 export const baseOf = (path: string) => path.slice(path.lastIndexOf('/') + 1);
 export const dirOf = (path: string) => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');

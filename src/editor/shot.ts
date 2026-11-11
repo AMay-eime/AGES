@@ -5,6 +5,7 @@ import { Registry, type GameModule } from '../core/registry.ts';
 import { Game } from '../core/game.ts';
 import { MemoryStore } from '../core/save.ts';
 import { shaderMap } from '../core/shader.ts';
+import { modelsOf } from '../core/assets.ts';
 import { languagesOf } from '../core/i18n.ts';
 import { spawnTryout, tryoutScene, type TryoutSpawn } from '../core/tryout.ts';
 import { RunInput, type RunKeys } from '../core/runinput.ts';
@@ -49,6 +50,7 @@ async function shoot(cfg: ShotConfig): Promise<ShotResult> {
   registry.tableData = new Map(Object.entries(state.tables ?? {}));
   registry.images = new Map(state.assets.filter((a) => a.w && a.h).map((a) => [a.path, { w: a.w!, h: a.h! }]));
   registry.shaders = shaderMap(state.assets.flatMap((a) => (a.shader ? [{ ...a.shader, path: a.path }] : [])));
+  registry.models = modelsOf(state.assets);
   registry.setLanguages(languagesOf(state.config));
   const urlOf = (path: string) => {
     const f = state.files.find((x) => x.path === path);

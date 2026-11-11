@@ -5,7 +5,7 @@ import { Registry, type GameModule } from '../core/registry.ts';
 import { Game } from '../core/game.ts';
 import { Devices } from '../input/devices.ts';
 import { AudioPlayer } from '../audio/player.ts';
-import { assetRefs, kindOf, preloadSet } from '../core/assets.ts';
+import { assetRefs, kindOf, modelsOf, preloadSet } from '../core/assets.ts';
 import { shaderMap, type ShaderDef } from '../core/shader.ts';
 import { LocalStore } from '../core/save.ts';
 import { languagesOf } from '../core/i18n.ts';
@@ -26,7 +26,7 @@ export interface ExportBundle {
   prefabs: Record<string, PrefabDoc>;
   tables: Record<string, TableDoc>;
   sheets: Record<string, SheetDef>;
-  assets: { path: string; kind: AssetKind; w?: number; h?: number; shader?: Omit<ShaderDef, 'path'> }[];
+  assets: { path: string; kind: AssetKind; w?: number; h?: number; shader?: Omit<ShaderDef, 'path'>; model?: { clips: string[]; clipSec?: number[] } }[];
   /** コードの中で場所を書いているアセット（いつも先に読み込む） */
   codeRefs: string[];
 }
@@ -55,6 +55,7 @@ async function main(): Promise<void> {
   registry.tableData = new Map(Object.entries(b.tables));
   registry.images = new Map(b.assets.filter((a) => a.w && a.h).map((a) => [a.path, { w: a.w!, h: a.h! }]));
   registry.shaders = shaderMap(b.assets.flatMap((a) => (a.shader ? [{ ...a.shader, path: a.path } as ShaderDef] : [])));
+  registry.models = modelsOf(b.assets);
   registry.setLanguages(languagesOf(b.config));
   const v = b.config.view;
   document.title = b.config.name;

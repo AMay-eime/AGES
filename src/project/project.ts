@@ -18,7 +18,7 @@ import { PACKAGE_LIST, loadPackages } from '../packages/index.ts';
 import { appendLog, localTime, lockedHits, markTouched, movePrefixTouched, moveTouched, readLocks as readLockFile, readLogLines, readTouched, writeLocks, type Actor, type LockMark, type LogEntry } from './oplog.ts';
 import { agesHome, lockDiff, verifyLocks, type LockIntegrity } from './seal.ts';
 import { scanAssets, type AssetInfo } from './assets.ts';
-import { assetRefs, codePrefabRefs, codeRefs, codeSceneRefs, isUnder } from '../core/assets.ts';
+import { assetRefs, codePrefabRefs, codeRefs, codeSceneRefs, isUnder, modelsOf } from '../core/assets.ts';
 import { resolveEntity, resolvePrefab } from '../core/variant.ts';
 import { allowedByDrawers, checkKept, checkWindows, loadWindows, prefabTags, tagCounts, tagEdit, unlistedWindows, windowAllows, windowTargets, type WindowInfo } from './windows.ts';
 import { Journal, inverseFiles, type DocState, type FileMove, type TxRecord } from './journal.ts';
@@ -105,6 +105,7 @@ export class Project {
   private setAssetMaps(assets: AssetInfo[]): void {
     this.registry.images = imagesOf(assets);
     this.registry.shaders = shadersOf(assets);
+    this.registry.models = modelsOf(assets);
   }
 
   private windowCache: Promise<WindowInfo[]> | null = null;
@@ -341,6 +342,7 @@ export class Project {
       prefabs: (tag) => reg.allPrefabs().filter((p) => !tag || (p.tags ?? []).includes(tag)),
       scene: (name) => { const s = this.docs.scenes.get(name); return s ? this.resolvedScene(s) : undefined; },
       scenes: [...this.docs.scenes.keys()],
+      asset: (path) => this.assets.find((a) => a.path === path),
     };
     const out: string[] = [];
     for (const c of reg.checks) {

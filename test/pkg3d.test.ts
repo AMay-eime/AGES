@@ -141,14 +141,14 @@ test('モデル（.glb）: 読む（頂点・ノードの位置・材質・囲�
   assert.deepEqual([g.meshes[0][0].vertices.length / 8, g.meshes[0][0].indices.length, g.tris], [24, 36, 12]);
   near(g.materials[0].color, [0.2, 0.4, 0.6, 1], 1e-6);
   near([...g.min, ...g.max], [-1, 0.5, -0.5, 1, 1.5, 0.5]);
-  assert.deepEqual(summarizeGlb(glb), { size: [2, 1, 1], center: [0, 1, 0], tris: 12, clips: ['idle', 'walk'] });
+  assert.deepEqual(summarizeGlb(glb), { size: [2, 1, 1], center: [0, 1, 0], tris: 12, clips: ['idle', 'walk'], clipSec: [0, 0] });
   assert.throws(() => parseGlb(new Uint8Array(40)), /\.glb ではありません/);
 
   const dir = join(await mkdtemp(join(tmpdir(), 'ages-3d-')), 'g');
   await cmdInit(dir, 'g');
   await mkdir(join(dir, 'assets'), { recursive: true });
   await writeFile(join(dir, 'assets', 'crate.glb'), glb);
-  assert.match(await cmdAssets(dir, undefined, {}), /crate\.glb.* 2x1x1m 中心\[0,1,0\] 三角形12 動き: idle walk/);
+  assert.match(await cmdAssets(dir, undefined, {}), /crate\.glb.* 2x1x1m 中心\[0,1,0\] 三角形12 動き: idle\(0s\) walk\(0s\)/);
 });
 
 test('モデルの描画: 材質の色と中の画像で描かれる（ages run --shot）', { skip: (await import('../src/cli/shot.ts')).findChrome() ? false : 'Chrome がない' }, async () => {
@@ -178,4 +178,120 @@ test('モデルの描画: 材質の色と中の画像で描かれる（ages run 
   assert.deepEqual(at(Math.round(pa.x), Math.round(pa.y)), [255, 0, 0], '材質の色');
   assert.deepEqual(at(Math.round(pb.x), Math.round(pb.y)), [0, 0, 255], '中の画像（青）に、掛け合わせる色 #80ffff（青はそのまま）');
   assert.deepEqual(at(200, 150), [0, 0, 0], '間は背景');
+});
+
+test('モデルの動き: 骨と動きを読む・時刻の姿勢・骨の行列・切り替えの混ぜ方', async () => {
+  const { makeGlb } = await import('./util-glb.ts');
+  const { parseGlb, summarizeGlb } = await import('../src/packages/3d/gltf.ts');
+  const { clipTime, samplePose, poseMatrices, jointMatrices, modelPose } = await import('../src/packages/3d/animation.ts');
+  const glb = makeGlb({ skinned: true });
+  const g = parseGlb(glb);
+  assert.deepEqual(g.skins[0].joints, [1, 2]);
+  assert.deepEqual(g.animations.map((a) => [a.name, a.duration, a.channels.length]), [['bend', 1, 1], ['slide', 1, 1]]);
+  assert.equal(g.meshes[0][0].skin!.length, 24 * 8);
+  assert.deepEqual(summarizeGlb(glb).clipSec, [1, 1]);
+  const [bend, slide] = g.animations;
+  near([clipTime(bend, 2.25, true), clipTime(bend, 2.25, false), clipTime(bend, -0.25, true), clipTime(bend, -1, false)], [0.25, 1, 0.75, 0]);
+  // 骨 k の行列で、点がどこへ動くか
+  const moved = (worlds: number[][], k: number, pt: [number, number, number]) => m.transformPoint([...jointMatrices(g, 0, worlds).subarray(k * 16, k * 16 + 16)], pt);
+  // 元の姿勢: 動かない
+  const rest = poseMatrices(g, samplePose(g, null, 0));
+  near(moved(rest, 0, [0.5, -0.5, 0.5]), [0.5, -0.5, 0.5], 1e-6);
+  near(moved(rest, 1, [0.5, 0.5, 0.5]), [0.5, 0.5, 0.5], 1e-6);
+  // bend の半分: 上の骨が z 軸まわりに 45度
+  near(samplePose(g, bend, 0.5)[2]!.r, [0, 0, Math.sin(Math.PI / 8), Math.cos(Math.PI / 8)], 1e-6);
+  // bend の終わり: 上の骨の頂点が 90度回る。下の骨はそのまま
+  const bent = poseMatrices(g, samplePose(g, bend, 1));
+  near(moved(bent, 1, [0.5, 0.5, 0]), [-0.5, 0.5, 0], 1e-6);
+  near(moved(bent, 0, [0.5, -0.5, 0]), [0.5, -0.5, 0], 1e-6);
+  // slide の半分: 下の骨が x へ 1m。子の上の骨もついていく
+  const slid = poseMatrices(g, samplePose(g, slide, 0.5));
+  near(moved(slid, 0, [0, -0.5, 0]), [1, -0.5, 0], 1e-6);
+  near(moved(slid, 1, [0.5, 0.5, 0]), [1.5, 0.5, 0], 1e-6);
+  // 切り替えの途中（bend の終わり → slide の終わり、半分まで混ざった所）: x へ 1m、上は 45度
+  const mid = modelPose(g, { clip: 'slide', time: 1, loop: false, prevClip: 'bend', prevTime: 1, fade: 0.2, fadeLeft: 0.1 })!;
+  near(moved(mid, 1, [0.5, 0.5, 0]), [1, Math.SQRT1_2, 0], 1e-6);
+  // 名前のない動きは元の姿勢。骨のないモデルは null（動かさずに描く）
+  near(moved(modelPose(g, { clip: 'nope' })!, 1, [0.5, 0.5, 0]), [0.5, 0.5, 0], 1e-6);
+  assert.equal(modelPose(parseGlb(makeGlb()), {}), null);
+});
+
+test('モデルの動き: Model3D.clip で時刻が進み、書き換えると前の動きから混ざる（ages run）。ない名前は ⚠', async () => {
+  const { makeGlb } = await import('./util-glb.ts');
+  const { cmdAssets } = await import('../src/cli/ages.ts');
+  const dir = join(await mkdtemp(join(tmpdir(), 'ages-3d-')), 'g');
+  await cmdInit(dir, 'g');
+  const cfg = join(dir, 'ages.project.json');
+  await writeFile(cfg, JSON.stringify({ ...JSON.parse(await readFile(cfg, 'utf8')), packages: ['3d'] }, null, 2) + '\n');
+  await mkdir(join(dir, 'assets'), { recursive: true });
+  await writeFile(join(dir, 'assets', 'arm.glb'), makeGlb({ skinned: true }));
+  await writeFile(join(dir, 'game', 'index.ts'), `import { defineComponent, defineSystem, type GameModule } from 'ages';
+const Switch = defineComponent({ name: 'Switch', desc: '30フレーム目に動きを変える', fields: { n: { type: 'int', default: 0 } } });
+const change = defineSystem({ name: 'change', desc: '動きを変える', reads: ['Switch'], writes: ['Model3D'], update(ctx) {
+  for (const e of ctx.world.entities.values()) { if (!e.c.Switch) continue; if (++e.c.Switch.n === 30) e.c.Model3D.clip = 'slide'; }
+} });
+export const components: GameModule['components'] = [Switch];
+export const systems: GameModule['systems'] = [change];
+`);
+  await cmdPatch(dir, [
+    { op: 'addEntity', scene: 'main', entity: { id: 'hero', components: { Transform3D: {}, Model3D: { model: 'assets/arm.glb', clip: 'bend', time: 0.25 }, Switch: {} } } },
+    { op: 'addEntity', scene: 'main', entity: { id: 'still', components: { Transform3D: { x: 3 }, Model3D: { model: 'assets/arm.glb' } } } },
+  ], false);
+  assert.match(await cmdCheck(dir), /^ok/);
+  assert.match(await cmdAssets(dir, undefined, {}), /arm\.glb.* 動き: bend\(1s\) slide\(1s\)/);
+  const run = async (frames: number) => {
+    const out = await cmdRun(dir, { frames: String(frames), watch: 'hero.Model3D.time,hero.Model3D.prevTime,hero.Model3D.fadeLeft,still.Model3D.time', every: String(frames) });
+    return (name: string) => Number(new RegExp(`watch ${name.replaceAll('.', '\\.')}: \\S+ → (\\S+)`).exec(out)?.[1]);
+  };
+  // 1フレーム目に始まり（書いてある 0.25 秒から）、2フレーム目から進む
+  let end = await run(29);
+  near([end('hero.Model3D.time'), end('hero.Model3D.fadeLeft'), end('still.Model3D.time')], [0.25 + 28 / 60, 0, 0], 1e-6);
+  // 30フレーム目に切り替え: 新しい動きは 0 秒から。前の動きは切り替えた時の姿勢で止まり、fade（0.15秒）の残りが減る
+  end = await run(35);
+  near([end('hero.Model3D.time'), end('hero.Model3D.prevTime'), end('hero.Model3D.fadeLeft')], [5 / 60, 0.25 + 28 / 60, 0.15 - 5 / 60], 1e-6);
+  // くり返しは長さ（1秒）で折り返す: 切り替えから 75フレーム（1.25秒）で 0.25
+  end = await run(105);
+  near([end('hero.Model3D.time'), end('hero.Model3D.fadeLeft')], [0.25, 0], 1e-6);
+  // くり返さない動きは最後で止まり、done になる（次の動きへ移る合図）
+  await cmdPatch(dir, [{ op: 'set', path: 'main#still.Model3D.clip', value: 'bend' }, { op: 'set', path: 'main#still.Model3D.loop', value: false }], false);
+  const once = await cmdRun(dir, { frames: '90', watch: 'still.Model3D.time,still.Model3D.done', every: '90' });
+  assert.match(once, /watch still\.Model3D\.time: \S+ → 1\b/);
+  assert.match(once, /watch still\.Model3D\.done: false → true/);
+
+  await cmdPatch(dir, [{ op: 'set', path: 'main#still.Model3D.clip', value: 'walk' }], false);
+  assert.match(await cmdCheck(dir), /⚠ 3d-clip: main#still\.Model3D\.clip: assets\/arm\.glb に動き walk がありません（あるのは bend slide）/);
+});
+
+test('モデルの動きの描画: 骨で形が変わる・動かないものは元の形（ages run --shot）', { skip: (await import('../src/cli/shot.ts')).findChrome() ? false : 'Chrome がない' }, async () => {
+  const { makeGlb } = await import('./util-glb.ts');
+  const { decodePng } = await import('../src/project/png.ts');
+  const dir = join(await mkdtemp(join(tmpdir(), 'ages-3d-')), 'g');
+  await cmdInit(dir, 'g');
+  const cfg = join(dir, 'ages.project.json');
+  const c = JSON.parse(await readFile(cfg, 'utf8'));
+  await writeFile(cfg, JSON.stringify({ ...c, packages: ['3d'], view: { ...c.view, width: 400, height: 300, background: '#000000' } }, null, 2) + '\n');
+  await mkdir(join(dir, 'assets'), { recursive: true });
+  await writeFile(join(dir, 'assets', 'arm.glb'), makeGlb({ color: [1, 0, 0, 1], unlit: true, skinned: true }));
+  const ent = (id: string, components: Record<string, Record<string, unknown>>) => ({ op: 'addEntity' as const, scene: 'main', entity: { id, components } });
+  await cmdPatch(dir, [
+    // 終わりの姿勢で止める（loop なし・time を終わりに）
+    ent('bend', { Transform3D: {}, Model3D: { model: 'assets/arm.glb', clip: 'bend', loop: false, time: 1 } }),
+    ent('slide', { Transform3D: { x: -1, y: 1.5 }, Model3D: { model: 'assets/arm.glb', clip: 'slide', loop: false, time: 1 } }),
+    ent('still', { Transform3D: { y: -1.5 }, Model3D: { model: 'assets/arm.glb' } }),
+    ent('cam', { Transform3D: { z: 6 }, Camera3D: {} }),
+  ], false);
+  assert.match(await cmdCheck(dir), /^ok/);
+  await cmdRun(dir, { frames: '2', shot: '2', 'shot-dir': join(dir, 'shots') });
+  const png = decodePng(await readFile(join(dir, 'shots', 'main-f2.png')));
+  const { toScreen, cameraFrom } = await import('../src/packages/3d/space.ts');
+  const cam = cameraFrom('cam', m.compose([0, 0, 6], [0, 0, 0]), {}, 400 / 300);
+  const at = (x: number, y: number) => { const s = toScreen(cam, [x, y, 0.5], 400, 300)!; const o = (Math.round(s.y) * png.w + Math.round(s.x)) * 4; return [...png.data.subarray(o, o + 3)]; };
+  // bend: 上の辺が左へ倒れ、手前の面は左下の三角になる
+  assert.deepEqual(at(-0.3, -0.3), [255, 0, 0], '曲がった後も左下は面の中');
+  assert.deepEqual(at(0.3, 0.3), [0, 0, 0], '右上は面の外になる');
+  // slide: 箱ごと x へ 2m（-1 → 1）
+  assert.deepEqual(at(1, 1.5), [255, 0, 0], '動いた先');
+  assert.deepEqual(at(-1, 1.5), [0, 0, 0], '元の場所にはいない');
+  // 動きを書いていないモデルは元の形（右上も面の中）
+  assert.deepEqual(at(0.3, -1.2), [255, 0, 0], '元の姿勢');
 });

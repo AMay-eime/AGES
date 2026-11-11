@@ -21,7 +21,7 @@ import { OP_DOCS, getValue, parseLiteral, splitCell, type Op } from '../core/pat
 import { readGuide, readPackageGuide } from '../project/guide.ts';
 import { PACKAGE_LIST } from '../packages/index.ts';
 import { activeTask, appendTalk, foldTalk, newId, readTalk, readTalkCursor, talkNotice, talkView, writeTalkCursor } from '../project/talk.ts';
-import { brief, defaultOf, matrixSize, suggest, typeOf, type AssetKind } from '../core/schema.ts';
+import { ASSET_EXT, brief, defaultOf, matrixSize, suggest, typeOf, type AssetKind } from '../core/schema.ts';
 import { assetRefs, codeSceneRefs, isUnder } from '../core/assets.ts';
 import { parseAddress } from '../core/docs.ts';
 import { cellsToRows, formatDelimited, importOps, parseDelimited, tableToCells } from '../core/csv.ts';
@@ -494,7 +494,8 @@ export async function cmdAssets(dir: string, folder: string | undefined, f: Args
     return lines.join('\n');
   }
   const kind = typeof f.kind === 'string' ? f.kind : undefined;
-  if (kind && !['image', 'sound', 'font'].includes(kind)) throw new Error(`--kind は image / sound / font のどれかです${suggest(kind, ['image', 'sound', 'font'])}`);
+  const kinds = Object.keys(ASSET_EXT);
+  if (kind && !kinds.includes(kind)) throw new Error(`--kind は ${kinds.join(' / ')} のどれかです${suggest(kind, kinds)}`);
   const lines = renderAssets(p, { touched: await readTouched(p.dir), locks: await p.effectiveLocks(), code, folder: folder?.replace(/\/+$/, ''), kind: kind as AssetKind | undefined, unused: !!f.unused, counts: true });
   const n = lines.filter((l) => l.startsWith('  ')).length;
   if (!n) return folder || kind || f.unused ? '該当するアセットはありません' : 'アセットはまだありません（assets/ にファイルを置く）';

@@ -60,6 +60,16 @@ export const Model3D = defineComponent({
     color: { type: 'color', default: '#ffffff', desc: '掛け合わせる色（白でそのまま。当たったときに赤くするなど）' },
     alpha: { type: 'number', default: 1, min: 0, max: 1, step: 0.05, desc: '不透明度（1 より小さいと透ける）' },
     visible: { type: 'bool', default: true, desc: '描くか' },
+    clip: { type: 'string', default: '', desc: '再生する動きの名前（モデルの中の名前。ages assets で見る。空なら元の姿勢）。書き換えると、前の動きから fade 秒でなめらかに切り替わる' },
+    speed: { type: 'number', default: 1, min: -10, max: 10, step: 0.05, desc: '動きの速さ（1 でそのまま、0 で止まる）' },
+    loop: { type: 'bool', default: true, desc: 'くり返す（false なら最後の姿勢で止まる）' },
+    fade: { type: 'number', default: 0.15, min: 0, max: 5, step: 0.05, desc: '動きを切り替えるときに混ぜる秒数' },
+    time: { type: 'number', default: 0, desc: '動きの中の時刻（秒。自動で変化。初めに書いておけば、その時刻から始まる）' },
+    done: { type: 'bool', default: false, desc: 'くり返さない動き（loop が false）が最後まで行った（自動で変化。次の動きへ移る合図に）' },
+    playing: { type: 'string', default: '', desc: 'いま再生している動き（自動で変化）' },
+    prevClip: { type: 'string', default: '', desc: '切り替える前の動き（自動で変化）' },
+    prevTime: { type: 'number', default: 0, desc: '切り替える前の動きの時刻（自動で変化）' },
+    fadeLeft: { type: 'number', default: 0, desc: '切り替えの残りの秒数（自動で変化）' },
   },
 });
 
