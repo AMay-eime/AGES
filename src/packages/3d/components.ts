@@ -47,6 +47,8 @@ export const Mesh3D = defineComponent({
     tile: { type: 'vec2', default: [1, 1], desc: '画像をくり返す回数（横・縦。床に 10x10 で貼るなど）' },
     roughness: { type: 'number', default: 0.8, min: 0, max: 1, step: 0.05, desc: 'ざらつき（0 = つるつるで光を強く返す、1 = つや消し）' },
     unlit: { type: 'bool', default: false, desc: '光の影響を受けない（色・画像をそのまま出す）' },
+    doubleSided: { type: 'bool', default: false, desc: '裏側の面も描く（球・箱の内側から見る空など）' },
+    fog: { type: 'bool', default: true, desc: '霧をかけるか（空に使う形は false）' },
     alpha: { type: 'number', default: 1, min: 0, max: 1, step: 0.05, desc: '不透明度（1 より小さいと透ける）' },
     visible: { type: 'bool', default: true, desc: '描くか' },
     shadow: { type: 'bool', default: true, desc: '影を落とすか（太陽の影。受けるのは常に）' },

@@ -534,3 +534,55 @@ test('地図: 連番の並びを短く書く。1つの節だけが長いとき�
   assert.equal((await readRecent(dir)).places['game/index.ts']?.hits, 1);
   assert.match(await cmdMap(dir), /^最近の作業の場所.*game\/index\.ts/m);
 });
+
+test('画面の外の物は描かない: 見える範囲の面と、球が入っているか', async () => {
+  const { frustumPlanes, sphereVisible } = await import('../src/packages/3d/cull.ts');
+  // 原点から −Z を見るカメラ（縦 60度・横長 4:3・手前 0.1〜奥 100）
+  const cam = cameraFrom('cam', m.compose([0, 0, 0], [0, 0, 0]), { fov: 60, near: 0.1, far: 100 }, 4 / 3);
+  const planes = frustumPlanes(cam.viewProj);
+  const sees = (x: number, y: number, z: number, r = 0.5) => sphereVisible(planes, [x, y, z], r);
+  assert.equal(sees(0, 0, -10), true, '正面');
+  assert.equal(sees(0, 0, 10), false, '後ろ');
+  assert.equal(sees(0, 0, -200), false, '奥の面より遠い');
+  // 10m 先では、縦は ±5.77m（tan 30°）、横は ±7.7m まで見える。球の半径ぶんは、はみ出していても入る
+  assert.equal(sees(0, 6.1, -10), true, '上のふちに掛かっている');
+  assert.equal(sees(0, 7, -10), false, '上の外');
+  assert.equal(sees(8, 0, -10), true, '右のふちに掛かっている');
+  assert.equal(sees(9, 0, -10), false, '右の外');
+  assert.equal(sees(9, 0, -10, 2), true, '大きな球なら入る');
+});
+
+test('まとめて描く・空の球: 同じ形の物が、物ごとの色で出る。両面・霧なしの球を内側から見る（ages run --shot）', { skip: (await import('../src/cli/shot.ts')).findChrome() ? false : 'Chrome がない' }, async () => {
+  const { decodePng } = await import('../src/project/png.ts');
+  const dir = join(await mkdtemp(join(tmpdir(), 'ages-3d-')), 'g');
+  await cmdInit(dir, 'g');
+  const cfg = join(dir, 'ages.project.json');
+  const c = JSON.parse(await readFile(cfg, 'utf8'));
+  await writeFile(cfg, JSON.stringify({ ...c, packages: ['3d'], view: { ...c.view, width: 400, height: 300, background: '#000000' } }, null, 2) + '\n');
+  const ent = (id: string, components: Record<string, Record<string, unknown>>) => ({ op: 'addEntity' as const, scene: 'main', entity: { id, components } });
+  const flat = { unlit: true, fog: false, shadow: false };
+  await cmdPatch(dir, [
+    // 濃い霧（1m から 5m で真っ黒）。霧なしの物だけが色のまま見える
+    ent('env', { Environment3D: { fog: true, fogNear: 1, fogFar: 5 } }),
+    ent('sky', { Transform3D: { z: 6 }, Mesh3D: { shape: 'sphere', size: [50, 50, 50], color: '#2040ff', doubleSided: true, ...flat } }),
+    // 同じ形（箱）が3つ: 1回で描かれ、色は物ごと
+    ent('red', { Transform3D: { x: -2 }, Mesh3D: { color: '#ff0000', ...flat } }),
+    ent('green', { Transform3D: {}, Mesh3D: { color: '#00ff00', ...flat } }),
+    ent('blue', { Transform3D: { x: 2 }, Mesh3D: { color: '#0000ff', ...flat } }),
+    // 霧のかかる箱（6m 先なので真っ黒）
+    ent('far', { Transform3D: { y: 1.6 }, Mesh3D: { unlit: true, shadow: false } }),
+    // 画面の外・後ろの箱（描かれない。あっても壊れない）
+    ent('behind', { Transform3D: { z: 30 }, Mesh3D: { color: '#ffff00', ...flat } }),
+    ent('cam', { Transform3D: { z: 6 }, Camera3D: {} }),
+  ], false);
+  assert.match(await cmdCheck(dir), /^ok/);
+  await cmdRun(dir, { frames: '1', shot: '1', 'shot-dir': join(dir, 'shots') });
+  const png = decodePng(await readFile(join(dir, 'shots', 'main-f1.png')));
+  const cam = cameraFrom('cam', m.compose([0, 0, 6], [0, 0, 0]), {}, 400 / 300);
+  const at = (x: number, y: number, z = 0.5) => { const s = toScreen(cam, [x, y, z], 400, 300)!; const o = (Math.round(s.y) * png.w + Math.round(s.x)) * 4; return [...png.data.subarray(o, o + 3)]; };
+  assert.deepEqual(at(-2, 0), [255, 0, 0]);
+  assert.deepEqual(at(0, 0), [0, 255, 0]);
+  assert.deepEqual(at(2, 0), [0, 0, 255]);
+  assert.deepEqual(at(0, 1.6), [0, 0, 0], '霧のかかる箱は真っ黒');
+  assert.deepEqual(at(-2, -1.6), [32, 64, 255], '何もない所は空の球の内側（霧なし）');
+});

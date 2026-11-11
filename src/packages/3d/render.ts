@@ -7,6 +7,8 @@ import type { LayerFrame, LayerHost, RenderLayer } from '../../render/layer.ts';
 import { box, capsule, cylinder, plane, sphere, type Geometry } from './geometry.ts';
 import { cross, invert, multiply, normalize, orthographic, transformDirection, transformPoint, type Mat4, type Vec3 } from './math.ts';
 import { cameraOf, matrixOf, type CameraView3 } from './space.ts';
+import { frustumPlanes, sphereVisible } from './cull.ts';
+import { halfExtents } from './pick.ts';
 import { parseGlb, type GltfModel } from './gltf.ts';
 import { jointMatrices, modelPose } from './animation.ts';
 import { translation } from './math.ts';
@@ -14,6 +16,8 @@ import { translation } from './math.ts';
 const MAX_POINT = 8;
 /** 影の地図の1辺（画素） */
 const SHADOW_SIZE = 2048;
+/** まとめて描くときの、物1つぶんの数（行列 16 + 色 4） */
+const INST_FLOATS = 20;
 
 const VS = `#version 300 es
 layout(location=0) in vec3 a_pos;
@@ -21,6 +25,13 @@ layout(location=1) in vec3 a_normal;
 layout(location=2) in vec2 a_uv;
 layout(location=3) in vec4 a_joints;
 layout(location=4) in vec4 a_weights;
+// 同じ形・同じ材質の物をまとめて描くとき（u_inst）は、物ごとの行列と色を頂点の属性で受け取る
+layout(location=5) in vec4 a_m0;
+layout(location=6) in vec4 a_m1;
+layout(location=7) in vec4 a_m2;
+layout(location=8) in vec4 a_m3;
+layout(location=9) in vec4 a_icolor;
+uniform float u_inst;
 uniform sampler2D u_jointTex;
 uniform float u_skin;
 uniform mat4 u_viewProj;
@@ -30,6 +41,7 @@ uniform vec2 u_tile;
 out vec3 v_world;
 out vec3 v_normal;
 out vec2 v_uv;
+out vec4 v_color;
 mat4 joint(float j) {
   int y = int(j);
   return mat4(texelFetch(u_jointTex, ivec2(0, y), 0), texelFetch(u_jointTex, ivec2(1, y), 0), texelFetch(u_jointTex, ivec2(2, y), 0), texelFetch(u_jointTex, ivec2(3, y), 0));
@@ -43,9 +55,17 @@ void main() {
     p = sk * p;
     nrm = mat3(sk) * nrm;
   }
-  vec4 w = u_model * p;
+  mat4 model = u_model;
+  mat3 nmat = u_normalMat;
+  v_color = vec4(1.0);
+  if (u_inst > 0.5) {
+    model = mat4(a_m0, a_m1, a_m2, a_m3);
+    nmat = transpose(inverse(mat3(model)));
+    v_color = a_icolor;
+  }
+  vec4 w = model * p;
   v_world = w.xyz;
-  v_normal = u_normalMat * nrm;
+  v_normal = nmat * nrm;
   v_uv = a_uv * u_tile;
   gl_Position = u_viewProj * w;
 }`;
@@ -55,8 +75,10 @@ precision highp float;
 in vec3 v_world;
 in vec3 v_normal;
 in vec2 v_uv;
+in vec4 v_color;
 uniform sampler2D u_tex;
 uniform vec4 u_color;
+uniform float u_noFog;
 uniform float u_unlit;
 uniform float u_roughness;
 uniform vec3 u_camPos;
@@ -87,7 +109,7 @@ float sunlit(vec3 n) {
   return mix(sum / 9.0, 1.0, smoothstep(u_shadow.z * 0.8, u_shadow.z, far));
 }
 void main() {
-  vec4 base = texture(u_tex, v_uv) * u_color;
+  vec4 base = texture(u_tex, v_uv) * u_color * v_color;
   vec3 rgb = base.rgb;
   if (u_unlit < 0.5) {
     vec3 n = normalize(v_normal);
@@ -114,7 +136,7 @@ void main() {
     }
     rgb = rgb * light + spec;
   }
-  if (u_fog.z > 0.5) {
+  if (u_fog.z > 0.5 && u_noFog < 0.5) {
     float f = clamp((distance(u_camPos, v_world) - u_fog.x) / max(u_fog.y - u_fog.x, 0.0001), 0.0, 1.0);
     rgb = mix(rgb, u_fogColor, f);
   }
@@ -141,9 +163,9 @@ uniform sampler2D u_tex;
 out vec4 o_color;
 void main() { o_color = texture(u_tex, v_uv); }`;
 
-interface Mesh { vao: WebGLVertexArrayObject; count: number; type: number }
+interface Mesh { vao: WebGLVertexArrayObject; count: number; type: number; /** まとめて描くときの見分け用 */ id: number }
 /** 描くときの材質 */
-interface Mat { color: [number, number, number, number]; tex: WebGLTexture; tile: [number, number]; roughness: number; unlit: boolean; doubleSided: boolean }
+interface Mat { color: [number, number, number, number]; tex: WebGLTexture; tile: [number, number]; roughness: number; unlit: boolean; doubleSided: boolean; noFog?: boolean }
 /** 読み込んだモデル（ノードごとのメッシュと材質） */
 interface Model {
   parts: { node: number; world: Mat4; mesh: Mesh; material: number; skinned: boolean }[];
@@ -155,7 +177,9 @@ interface Model {
 }
 interface Tex { tex: WebGLTexture; loaded: Promise<void> }
 /** 1回の描画で描く物 */
-interface Item { m: Mat4; mesh: Mesh; mat: Mat; depth: number; clear: boolean; cast: boolean; joints?: Float32Array }
+interface Item { m: Mat4; mesh: Mesh; mat: Mat; depth: number; clear: boolean; cast: boolean; joints?: Float32Array; /** 世界の座標で囲む球（画面の外なら描かない） */ center: Vec3; radius: number }
+/** 1回の描画の数（速さの目安。ages run --perf に出る） */
+export interface Stats3D { things: number; shown: number; draws: number; tris: number }
 interface Lights { sun: { dir: Vec3; color: Vec3; shadow: boolean; range: number } | null; pos: number[]; col: number[]; range: number[]; env: Record<string, any> | undefined }
 
 /** 3D の層への指示（DrawOptions.layers['3d']） */
@@ -172,6 +196,8 @@ export interface Drawn3D { id: string; matrix: Mat4; shape: string; size: Vec3 }
 export class Layer3D implements RenderLayer {
   readonly name = '3d';
   draws = 0;
+  /** 前の draw の数（置いた物・画面に入っていた物・描いた回数・三角形） */
+  stats: Stats3D = { things: 0, shown: 0, draws: 0, tris: 0 };
   /** 前の draw で使ったカメラと、描いた物 */
   camera: CameraView3 | null = null;
   drawn: Drawn3D[] = [];
@@ -189,6 +215,9 @@ export class Layer3D implements RenderLayer {
   private meshes = new Map<string, Mesh>();
   private textures = new Map<string, Tex>();
   private white: WebGLTexture;
+  private instBuf: WebGLBuffer;
+  private meshIds = 0;
+  private texIds = new Map<WebGLTexture, number>();
   private emptyVao: WebGLVertexArrayObject;
   // 描く先（大きさが変わったら作り直す）
   private size = { w: 0, h: 0 };
@@ -209,6 +238,10 @@ export class Layer3D implements RenderLayer {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]));
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     this.emptyVao = gl.createVertexArray()!;
+    // 物ごとの行列と色を入れるバッファ（まとめて描くとき）。どの形の VAO もここを指す
+    this.instBuf = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.instBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(INST_FLOATS), gl.DYNAMIC_DRAW);
   }
 
   private u(name: string): WebGLUniformLocation | null {
@@ -294,15 +327,32 @@ export class Layer3D implements RenderLayer {
     gl.useProgram(this.depthProg);
     gl.uniformMatrix4fv(this.ud('u_viewProj'), false, new Float32Array(viewProj));
     gl.uniform1i(this.ud('u_jointTex'), 1);
-    for (const x of casters) {
-      gl.uniform1f(this.ud('u_skin'), x.joints ? 1 : 0);
-      if (x.joints) this.bindJoints(x.joints);
+    // 地図の範囲に影を落とせる物だけ（光の向きに見て、範囲の円の外・範囲より奥にある物は除く）
+    const inRange = casters.filter((x) => {
+      const d: Vec3 = [x.center[0] - c[0], x.center[1] - c[1], x.center[2] - c[2]];
+      const along = d[0] * dir[0] + d[1] * dir[1] + d[2] * dir[2];
+      const side = Math.sqrt(Math.max(0, d[0] * d[0] + d[1] * d[1] + d[2] * d[2] - along * along));
+      return side <= r + x.radius && along <= r + x.radius && along >= -back - x.radius;
+    });
+    gl.cullFace(gl.BACK);
+    for (const x of inRange.filter((y) => y.joints)) {
+      gl.uniform1f(this.ud('u_inst'), 0);
+      gl.uniform1f(this.ud('u_skin'), 1);
+      this.bindJoints(x.joints!);
       gl.uniformMatrix4fv(this.ud('u_model'), false, new Float32Array(x.m));
-      if (x.mat.doubleSided) gl.disable(gl.CULL_FACE); else { gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK); }
+      if (x.mat.doubleSided) gl.disable(gl.CULL_FACE); else gl.enable(gl.CULL_FACE);
       gl.bindVertexArray(x.mesh.vao);
       gl.drawElements(gl.TRIANGLES, x.mesh.count, x.mesh.type, 0);
       this.draws++;
     }
+    // 骨のない物は、同じ形ごとにまとめて
+    gl.uniform1f(this.ud('u_skin'), 0);
+    gl.uniform1f(this.ud('u_inst'), 1);
+    for (const b of this.batches(inRange.filter((y) => !y.joints), (x) => `${x.mesh.id}|${x.mat.doubleSided ? 1 : 0}`)) {
+      if (b[0].mat.doubleSided) gl.disable(gl.CULL_FACE); else gl.enable(gl.CULL_FACE);
+      this.instanced(b);
+    }
+    gl.uniform1f(this.ud('u_inst'), 0);
     gl.disable(gl.POLYGON_OFFSET_FILL);
     gl.bindVertexArray(null);
     // -1〜1 を 0〜1 へ
@@ -336,8 +386,11 @@ export class Layer3D implements RenderLayer {
       gl.bufferData(gl.ARRAY_BUFFER, g.skin, gl.STATIC_DRAW);
       for (const [i, o] of [[3, 0], [4, 4]]) { gl.enableVertexAttribArray(i); gl.vertexAttribPointer(i, 4, gl.FLOAT, false, 32, o * 4); }
     }
+    // 物ごとの行列（4列）と色。まとめて描くときだけ読む（u_inst）
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.instBuf);
+    for (let k = 0; k < 5; k++) { gl.enableVertexAttribArray(5 + k); gl.vertexAttribPointer(5 + k, 4, gl.FLOAT, false, INST_FLOATS * 4, k * 16); gl.vertexAttribDivisor(5 + k, 1); }
     gl.bindVertexArray(null);
-    return { vao, count: g.indices.length, type: g.indices instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT };
+    return { vao, count: g.indices.length, type: g.indices instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT, id: ++this.meshIds };
   }
 
   private models = new Map<string, { model: Model | null; loaded: Promise<void>; error?: string }>();
@@ -461,6 +514,7 @@ export class Layer3D implements RenderLayer {
 
   draw(f: LayerFrame): void {
     this.draws = 0;
+    this.stats = { things: 0, shown: 0, draws: 0, tris: 0 };
     this.drawn = [];
     const world = f.world;
     const opts = (f.options ?? {}) as Layer3DOptions;
@@ -479,7 +533,8 @@ export class Layer3D implements RenderLayer {
         const { mesh, scale } = this.shape(c.shape, size);
         const m = multiply(wm, [scale[0], 0, 0, 0, 0, scale[1], 0, 0, 0, 0, scale[2], 0, 0, 0, 0, 1]);
         const [r, g, b] = rgb(c.color ?? '#ffffff'), a = alphaOf(c.color) * (c.alpha ?? 1);
-        items.push({ m, mesh, depth, clear: a < 1, cast: c.shadow !== false && a >= 0.5, mat: { color: [r, g, b, a], tex: this.texture(c.texture ?? ''), tile: (c.tile ?? [1, 1]) as [number, number], roughness: c.roughness ?? 0.8, unlit: !!c.unlit, doubleSided: false } });
+        const hx = halfExtents(c.shape ?? 'box', size);
+        items.push({ m, mesh, depth, clear: a < 1, cast: c.shadow !== false && a >= 0.5, center: [wm[12], wm[13], wm[14]], radius: Math.hypot(hx[0], hx[1], hx[2]) * maxScale(wm), mat: { color: [r, g, b, a], tex: this.texture(c.texture ?? ''), tile: (c.tile ?? [1, 1]) as [number, number], roughness: c.roughness ?? 0.8, unlit: !!c.unlit, doubleSided: !!c.doubleSided, noFog: c.fog === false } });
         this.drawn.push({ id: e.id, matrix: wm, shape: c.shape ?? 'box', size });
       }
       if (md && md.visible !== false && md.model) {
@@ -489,6 +544,8 @@ export class Layer3D implements RenderLayer {
         // 動き（clip）・骨があれば、いまの姿勢のノードの行列を求める
         const pose = model.gltf.animations.length || model.gltf.skins.length ? modelPose(model.gltf, md) : null;
         const joints = new Map<number, Float32Array>();
+        // 囲む球（モデルの全体。動きで形がはみ出すことがあるので、動かしているモデルは大きめに）
+        const mc = transformPoint(wm, model.center), mr = (Math.hypot(model.size[0], model.size[1], model.size[2]) / 2) * maxScale(wm) * (pose ? 2 : 1);
         for (const part of model.parts) {
           const mt = model.materials[part.material] ?? model.materials[model.materials.length - 1];
           const alpha = mt.color[3] * a;
@@ -499,7 +556,7 @@ export class Layer3D implements RenderLayer {
             joints.set(sk, jm);
           }
           // 骨で動くメッシュは、ノードの位置を使わない（骨の行列に入っている）
-          items.push({ m: jm ? wm : multiply(wm, pose?.[part.node] ?? part.world), ...(jm ? { joints: jm } : {}), mesh: part.mesh, depth, clear: alpha < 1 || mt.blend, cast: md.shadow !== false && alpha >= 0.5, mat: { color: [mt.color[0] * r, mt.color[1] * g, mt.color[2] * b, alpha], tex: mt.tex, tile: [1, 1], roughness: mt.roughness, unlit: mt.unlit, doubleSided: mt.doubleSided } });
+          items.push({ m: jm ? wm : multiply(wm, pose?.[part.node] ?? part.world), ...(jm ? { joints: jm } : {}), mesh: part.mesh, depth, center: mc, radius: mr, clear: alpha < 1 || mt.blend, cast: md.shadow !== false && alpha >= 0.5, mat: { color: [mt.color[0] * r, mt.color[1] * g, mt.color[2] * b, alpha], tex: mt.tex, tile: [1, 1], roughness: mt.roughness, unlit: mt.unlit, doubleSided: mt.doubleSided } });
         }
         // 選ぶ・枠のための、全体を囲む箱
         this.drawn.push({ id: e.id, matrix: multiply(wm, translation(model.center)), shape: 'box', size: model.size });
@@ -538,11 +595,30 @@ export class Layer3D implements RenderLayer {
     gl.uniform1i(this.u('u_jointTex'), 1);
     gl.uniform1f(this.u('u_skin'), 0);
 
-    // 透けない物を先に（手前から）、透ける物を後で（奥から）
-    const solid = items.filter((x) => !x.clear).sort((a, b) => a.depth - b.depth);
-    const clear = items.filter((x) => x.clear).sort((a, b) => b.depth - a.depth);
+    // 画面の外の物は描かない。透けない物を先に（手前から）、透ける物を後で（奥から）
+    const planes = frustumPlanes(cam.viewProj);
+    const seen = items.filter((x) => sphereVisible(planes, x.center, x.radius));
+    this.stats.things = items.length;
+    this.stats.shown = seen.length;
+    const solid = seen.filter((x) => !x.clear).sort((a, b) => a.depth - b.depth);
+    const clear = seen.filter((x) => x.clear).sort((a, b) => b.depth - a.depth);
     gl.disable(gl.BLEND);
-    for (const x of solid) this.one(x.m, x.mesh, x.mat, x.joints);
+    for (const x of solid.filter((y) => y.joints)) this.one(x.m, x.mesh, x.mat, x.joints);
+    // 骨のない物は、同じ形・同じ材質ごとにまとめて描く（木を100本置いても、描くのは1回）
+    gl.uniform1f(this.u('u_skin'), 0);
+    gl.uniform1f(this.u('u_inst'), 1);
+    gl.uniform4f(this.u('u_color'), 1, 1, 1, 1);
+    for (const b of this.batches(solid.filter((y) => !y.joints), (x) => this.matKey(x))) {
+      const mat = b[0].mat;
+      gl.uniform1f(this.u('u_unlit'), mat.unlit ? 1 : 0);
+      gl.uniform1f(this.u('u_noFog'), mat.noFog ? 1 : 0);
+      gl.uniform1f(this.u('u_roughness'), mat.roughness);
+      gl.uniform2f(this.u('u_tile'), mat.tile[0], mat.tile[1]);
+      if (mat.doubleSided) gl.disable(gl.CULL_FACE); else gl.enable(gl.CULL_FACE);
+      gl.bindTexture(gl.TEXTURE_2D, mat.tex);
+      this.instanced(b);
+    }
+    gl.uniform1f(this.u('u_inst'), 0);
     if (clear.length) {
       gl.enable(gl.BLEND);
       gl.blendFuncSeparate(gl.ONE, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
@@ -570,6 +646,7 @@ export class Layer3D implements RenderLayer {
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.bindVertexArray(null);
     this.draws++;
+    this.stats.draws = this.draws;
   }
 
   private gridVao: WebGLVertexArrayObject | null = null;
@@ -603,6 +680,8 @@ export class Layer3D implements RenderLayer {
     gl.uniformMatrix3fv(this.u('u_normalMat'), false, new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]));
     gl.uniform1f(this.u('u_unlit'), 1);
     gl.uniform1f(this.u('u_skin'), 0);
+    gl.uniform1f(this.u('u_inst'), 0);
+    gl.uniform1f(this.u('u_noFog'), 0);
     gl.uniform2f(this.u('u_tile'), 1, 1);
     gl.bindTexture(gl.TEXTURE_2D, this.white);
     for (const [verts, r, g, b, a] of [[minor, 1, 1, 1, 0.13], [major, 1, 1, 1, 0.3], [xs, 1, 0.35, 0.35, 0.7], [zs, 0.4, 0.55, 1, 0.7]] as const) {
@@ -630,8 +709,40 @@ export class Layer3D implements RenderLayer {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 4, joints.length / 16, 0, gl.RGBA, gl.FLOAT, joints);
     gl.activeTexture(gl.TEXTURE0);
   }
+  /** まとめて描く組に分ける（鍵が同じ物どうし。出てきた順） */
+  private batches(items: Item[], key: (x: Item) => string): Item[][] {
+    const by = new Map<string, Item[]>();
+    for (const x of items) { const k = key(x); const g = by.get(k); if (g) g.push(x); else by.set(k, [x]); }
+    return [...by.values()];
+  }
+
+  /** 同じ形・同じ材質かの鍵 */
+  private matKey(x: Item): string {
+    const m = x.mat;
+    let t = this.texIds.get(m.tex);
+    if (t === undefined) { t = this.texIds.size + 1; this.texIds.set(m.tex, t); }
+    return `${x.mesh.id}|${t}|${m.roughness}|${m.unlit ? 1 : 0}|${m.doubleSided ? 1 : 0}|${m.noFog ? 1 : 0}|${m.tile[0]},${m.tile[1]}`;
+  }
+
+  /** 同じ形の物を1回で描く（物ごとの行列と色を、バッファに並べて渡す）。プログラムと材質は呼ぶ側が決めておく */
+  private instanced(items: Item[]): void {
+    const gl = this.gl;
+    const data = new Float32Array(items.length * INST_FLOATS);
+    items.forEach((x, i) => { data.set(x.m, i * INST_FLOATS); data.set(x.mat.color, i * INST_FLOATS + 16); });
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.instBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+    const mesh = items[0].mesh;
+    gl.bindVertexArray(mesh.vao);
+    gl.drawElementsInstanced(gl.TRIANGLES, mesh.count, mesh.type, 0, items.length);
+    this.draws++;
+    this.stats.tris += (mesh.count / 3) * items.length;
+  }
+
   private one(m: Mat4, mesh: Mesh, mat: Mat, joints?: Float32Array): void {
     const gl = this.gl;
+    gl.uniform1f(this.u('u_inst'), 0);
+    gl.uniform1f(this.u('u_noFog'), mat.noFog ? 1 : 0);
+    this.stats.tris += mesh.count / 3;
     gl.uniform1f(this.u('u_skin'), joints ? 1 : 0);
     if (joints) this.bindJoints(joints);
     gl.uniformMatrix4fv(this.u('u_model'), false, new Float32Array(m));
@@ -689,6 +800,9 @@ export class Layer3D implements RenderLayer {
     gl.uniform3fv(this.u('u_fogColor'), rgb(background));
   }
 }
+
+/** 行列の、いちばん大きい倍率（囲む球の半径に掛ける） */
+const maxScale = (m: Mat4): number => Math.max(Math.hypot(m[0], m[1], m[2]), Math.hypot(m[4], m[5], m[6]), Math.hypot(m[8], m[9], m[10]));
 
 /** 面の向き（法線）を回す 3x3（行列の左上の逆の転置。倍率が軸ごとに違っても向きが正しい） */
 function normalMatrix(m: Mat4): number[] {
