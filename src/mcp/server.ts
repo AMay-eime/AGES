@@ -5,8 +5,8 @@
 import { createInterface } from 'node:readline';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { makeInstructions, makeTools } from './tools.ts';
-import { useActiveTask, withTalkNotice } from '../cli/ages.ts';
+import { makeInstructions, makeTools, type Tool } from './tools.ts';
+import { packageCommands, useActiveTask, withTalkNotice } from '../cli/ages.ts';
 
 process.removeAllListeners('warning');
 
@@ -15,7 +15,17 @@ const flag = (name: string) => { const i = args.indexOf(`--${name}`); return i >
 const defaultProject = resolve(flag('project') ?? process.env.AGES_PROJECT ?? process.cwd());
 const VERSION = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version as string;
 
-const TOOLS = makeTools(defaultProject);
+const BASE = makeTools(defaultProject);
+/** 道具の一覧（本体のもの + そのプロジェクトが入れている追加パッケージの命令。入れていなければ増えない） */
+async function tools(dir = defaultProject): Promise<Tool[]> {
+  const extra = (await packageCommands(dir)).map((c): Tool => ({
+    name: `ages_${c.name}`,
+    description: c.desc,
+    inputSchema: { type: 'object', properties: { dir: { type: 'string' }, ...c.props } },
+    run: (a, d) => c.run(d, Object.fromEntries(Object.entries(a).filter(([k, v]) => k !== 'dir' && v !== undefined && v !== false).map(([k, v]) => [k, v === true ? true : Array.isArray(v) ? v.join(',') : String(v)]))),
+  }));
+  return [...BASE, ...extra];
+}
 
 // ---------- JSON-RPC（1行に1メッセージ） ----------
 const send = (msg: unknown): void => { process.stdout.write(JSON.stringify(msg) + '\n'); };
@@ -37,11 +47,12 @@ async function handle(msg: { id?: number | string; method: string; params?: any 
     case 'ping':
       return reply({});
     case 'tools/list':
-      return reply({ tools: TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
+      return reply({ tools: (await tools()).map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
     case 'tools/call': {
+      const a = msg.params?.arguments ?? {};
+      const TOOLS = await tools(resolve(a.dir ?? defaultProject));
       const tool = TOOLS.find((t) => t.name === msg.params?.name);
       if (!tool) return fail(-32602, `道具 ${msg.params?.name} はありません。使えるのは ${TOOLS.map((t) => t.name).join(' / ')}`);
-      const a = msg.params?.arguments ?? {};
       try {
         const dir = resolve(a.dir ?? defaultProject);
         await useActiveTask(dir);

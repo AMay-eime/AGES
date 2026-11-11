@@ -19,7 +19,8 @@ import { checkExport } from './export-check.ts';
 import { readCursor, readLog, readTouched, summarize, writeCursor, type Actor } from '../project/oplog.ts';
 import { OP_DOCS, getValue, parseLiteral, splitCell, type Op } from '../core/patch.ts';
 import { readGuide, readPackageGuide } from '../project/guide.ts';
-import { PACKAGE_LIST } from '../packages/index.ts';
+import { PACKAGE_LIST, loadPackageCommands } from '../packages/index.ts';
+import type { PackageCommand } from '../core/packages.ts';
 import { activeTask, appendTalk, foldTalk, newId, readTalk, readTalkCursor, talkNotice, talkView, writeTalkCursor } from '../project/talk.ts';
 import { ASSET_EXT, brief, defaultOf, matrixSize, suggest, typeOf, type AssetKind } from '../core/schema.ts';
 import { assetRefs, codeSceneRefs, isUnder } from '../core/assets.ts';
@@ -68,7 +69,8 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   export <dir> [--out 先] [--check] [--serve [ポート]] [--desktop [--id com.名前.ゲーム] [--fullscreen]]  書き出す（ゲームだけ。dist/web は Web にそのまま置ける。--desktop は Tauri の元 dist/desktop。--check は headless の Chrome で動くか確かめる）
   pin    <dir> [--repo URL] [--commit SHA] [--force]  版だけ同梱の形に（ages.mjs が本体を .ages/engine に取ってくる。GitHub との連携用）。AGENTS.md は手で直されていなければ本体の版に合わせる（--force で直されていても）
   ui     <dir> [シーン]               UI の配置（四角・置き方）と、重なり・はみ出し。直すのは patch の dockUI / attachUI
-  assets <dir> [フォルダ] [--kind image|sound|font] [--unused] [--refs 場所]   アセットの一覧（使っている所の数）・使っている所
+  assets <dir> [フォルダ] [--kind image|sound|font|shader|model] [--unused] [--refs 場所]   アセットの一覧（使っている所の数）・使っている所
+  space  <dir> [シーン] [--frames n] [--keys …] [--only id,id]   （追加パッケージ 3d を入れたプロジェクト）3D の空間を文字で確かめる
   sheet  <dir> <画像>                 画像の切り方（コマの名前・位置・基準点・動き）を見る
   slice  <dir> <画像> --grid 32x32 | --count 4x6 | --auto  画像を切る（前と同じ場所のコマは名前を引き継ぐ）
                [--spacing n] [--margin n] [--skip-empty] [--alpha 1] [--min 2] [--gap 0] [--pad 0] [--pivot 0.5,1] [--dry] [--force]
@@ -983,6 +985,16 @@ export async function cmdInitPinned(dir: string, name?: string, pin?: boolean): 
   return `${out}\n（AGES 本体を今の場所から指す形です。このプロジェクトを別のパソコン・別の場所で使うなら ages pin <dir>）`;
 }
 
+/** プロジェクトが入れている追加パッケージの命令（設定を読めないフォルダなら、なし） */
+export async function packageCommands(dir: string): Promise<PackageCommand[]> {
+  try {
+    const cfg = JSON.parse(await readFile(join(resolve(dir), 'ages.project.json'), 'utf8')) as { packages?: unknown };
+    return cfg.packages ? await loadPackageCommands(cfg.packages) : [];
+  } catch {
+    return [];
+  }
+}
+
 function withLockReport(p: Project, text: string): string {
   return p.lockReport.length ? `${p.lockReport.map((l) => '🔒 ' + l).join('\n')}\n${text}` : text;
 }
@@ -1031,7 +1043,12 @@ async function main(argv: string[]): Promise<void> {
     case 'slice': out = await cmdSlice(dir, need(a.pos[1], '画像の場所（例 assets/hero.png）'), a.flags); break;
     case 'table': out = await cmdTable(dir, need(a.pos[1], '表の名前（例 enemies）').replace(/^\$/, ''), a.flags); break;
     case 'talk': out = await cmdTalk(dir, talkArgs(a.flags, a.pos[1])); break;
-    default: throw new Error(`未知のコマンド ${cmd}。ages help で一覧を表示します`);
+    default: {
+      // 追加パッケージの命令（そのプロジェクトが入れているものだけ）
+      const pc = (await packageCommands(dir)).find((c) => c.name === cmd);
+      if (!pc) throw new Error(`未知のコマンド ${cmd}。ages help で一覧を表示します`);
+      out = await pc.run(dir, { ...a.flags, ...(pc.pos && a.pos[1] !== undefined ? { [pc.pos]: a.pos[1] } : {}) });
+    }
   }
   console.log(await withTalkNotice(dir, cmd, out));
 }
