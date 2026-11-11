@@ -36,7 +36,7 @@ export interface EditorState {
   files: { path: string; size: number; mtime: number }[];
   sheets: Record<string, import('../core/sheet.ts').SheetDef>;
   tables: Record<string, import('../core/table.ts').TableDoc>;
-  assets: { path: string; kind: import('../core/schema.ts').AssetKind; bytes: number; w?: number; h?: number; sec?: number; shader?: ShaderDef }[];
+  assets: { path: string; kind: import('../core/schema.ts').AssetKind; bytes: number; w?: number; h?: number; sec?: number; shader?: ShaderDef; model?: { size: [number, number, number]; center: [number, number, number]; tris: number; clips: string[]; clipSec?: number[] } }[];
   /** 保存データのファイル（saves/*.save.json） */
   saves?: string[];
   /** コードの中でアセットの場所を書いている所（場所 → "game/x.ts:12"） */

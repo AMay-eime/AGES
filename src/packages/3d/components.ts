@@ -49,6 +49,7 @@ export const Mesh3D = defineComponent({
     unlit: { type: 'bool', default: false, desc: '光の影響を受けない（色・画像をそのまま出す）' },
     alpha: { type: 'number', default: 1, min: 0, max: 1, step: 0.05, desc: '不透明度（1 より小さいと透ける）' },
     visible: { type: 'bool', default: true, desc: '描くか' },
+    shadow: { type: 'bool', default: true, desc: '影を落とすか（太陽の影。受けるのは常に）' },
   },
 });
 
@@ -60,6 +61,7 @@ export const Model3D = defineComponent({
     color: { type: 'color', default: '#ffffff', desc: '掛け合わせる色（白でそのまま。当たったときに赤くするなど）' },
     alpha: { type: 'number', default: 1, min: 0, max: 1, step: 0.05, desc: '不透明度（1 より小さいと透ける）' },
     visible: { type: 'bool', default: true, desc: '描くか' },
+    shadow: { type: 'bool', default: true, desc: '影を落とすか（太陽の影。受けるのは常に）' },
     clip: { type: 'string', default: '', desc: '再生する動きの名前（モデルの中の名前。ages assets で見る。空なら元の姿勢）。書き換えると、前の動きから fade 秒でなめらかに切り替わる' },
     speed: { type: 'number', default: 1, min: -10, max: 10, step: 0.05, desc: '動きの速さ（1 でそのまま、0 で止まる）' },
     loop: { type: 'bool', default: true, desc: 'くり返す（false なら最後の姿勢で止まる）' },
@@ -82,6 +84,8 @@ export const Light3D = defineComponent({
     intensity: { type: 'number', default: 1, min: 0, max: 20, step: 0.05, desc: '強さ' },
     range: { type: 'number', default: 10, min: 0.1, max: 1000, step: 0.5, desc: '届く距離（m。point のとき）' },
     enabled: { type: 'bool', default: true, desc: '点けるか' },
+    shadow: { type: 'bool', default: true, desc: '影を落とすか（sun だけ。point の光は影を落とさない）' },
+    shadowRange: { type: 'number', default: 30, min: 1, max: 500, step: 1, desc: '影が出る距離（カメラから m。小さいほど影がくっきり、大きいほど遠くまで出るがぼやける）' },
   },
 });
 

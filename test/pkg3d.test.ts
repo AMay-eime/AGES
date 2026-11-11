@@ -295,3 +295,41 @@ test('モデルの動きの描画: 骨で形が変わる・動かないものは
   // 動きを書いていないモデルは元の形（右上も面の中）
   assert.deepEqual(at(0.3, -1.2), [255, 0, 0], '元の姿勢');
 });
+
+test('影: 太陽の影が床に落ちる。日なたの明るさは影なしと同じ（縞が出ない）。物・光ごとに切れる（ages run --shot）', { skip: (await import('../src/cli/shot.ts')).findChrome() ? false : 'Chrome がない' }, async () => {
+  const { decodePng } = await import('../src/project/png.ts');
+  const dir = join(await mkdtemp(join(tmpdir(), 'ages-3d-')), 'g');
+  await cmdInit(dir, 'g');
+  const cfg = join(dir, 'ages.project.json');
+  const c = JSON.parse(await readFile(cfg, 'utf8'));
+  await writeFile(cfg, JSON.stringify({ ...c, packages: ['3d'], view: { ...c.view, width: 400, height: 300, background: '#000000' } }, null, 2) + '\n');
+  const ent = (id: string, components: Record<string, Record<string, unknown>>) => ({ op: 'addEntity' as const, scene: 'main', entity: { id, components } });
+  await cmdPatch(dir, [
+    ent('floor', { Transform3D: {}, Mesh3D: { shape: 'plane', size: [20, 1, 20], roughness: 1 } }),
+    ent('box', { Transform3D: { y: 2 }, Mesh3D: { roughness: 1 } }),
+    // 真上からの太陽（前 +Z を rx 90 で下へ）
+    ent('sun', { Transform3D: { rx: 90 }, Light3D: { intensity: 0.5 } }),
+    ent('cam', { Transform3D: { y: 1, z: 6 }, Camera3D: {} }),
+  ], false);
+  const { toScreen, cameraFrom } = await import('../src/packages/3d/space.ts');
+  const cam = cameraFrom('cam', m.compose([0, 1, 6], [0, 0, 0]), {}, 400 / 300);
+  const shot = async () => {
+    await cmdRun(dir, { frames: '1', shot: '1', 'shot-dir': join(dir, 'shots') });
+    const png = decodePng(await readFile(join(dir, 'shots', 'main-f1.png')));
+    return (x: number, z: number) => { const s = toScreen(cam, [x, 0, z], 400, 300)!; return png.data[(Math.round(s.y) * png.w + Math.round(s.x)) * 4]; };
+  };
+  // 箱の真下は影（太陽のぶん暗い）、離れた所は日なた。箱の影のふち（x = 0.5）の外はもう日なた
+  const on = await shot();
+  assert.ok(on(2, 0) - on(0, 0) > 60, `影 ${on(0, 0)} 日なた ${on(2, 0)}`);
+  assert.ok(Math.abs(on(2, 0) - on(0.8, 0)) <= 2, `ふちの外 ${on(0.8, 0)}`);
+  assert.ok(on(0.3, 0.3) < on(2, 0) - 60, '箱の下の隅も影');
+  // 物の shadow を切ると落ちない
+  await cmdPatch(dir, [{ op: 'set', path: 'main#box.Mesh3D.shadow', value: false }], false);
+  const noCast = await shot();
+  assert.ok(Math.abs(noCast(0, 0) - noCast(2, 0)) <= 2, `落とさない ${noCast(0, 0)} ${noCast(2, 0)}`);
+  // 光の shadow を切ると、どこも日なた。日なたの明るさは影ありのときと同じ（床が自分の影で暗くならない）
+  await cmdPatch(dir, [{ op: 'set', path: 'main#box.Mesh3D.shadow', value: true }, { op: 'set', path: 'main#sun.Light3D.shadow', value: false }], false);
+  const off = await shot();
+  assert.ok(Math.abs(off(0, 0) - off(2, 0)) <= 2, `影なし ${off(0, 0)} ${off(2, 0)}`);
+  for (const [x, z] of [[2, 0], [-3, 1], [1.5, 2.5], [4, -4]]) assert.ok(Math.abs(off(x, z) - on(x, z)) <= 2, `日なた (${x}, ${z}): 影あり ${on(x, z)} 影なし ${off(x, z)}`);
+});

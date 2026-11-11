@@ -14,7 +14,7 @@ export { matrixOf, worldPosition, forwardOf, lookAt, cameraOf, toScreen, screenR
 
 export default definePackage({
   name: '3d',
-  desc: '3D（作っている途中。基本の形・光・カメラ・モデル（.glb）とその動きまで。影・当たり判定はまだ）',
+  desc: '3D（作っている途中。基本の形・光と影・カメラ・モデル（.glb）とその動きまで。当たり判定はまだ）',
   components: COMPONENTS_3D,
   systems: SYSTEMS_3D,
   checks: CHECKS_3D,
@@ -22,7 +22,7 @@ export default definePackage({
   editor: true,
   toc: [
     '3D の位置・回転・親子とカメラ: Transform3D・Camera3D と `ages/3d` の worldPosition・lookAt・toScreen。Y が上・単位は m・物の前は +Z → `3d`',
-    '3D の形と光: Mesh3D（箱・球・円柱・カプセル・板）・Light3D（太陽・点）・Environment3D（全体の明るさ・霧） → `3d-draw`',
+    '3D の形と光と影: Mesh3D（箱・球・円柱・カプセル・板）・Light3D（太陽・点。影は太陽だけ）・Environment3D（全体の明るさ・霧） → `3d-draw`',
     'モデル（.glb）と動き: Model3D（clip で動きを再生・切り替え）。大きさ・中心・動きの名前は `ages assets` で見る（開かない） → `3d-model`',
   ],
 });

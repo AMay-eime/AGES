@@ -287,8 +287,9 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
     const pic = a.kind === 'image' ? h('img', { src: app.assetUrl(a.path), loading: 'lazy', alt: '', style: pixel ? 'image-rendering:pixelated' : '' })
       : a.kind === 'sound' ? h('div', { class: 'tile-icon' }, '🔊', h('button', { class: 'icon tile-play', title: T('鳴らす'), onclick: (e: Event) => { e.stopPropagation(); open(a); } }, '▶'))
       : a.kind === 'shader' ? h('div', { class: 'tile-icon', title: a.shader?.desc ?? '' }, a.shader?.errors.length ? '⚠' : '✦')
+      : a.kind === 'model' ? h('div', { class: 'tile-icon' }, '🧊')
       : h('div', { class: 'tile-icon', style: `font-family:${fontFamily(app, a.path)}` }, T('Aaあ'));
-    const meta = a.kind === 'image' ? `${a.w ?? '?'}×${a.h ?? '?'}` : a.kind === 'sound' ? (a.sec !== undefined ? T('{0}秒', a.sec) : kb(a.bytes)) : kb(a.bytes);
+    const meta = a.kind === 'image' ? `${a.w ?? '?'}×${a.h ?? '?'}` : a.kind === 'model' && a.model ? `${a.model.size.join('×')}m` : a.kind === 'sound' ? (a.sec !== undefined ? T('{0}秒', a.sec) : kb(a.bytes)) : kb(a.bytes);
     const locked = !!app.state.locks[`file:${a.path}`];
     const t = h('div', { class: `tile${a.path === selected ? ' on' : ''}${n ? '' : ' unused'}`, title: T('{0}\n{1} {2} {3}\n{4}{5}', a.path, KIND_LABEL[a.kind], meta, kb(a.bytes), n ? T('{0}か所で使用', n) : T('未使用'), locked ? T('\n🔒 ロック中（差し替え・移動・削除はできません）') : ''),
       onclick: () => { selected = a.path; renderGrid(); renderSide(); el.focus(); },
@@ -331,6 +332,11 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
         ...Object.entries(a.shader?.uniforms ?? {}).map(([k, f]) => h('div', { class: 'muted', style: 'font:var(--mono)' }, `${k}: ${brief(f)}${f.desc ? ' — ' + f.desc : ''}`)),
         ...(a.shader?.errors ?? []).map((e) => h('div', { style: 'color:var(--bad)' }, e)),
         h('button', { onclick: () => open(a) }, T('中身を開く')))
+      : a.kind === 'model' ? h('div', { class: 'shader-info' },
+        a.model ? h('div', {}, T('大きさ {0} m（幅×高さ×奥行き）', a.model.size.join(' × '))) : null,
+        a.model ? h('div', { class: 'muted' }, T('三角形 {0}', a.model.tris)) : null,
+        ...(a.model?.clips ?? []).map((c, i) => h('div', { class: 'muted', style: 'font:var(--mono)' }, `▶ ${c}  ${T('{0}秒', Math.round((a.model!.clipSec?.[i] ?? 0) * 100) / 100)}`)),
+        h('div', { class: 'muted' }, T('「3D シーン」へドラッグすると置けます')))
       : h('div', { class: 'font-sample', contenteditable: 'true', style: `font-family:${fontFamily(app, a.path)}` }, T('あいうえお 漢字 ABC abc 123'));
     const sheet = app.state.sheets[a.path];
     const go = (r: string) => {
