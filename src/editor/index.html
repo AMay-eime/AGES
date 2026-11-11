@@ -12,6 +12,7 @@
   :root {
     --bg: #1b1d23; --panel: #23262e; --panel2: #2b2f39; --line: #363b47; --text: #d9dde7; --dim: #8a91a3;
     --accent: #4fa3ff; --warn: #ffb02e; --bad: #ff5d73; --good: #5fd38d; --lock: #c792ea;
+    --ai: #2dd4bf;
     --font: 13px/1.45 system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
     --mono: 12px/1.5 ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
   }
@@ -111,6 +112,38 @@
   .log .line:hover .undo-tx { visibility: visible; }
   .log .who-human { color: var(--good); }
   .log .who-ai { color: var(--accent); }
+  /* AI とのやり取り（ai-panel.ts）と、AI の印 */
+  .ai-unseen { box-shadow: inset 3px 0 0 var(--ai); }
+  .ai-fresh { animation: ai-flash 1.2s ease-out 3; }
+  @keyframes ai-flash { from { background-color: rgba(45, 212, 191, .35); } to { background-color: transparent; } }
+  .ai-touch { background-image: linear-gradient(90deg, rgba(45, 212, 191, .13), transparent 70%); }
+  .ai-note { box-shadow: inset -3px 0 0 var(--warn); }
+  .ai-unseen.ai-note { box-shadow: inset 3px 0 0 var(--ai), inset -3px 0 0 var(--warn); }
+  .list .item.ai-note::after, .field.ai-note > label::before { content: "📌"; font-size: 11px; }
+  .list .item.ai-note::after { margin-left: auto; }
+  .ai-chip { display: inline-flex; gap: 6px; align-items: center; border-color: var(--ai); max-width: 340px; }
+  .ai-chip.ask { box-shadow: 0 0 0 1px var(--warn); }
+  .ai-chip .ai-task { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ai-badge { background: var(--ai); color: #10221f; border-radius: 9px; padding: 0 6px; font-size: 11px; font-weight: 700; }
+  .ai-badge.ask { background: var(--warn); color: #2a1d00; }
+  .ai-badge.note { background: var(--panel2); color: var(--text); }
+  .ai-panel { height: 100%; overflow: auto; }
+  .ai-sec { border-bottom: 1px solid var(--line); padding: 6px 8px 8px; }
+  .ai-head { font-weight: 700; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+  .ai-card { background: var(--panel2); border-radius: 6px; padding: 6px 8px; margin: 4px 0; border-left: 3px solid var(--ai); }
+  .ai-card.ask { border-left-color: var(--warn); }
+  .ai-row { display: flex; align-items: baseline; gap: 4px; padding: 2px 0; min-width: 0; }
+  .ai-row a, .ai-addr { cursor: pointer; }
+  .ai-row > .muted:first-child, .ai-row button { flex: none; white-space: nowrap; }
+  .ai-row > span[style*='flex:1'] { overflow-wrap: anywhere; }
+  .ai-steps { margin: 4px 0 4px 18px; padding: 0; }
+  .ai-steps li.done { color: var(--dim); text-decoration: line-through; }
+  .ai-steps li.now { color: var(--ai); font-weight: 700; }
+  .ai-reply { color: var(--ai); }
+  .ai-compose { display: flex; flex-direction: column; gap: 4px; margin-bottom: 4px; }
+  .ai-diff { background: #14161b; border-radius: 4px; padding: 4px 6px; font: var(--mono); font-size: 11px; max-height: 320px; overflow: auto; white-space: pre; margin: 2px 0 6px; }
+  .ai-diff .plus, .ai-row .plus { color: var(--good); }
+  .ai-diff .minus, .ai-row .minus { color: var(--bad); }
   .log .who-system { color: var(--lock); }
   #toasts { position: fixed; right: 12px; bottom: 12px; display: flex; flex-direction: column; gap: 6px; z-index: 10; }
   .toast { background: var(--panel2); border: 1px solid var(--line); border-left: 3px solid var(--accent); padding: 8px 12px; border-radius: 4px; max-width: 440px; box-shadow: 0 4px 16px #0006; white-space: pre-wrap; }

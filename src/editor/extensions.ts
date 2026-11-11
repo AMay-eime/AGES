@@ -182,7 +182,15 @@ export function menuItemsFor(app: App, where: 'entity' | 'prefab', targets: stri
       out.push([m.label, () => { Promise.resolve(m.run(targets, x.api)).catch((e) => toast(`${x.ext.id}: ${(e as Error).message}`, 'bad', 8000)); }]);
     }
   }
+  // AI への付箋（1つ選んでいるとき。AI は次の作業の区切りで読む）
+  if (targets.length === 1) out.push([T('📌 AI への付箋…'), () => void noteFor(app, targets[0])]);
   return out;
+}
+
+/** その住所に AI への付箋を貼る（文字を尋ねる） */
+export async function noteFor(app: App, addr: string): Promise<void> {
+  const text = await askText(T('📌 {0} への付箋（AI は次の作業の区切りで読みます）', addr));
+  if (text) await app.ai.note(text, addr);
 }
 
 /** 1行の文字を尋ねる小さな窓 */

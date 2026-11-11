@@ -6,6 +6,7 @@ import { createInterface } from 'node:readline';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { makeInstructions, makeTools } from './tools.ts';
+import { useActiveTask, withTalkNotice } from '../cli/ages.ts';
 
 process.removeAllListeners('warning');
 
@@ -42,7 +43,9 @@ async function handle(msg: { id?: number | string; method: string; params?: any 
       if (!tool) return fail(-32602, `道具 ${msg.params?.name} はありません。使えるのは ${TOOLS.map((t) => t.name).join(' / ')}`);
       const a = msg.params?.arguments ?? {};
       try {
-        const text = await tool.run(a, resolve(a.dir ?? defaultProject));
+        const dir = resolve(a.dir ?? defaultProject);
+        await useActiveTask(dir);
+        const text = await withTalkNotice(dir, tool.name === 'ages_talk' ? 'talk' : tool.name, await tool.run(a, dir));
         return reply({ content: [{ type: 'text', text }] });
       } catch (e) {
         // 道具のエラーは「失敗した結果」として返す（AIが読んで直せるように）

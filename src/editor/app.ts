@@ -17,6 +17,7 @@ import { LocalStore } from '../core/save.ts';
 import { languagesOf } from '../core/i18n.ts';
 import { resolveEntity } from '../core/variant.ts';
 import { T, lang } from './i18n.ts';
+import { AiModel } from './ai.ts';
 
 export interface LockMark { who: string; t: string; value: unknown; note?: string }
 export interface TouchMark { who: string; t: string }
@@ -91,6 +92,8 @@ export class App {
   readonly devices = new Devices();
   /** エディタ拡張（本体の拡張とプロジェクトの拡張。extensions.ts） */
   extensions: import('./extensions.ts').LoadedExtension[] = [];
+  /** AI とのやり取り（作業・質問・付箋）と、AI の変更を確かめたか（ai.ts） */
+  readonly ai = new AiModel(this);
   private loadedVersion = 0;
   private listeners = new Map<string, Set<Listener>>();
 

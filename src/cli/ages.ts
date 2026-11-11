@@ -19,6 +19,7 @@ import { checkExport } from './export-check.ts';
 import { readCursor, readLog, readTouched, summarize, writeCursor, type Actor } from '../project/oplog.ts';
 import { OP_DOCS, getValue, parseLiteral, splitCell, type Op } from '../core/patch.ts';
 import { readGuide } from '../project/guide.ts';
+import { activeTask, appendTalk, foldTalk, newId, readTalk, readTalkCursor, talkNotice, talkView, writeTalkCursor } from '../project/talk.ts';
 import { brief, defaultOf, matrixSize, suggest, typeOf, type AssetKind } from '../core/schema.ts';
 import { assetRefs, codeSceneRefs, isUnder } from '../core/assets.ts';
 import { parseAddress } from '../core/docs.ts';
@@ -60,6 +61,8 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   log    <dir> [--all] [--peek]      前回からの編集の要約（--peek は既読にしない）
   undo   <dir> [--tx id] [--force]   自分（AI）の直前の編集を元に戻す（その後で変えられた所があれば止まる）。redo <dir> でやり直す
   check  <dir>                       全データの検証とロックの検査
+  talk   <dir> [--task 作業 [--steps "a|b|c"] [--touch 住所,住所]] [--step 2] [--done 結果] [--ask 質問 [--choices "A|B"] [--about 住所]] [--reply 付箋ID 一言]
+               エディタの人とのやり取り（何をしているかを見せる・人が決めることを聞く・付箋を読む）。引数なしで読む
   version <dir> [--record]           AGES の版（記録が古ければ直し方を出す）。--record で今の版を残す
   export <dir> [--out 先] [--check] [--serve [ポート]] [--desktop [--id com.名前.ゲーム] [--fullscreen]]  書き出す（ゲームだけ。dist/web は Web にそのまま置ける。--desktop は Tauri の元 dist/desktop。--check は headless の Chrome で動くか確かめる）
   pin    <dir> [--repo URL] [--commit SHA] [--force]  版だけ同梱の形に（ages.mjs が本体を .ages/engine に取ってくる。GitHub との連携用）。AGENTS.md は手で直されていなければ本体の版に合わせる（--force で直されていても）
@@ -202,6 +205,14 @@ export async function cmdPin(dir: string, repo = DEFAULT_REPO, commit?: string, 
   if (!gi.split(/\r?\n/).includes(`${PINNED_ENGINE}/`)) {
     await writeFile(ignore, gi + (gi && !gi.endsWith('\n') ? '\n' : '') + `# AGES 本体（ages.mjs が engineSource の版を取ってくる。共有しない）\n${PINNED_ENGINE}/\n`);
     done.push('.gitignore');
+  }
+  // 前の版で作ったプロジェクトにも: AI が人の書き込みを読んだ所は共有しない・やり取りは Git の統合で両方の行を残す（ages talk）
+  for (const [file, line, note] of [['.gitignore', '.ages/talk-cursor', '# AI が人の書き込みを読んだ所（共有しない）'], ['.gitattributes', '.ages/talk.jsonl merge=union', '# エディタの人と AI のやり取り（ages talk）は追記だけ']] as const) {
+    const f = join(p.dir, file);
+    const t = existsSync(f) ? await readFile(f, 'utf8') : '';
+    if (t.split(/\r?\n/).includes(line)) continue;
+    await writeFile(f, t + (t && !t.endsWith('\n') ? '\n' : '') + `${note}\n${line}\n`);
+    if (!done.includes(file)) done.push(file);
   }
   if (edited && !force) done.push(`AGENTS.md は手で直されているので、そのままにした（本体の新しい手順は ${PINNED_ENGINE}/AGENTS.md。直した所を移してから ages pin <dir> --force で合わせる）`);
   else if (before !== agents) { await writeFile(agentsFile, agents); done.push('AGENTS.md（本体のこの版の手順）'); }
@@ -863,6 +874,97 @@ export async function cmdSlice(dir: string, image: string, flags: Record<string,
   return [summary, refs.length ? `番号のずれに合わせて直した指定: ${refs.map((c) => `${c.path} ${fmt(c.from)}→${fmt(c.to)}`).join(', ')}` : ''].filter(Boolean).join('\n');
 }
 
+export interface TalkArgs {
+  task?: string; steps?: string[]; step?: number; touch?: string[]; done?: string | true;
+  ask?: string; choices?: string[]; about?: string; reply?: string; text?: string;
+}
+
+/** CLI の引数から（--steps は | で、--touch は , で区切る。行列のセル [2,3] の , では切らない） */
+export function talkArgs(f: Args['flags'], text?: string): TalkArgs {
+  const str = (k: string) => (typeof f[k] === 'string' ? f[k] as string : undefined);
+  const list = (v: string | undefined, sep: RegExp) => v?.split(sep).map((x) => x.trim()).filter(Boolean);
+  return {
+    task: str('task'), steps: list(str('steps'), /\|/), step: str('step') !== undefined ? Number(str('step')) : undefined,
+    touch: list(str('touch'), /,(?![^[]*\])/), done: f.done === true ? true : str('done'),
+    ask: str('ask'), choices: list(str('choices'), /\|/), about: str('about'), reply: str('reply'), text,
+  };
+}
+
+/** AI の編集に、いまの作業の ID を付ける（エディタで作業ごとにまとめる） */
+export async function useActiveTask(dir: string): Promise<void> {
+  if (!existsSync(join(dir, '.ages', 'talk.jsonl'))) { delete AI_ACTOR.task; return; }
+  const k = activeTask(foldTalk(await readTalk(resolve(dir))), AI_ACTOR.who);
+  if (k) AI_ACTOR.task = k.id; else delete AI_ACTOR.task;
+}
+
+/** 人の書き込み（付箋・答え）を AI がまだ読んでいなければ、出力の先頭に1行 */
+export async function withTalkNotice(dir: string, cmd: string, out: string): Promise<string> {
+  if (cmd === 'talk' || cmd === 'init' || !existsSync(join(dir, '.ages', 'talk.jsonl'))) return out;
+  const n = await talkNotice(resolve(dir)).catch(() => '');
+  return n ? `${n}\n${out}` : out;
+}
+
+/** エディタの人とのやり取り。作業を始める・進める・終える、質問する、付箋に返事をする。最後に人からの書き込みを見せて既読にする */
+export async function cmdTalk(dir: string, a: TalkArgs): Promise<string> {
+  const root = resolve(dir);
+  if (!existsSync(join(root, 'ages.project.json'))) throw new Error(`${dir} は AGES のプロジェクトではありません（ages.project.json がない）`);
+  const me = { who: AI_ACTOR.who, kind: 'ai' as const };
+  const done: string[] = [];
+  let state = foldTalk(await readTalk(root));
+  let cur = activeTask(state, me.who);
+  const warn = await addressWarnings(root, [...(a.touch ?? []), ...(a.about ? [a.about] : [])]);
+  if (a.task) {
+    if (cur) await appendTalk(root, me, { ev: 'done', id: cur.id });
+    const id = newId('t');
+    await appendTalk(root, me, { ev: 'task', id, title: a.task, ...(a.steps?.length ? { steps: a.steps } : {}), ...(a.touch?.length ? { touch: a.touch } : {}) });
+    done.push(`作業 ${id} を始めた: ${a.task}${a.steps?.length ? `（1/${a.steps.length} ${a.steps[0]}）` : ''}`);
+  } else if (a.step !== undefined || a.touch?.length) {
+    if (!cur) throw new Error('いまの作業がありません。--task "何をするか" で始める');
+    if (a.step !== undefined && (!Number.isInteger(a.step) || a.step < 1 || (cur.steps.length && a.step > cur.steps.length))) throw new Error(`--step は 1〜${cur.steps.length || '段階の数'}（--steps で段階を書いた作業の何番目か）`);
+    await appendTalk(root, me, { ev: 'step', id: cur.id, ...(a.step !== undefined ? { step: a.step } : {}), ...(a.touch?.length ? { touch: a.touch } : {}) });
+    if (a.step !== undefined) done.push(`${a.step}/${cur.steps.length || '?'}${cur.steps[a.step - 1] ? ` ${cur.steps[a.step - 1]}` : ''}`);
+    if (a.touch?.length) done.push(`触る予定: ${a.touch.join(' ')}`);
+  }
+  state = foldTalk(await readTalk(root));
+  cur = activeTask(state, me.who);
+  if (a.ask) {
+    const id = newId('q');
+    await appendTalk(root, me, { ev: 'ask', id, text: a.ask, ...(a.choices?.length ? { choices: a.choices } : {}), ...(a.about ? { about: a.about } : {}), ...(cur ? { task: cur.id } : {}) });
+    done.push(`質問 ${id} を出した（答えを待たずに続けてよい。答えは次の ages の出力に 📌 で出る）`);
+  }
+  if (a.reply) {
+    const n = state.notes.find((x) => x.id === a.reply);
+    if (!n) throw new Error(`付箋 ${a.reply} はありません${suggest(a.reply, state.notes.map((x) => x.id))}`);
+    await appendTalk(root, me, { ev: 'reply', id: n.id, ...(a.text ? { text: a.text } : {}) });
+    done.push(`付箋 ${n.id} を済にした`);
+  }
+  if (a.done !== undefined) {
+    if (!cur) throw new Error('いまの作業がありません（終わらせる作業がない）');
+    await appendTalk(root, me, { ev: 'done', id: cur.id, ...(typeof a.done === 'string' ? { text: a.done } : {}) });
+    done.push(`作業 ${cur.id} を終えた`);
+  }
+  const cursor = await readTalkCursor(root);
+  const view = talkView(foldTalk(await readTalk(root)), me.who, cursor);
+  await writeTalkCursor(root);
+  return [...done, ...warn, view].join('\n');
+}
+
+/** 住所の形だけを確かめる（あるかどうか。ないものは ⚠。エディタで印が出ないため） */
+async function addressWarnings(root: string, addrs: string[]): Promise<string[]> {
+  if (!addrs.length) return [];
+  const p = await Project.load(root);
+  return addrs.filter((x) => !addressExists(p, x)).map((x) => `⚠ ${x} が見つかりません（エディタで印が出ません）`);
+}
+
+export function addressExists(p: Project, addr: string): boolean {
+  const head = addr.split(/[.[|]/)[0];
+  if (addr.startsWith('@')) return !!p.registry.findPrefab(head.slice(1));
+  if (addr.startsWith('$')) return p.docs.tables.has(head.slice(1));
+  if (addr.startsWith('file:') || addr.startsWith('sheet:')) return true;
+  if (head.includes('#')) { const [sc, id] = head.split('#'); return !!p.docs.scenes.get(sc)?.entities.some((e) => e.id === id); }
+  return p.docs.scenes.has(head) || existsSync(join(p.dir, addr));
+}
+
 function withLockReport(p: Project, text: string): string {
   return p.lockReport.length ? `${p.lockReport.map((l) => '🔒 ' + l).join('\n')}\n${text}` : text;
 }
@@ -873,6 +975,7 @@ async function main(argv: string[]): Promise<void> {
   const dir = a.pos[0];
   if (!cmd || cmd === 'help' || !dir) { console.log(HELP); return; }
   const force = a.flags.force === true;
+  await useActiveTask(dir);
   let out: string;
   switch (cmd) {
     case 'init': out = await cmdInit(dir, typeof a.flags.name === 'string' ? a.flags.name : undefined); if (a.flags.pin === true) out += '\n' + await cmdPin(dir); break;
@@ -909,9 +1012,10 @@ async function main(argv: string[]): Promise<void> {
     case 'sheet': out = await cmdSheet(dir, need(a.pos[1], '画像の場所（例 assets/hero.png）')); break;
     case 'slice': out = await cmdSlice(dir, need(a.pos[1], '画像の場所（例 assets/hero.png）'), a.flags); break;
     case 'table': out = await cmdTable(dir, need(a.pos[1], '表の名前（例 enemies）').replace(/^\$/, ''), a.flags); break;
+    case 'talk': out = await cmdTalk(dir, talkArgs(a.flags, a.pos[1])); break;
     default: throw new Error(`未知のコマンド ${cmd}。ages help で一覧を表示します`);
   }
-  console.log(out);
+  console.log(await withTalkNotice(dir, cmd, out));
 }
 
 /** --params の書き方: a=1,b=名前 か {"a":1} */

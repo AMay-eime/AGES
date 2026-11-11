@@ -94,7 +94,7 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
       title: f ? T('{0}: {1}{2}\nクリックで並べて見る（データの並びは変わりません）', k, typeOf(f), f.desc ? '\n' + TD(f.desc) : '') : T('行の名前（並べ替えても変わらない）'),
       onclick: () => { if (sortCol === k) sortDir = -sortDir; else { sortCol = k; sortDir = 1; } renderGrid(); },
     }, k, sortCol === k ? (sortDir > 0 ? ' ▲' : ' ▼') : '');
-    const body = visibleRows().map((r) => h('tr', { class: r.id === selRow ? 'sel' : '', onclick: (e: Event) => { if ((e.target as HTMLElement).tagName === 'TD' || (e.target as HTMLElement).tagName === 'TR') pick(r.id); } },
+    const body = visibleRows().map((r) => h('tr', { class: r.id === selRow ? 'sel' : '', 'data-ai': addr(r.id), onclick: (e: Event) => { if ((e.target as HTMLElement).tagName === 'TD' || (e.target as HTMLElement).tagName === 'TR') pick(r.id); } },
       h('td', { class: 'rowno muted' }, String(rows().indexOf(r))),
       h('td', { class: `idcell ${touched[addr(r.id)] ? 'touched' : ''}`, 'data-row': r.id, 'data-col': '__id' }, idInput(r)),
       cols.map(([k, f]) => cell(r, k, f, locks[addr(r.id, k)], touched[addr(r.id, k)]))));
@@ -119,7 +119,7 @@ export function tablePanel(app: App): Panel & { open(name: string, row?: string)
     const commit = (nv: unknown, final: boolean) => { if (final && JSON.stringify(nv) !== JSON.stringify(v)) patch([{ op: 'set', path: addr(r.id, k), value: nv }]); };
     const w = widget(app, f, v, commit, { comp: '', field: k, holder: {} });
     if (lock) w.el.setAttribute('inert', '');
-    const td = h('td', { class: cls, 'data-row': r.id, 'data-col': k }, w.el, lock ? h('span', { class: 'lockmark', title: T('🔒 ロック中（AI もエディタも変えられません）。変えるならロックマネージャーで') }, '🔒') : null);
+    const td = h('td', { class: cls, 'data-row': r.id, 'data-col': k, 'data-ai': addr(r.id, k), 'data-path': addr(r.id, k) }, w.el, lock ? h('span', { class: 'lockmark', title: T('🔒 ロック中（AI もエディタも変えられません）。変えるならロックマネージャーで') }, '🔒') : null);
     td.addEventListener('focusin', () => pick(r.id));
     // 表計算ソフトからの貼り付け（複数のセル）
     td.addEventListener('paste', (e) => {

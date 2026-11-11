@@ -6,7 +6,7 @@ import { ASSET_LABEL, brief, defaultOf, matrixSize, typeOf, variantDefault, type
 import { formatSub, getIn, setIn, type EntityData, type PrefabDoc } from '../../core/docs.ts';
 import { prefabChoices, resolveEntity, resolvePrefab } from '../../core/variant.ts';
 import type { Op } from '../../core/patch.ts';
-import { h, clear, time, modal, toast } from './dom.ts';
+import { h, clear, time, modal, toast, menu } from './dom.ts';
 import { findFrame, frameLabel, listFrames, type FrameRef, type SheetDef } from '../../core/sheet.ts';
 import { EASES, EASE_NAMES, type EaseName } from '../../core/ease.ts';
 import { buttonLabel } from '../../core/input.ts';
@@ -14,7 +14,7 @@ import { captureNext } from '../../input/devices.ts';
 import { ASSET_MIME, assetLabel } from './assets.ts';
 import { kindOf } from '../../core/assets.ts';
 import type { Panel } from './layout.ts';
-import { componentDrawersFor, fieldDrawerFor } from '../extensions.ts';
+import { componentDrawersFor, fieldDrawerFor, noteFor } from '../extensions.ts';
 import type { EditorApi, FieldView } from '../window-api.ts';
 import { T, TD } from '../i18n.ts';
 
@@ -165,7 +165,8 @@ export function inspectorPanel(app: App): Panel {
         const revert = over && !lock ? h('button', { class: 'icon tiny', title: T('元（@{0}）の値に戻す', variantOf), onclick: () => app.patch([{ op: 'revert', path }]) }, '↺') : null;
         const row = h('div', {
           class: `field ${isWide(f) ? 'wide' : ''} ${has ? '' : 'default'} ${touched ? 'touched' : ''} ${lock ? 'locked' : ''} ${over ? 'override' : ''}`,
-        }, h('label', { title: T('{0}: {1}{2}{3}{4}', fname, brief(f), f.desc ? '\n' + TD(f.desc) : '', touched ? T('\n★ {0} が {1} に調整', touched.who, time(touched.t)) : '', variantOf ? (over ? T('\n{0}で変えた値（元 @{1} から）', what, variantOf) : T('\n元 @{0} から受け継いだ値', variantOf)) : has ? '' : T('\n（省略中: 既定値）')) }, revert, fname), w.el, lockBtn);
+          'data-ai': path, 'data-path': path,
+        }, h('label', { oncontextmenu: (e: MouseEvent) => { e.preventDefault(); menu(e.clientX, e.clientY, [[T('📌 AI への付箋…'), () => void noteFor(app, path)]]); }, title: T('{0}: {1}{2}{3}{4}', fname, brief(f), f.desc ? '\n' + TD(f.desc) : '', touched ? T('\n★ {0} が {1} に調整', touched.who, time(touched.t)) : '', variantOf ? (over ? T('\n{0}で変えた値（元 @{1} から）', what, variantOf) : T('\n元 @{0} から受け継いだ値', variantOf)) : has ? '' : T('\n（省略中: 既定値）')) }, revert, fname), w.el, lockBtn);
         live.push({ path, comp: cname, field: fname, set: w.set, el: row });
         return row;
       });

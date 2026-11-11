@@ -21,6 +21,18 @@ export interface EditorFocus {
   table?: string;
   /** 見えているエディタ拡張の窓（id と見出し） */
   windows?: { id: string; title?: string }[];
+  /** 人が入力中の欄の住所と、最後に打った時刻（AI はその間そこを変えない） */
+  editing?: string;
+  editingAt?: string;
+}
+
+/** 人が最後に打ってからこの間は、その欄を AI が変えない */
+export const EDITING_MS = 20_000;
+
+/** 人が入力中の欄（新しいものだけ） */
+export function editingNow(f: EditorFocus | null, now = Date.now()): string | null {
+  if (!f?.editing || !f.editingAt) return null;
+  return now - Date.parse(f.editingAt) < EDITING_MS ? f.editing : null;
 }
 
 /** これより古い（エディタを閉じた・触っていない）ものは使わない */
@@ -37,6 +49,7 @@ export async function writeFocus(root: string, f: Omit<EditorFocus, 'at'> | null
   if (Array.isArray(f.selected)) clean.selected = f.selected.filter((x) => typeof x === 'string').slice(0, 20);
   if (typeof f.row === 'string' && f.row) clean.row = f.row;
   if (typeof f.table === 'string' && f.table) clean.table = f.table;
+  if (typeof f.editing === 'string' && f.editing && typeof f.editingAt === 'string') { clean.editing = f.editing; clean.editingAt = f.editingAt; }
   if (Array.isArray(f.windows)) clean.windows = f.windows.filter((w) => w && typeof w.id === 'string').slice(0, 8).map((w) => ({ id: w.id, ...(typeof w.title === 'string' ? { title: w.title } : {}) }));
   await mkdir(join(agesHome(), 'focus'), { recursive: true });
   await writeFile(file, JSON.stringify(clean) + '\n');
