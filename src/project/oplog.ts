@@ -11,6 +11,8 @@ export interface Actor {
   kind: 'human' | 'ai' | 'system';
   /** どのウインドウから（inspector / hierarchy / text / window:xxx / cli） */
   win?: string;
+  /** AI の作業（ages talk --task）の ID。エディタで AI の変更を作業ごとにまとめる */
+  task?: string;
 }
 
 export interface LogEntry {
@@ -28,6 +30,8 @@ export interface LogEntry {
   via?: string;
   /** 1回の編集（元に戻す単位）の ID */
   tx?: string;
+  /** AI の作業の ID（ages talk --task） */
+  task?: string;
 }
 
 export interface TouchMark {
@@ -49,6 +53,7 @@ export async function appendLog(root: string, actor: Actor, op: string, changes:
     if (c.auto) e.auto = true;
     if (c.via) e.via = c.via;
     if (tx) e.tx = tx;
+    if (actor.task) e.task = actor.task;
     return e;
   });
   await appendFile(join(dirOf(root), 'oplog.jsonl'), entries.map((e) => JSON.stringify(e)).join('\n') + '\n');

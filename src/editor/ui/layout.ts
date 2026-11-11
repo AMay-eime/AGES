@@ -35,7 +35,7 @@ export interface LayoutData {
 }
 
 export const DEFAULT_LAYOUT: LayoutData = {
-  areas: { left: ['hierarchy', 'project'], center: ['game', 'matrix', 'sprite', 'table', 'text'], bottom: ['assets', 'log', 'git', 'export'], right: ['inspector'] },
+  areas: { left: ['hierarchy', 'project'], center: ['game', 'matrix', 'sprite', 'table', 'text'], bottom: ['assets', 'log', 'git', 'export'], right: ['inspector', 'ai'] },
   active: { left: 'hierarchy', center: 'game', bottom: 'assets', right: 'inspector' },
   sizes: { left: 260, right: 360, bottom: 210 },
 };

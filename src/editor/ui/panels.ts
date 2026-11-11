@@ -142,6 +142,7 @@ export function hierarchyPanel(app: App): Panel {
         out.push(h('div', {
           class: `item ${sel?.kind === 'scene' && sel.id === e.id ? 'sel' : app.extra.includes(e.id) ? 'sel2' : ''}`,
           style: `padding-left:${4 + depth * 14}px`,
+          'data-ai': `${app.scene}#${e.id}`,
           title: T('Shift・Ctrl+クリックで足す・外す。右クリックで複製・削除・プレハブにする。ほかの物の上へ運ぶとその子に（UI どうしは UI.parent・位置のある物どうしは Transform.parent。シーン名の行へ運ぶと親なし。Ctrl+Z で戻せる）'),
           onclick: (ev: MouseEvent) => app.select({ kind: 'scene', scene: app.scene, id: e.id }, { add: ev.shiftKey || ev.ctrlKey || ev.metaKey }),
           oncontextmenu: (ev: MouseEvent) => {
@@ -209,6 +210,7 @@ export function hierarchyPanel(app: App): Panel {
           return h('div', {
             class: `item ${sel?.kind === 'prefab' && sel.name === p.name ? 'sel' : ''}`,
             onclick: () => app.select({ kind: 'prefab', name: p.name }),
+            'data-ai': `@${p.name}`,
             // 右クリック: 拡張の menus（where: 'prefab'。本体の写す・名前を変える・削除も）
             oncontextmenu: (ev: MouseEvent) => {
               ev.preventDefault();

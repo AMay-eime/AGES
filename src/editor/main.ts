@@ -4,6 +4,8 @@ import { Layout, type LayoutData, type Panel } from './ui/layout.ts';
 import { h, clear, toast, modal } from './ui/dom.ts';
 import { inspectorPanel } from './ui/inspector.ts';
 import { hierarchyPanel, projectPanel, textPanel, logPanel, gitPanel, exportPanel } from './ui/panels.ts';
+import { aiPanel, watchAiMarks } from './ui/ai-panel.ts';
+import { onPopout } from './ui/popout.ts';
 import { gamePanel } from './ui/game.ts';
 import { matrixPanel } from './ui/matrix.ts';
 import { spritePanel } from './ui/sprite.ts';
@@ -76,7 +78,7 @@ const matrix = matrixPanel(app);
 const sprite = spritePanel(app);
 const table = tablePanel(app);
 const assets = assetsPanel(app);
-for (const p of [hierarchyPanel(app), projectPanel(app, (path) => text.open(path)), game, matrix, sprite, table, text, assets, logPanel(app), gitPanel(app), exportPanel(app), inspectorPanel(app)]) layout.add(p);
+for (const p of [hierarchyPanel(app), projectPanel(app, (path) => text.open(path)), game, matrix, sprite, table, text, assets, logPanel(app), gitPanel(app), exportPanel(app), inspectorPanel(app), aiPanel(app)]) layout.add(p);
 app.on('openText', (path) => text.open(String(path)));
 
 // エディタで人が見ている所を、AI の地図に出すために知らせる（選びが変わったら少し待って、開いている間は1分ごと。閉じたら消す）
@@ -86,7 +88,40 @@ const focusNow = () => ({
   ...(app.row ? { row: `$${app.row.table}.${app.row.id}` } : {}),
   ...(layout.isVisible('table') && table.current() ? { table: table.current() } : {}),
   windows: [...layout.panels.values()].filter((p) => p.id.startsWith('win:') && layout.isVisible(p.id)).map((p) => ({ id: p.id.slice(4), title: p.title })),
+  ...(editing ? { editing: editing.path, editingAt: new Date(editing.at).toISOString() } : {}),
 });
+// 人が入力中の欄（インスペクタ・表の data-path のある所）。AI はその間そこを変えない（作業のぶつかり防止）。
+// AI が触る予定の所に入ったら知らせる
+let editing: { path: string; at: number } | null = null;
+let lastEditSent = 0;
+const warned = new Set<string>();
+const isEditable = (t: EventTarget | null): t is HTMLElement => !!t && (t as HTMLElement).matches?.('input, textarea, select, [contenteditable]');
+function watchEditing(doc: Document): void {
+  doc.addEventListener('focusin', (e) => {
+    const path = isEditable(e.target) ? e.target.closest('[data-path]')?.getAttribute('data-path') : null;
+    if (!path) return;
+    editing = { path, at: Date.now() };
+    const k = app.ai.activeTasks()[0];
+    if (k && app.ai.touches(path) && !warned.has(`${k.id}|${path}`)) {
+      warned.add(`${k.id}|${path}`);
+      toast(T('🤖 AI がこのあたりを作業中です（{0}）。入力している間は、AI はこの欄を変えません', k.title), 'warn', 6000);
+    }
+    sendFocus();
+  }, true);
+  doc.addEventListener('input', (e) => {
+    if (!editing || !isEditable(e.target)) return;
+    editing.at = Date.now();
+    if (Date.now() - lastEditSent > 5000) { lastEditSent = Date.now(); sendFocus(); }
+  }, true);
+  doc.addEventListener('focusout', (e) => {
+    if (!editing || !isEditable(e.target)) return;
+    editing = null;
+    sendFocus();
+  }, true);
+}
+watchEditing(document);
+watchAiMarks(app, document);
+onPopout((w) => { watchEditing(w.document); watchAiMarks(app, w.document); });
 function sendFocus(): void {
   clearTimeout(focusTimer);
   focusTimer = setTimeout(() => { app.api('/api/focus', { body: focusNow() }).catch(() => {}); }, 400);
@@ -101,6 +136,7 @@ app.on('openMatrix', (path) => { matrix.open(path as string); layout.show('matri
 app.on('openSprite', (image) => { sprite.open(image as string); layout.show('sprite'); sprite.render?.(); });
 app.on('openTable', (t) => { const { name, row } = t as { name: string; row?: string }; table.open(name, row); layout.show('table'); });
 app.on('showPanel', (id) => layout.show(String(id)));
+void app.ai.refresh();
 (window as unknown as { agesLayout: Layout }).agesLayout = layout; // デバッグ・確かめ用（タブの開け閉め・別のウインドウ）
 
 // ---------- 上のバー ----------
@@ -123,6 +159,7 @@ const renderTop = () => {
     h('button', { class: 'icon', title: app.undoInfo.undo ? T('元に戻す（Ctrl+Z）: {0}', app.undoInfo.undo.label) : T('元に戻せる編集はありません'), disabled: !app.undoInfo.undo || !!p, onclick: () => app.undo() }, '↶'),
     h('button', { class: 'icon', title: app.undoInfo.redo ? T('やり直す（Ctrl+Shift+Z）: {0}', app.undoInfo.redo.label) : T('やり直せる編集はありません'), disabled: !app.undoInfo.redo || !!p, onclick: () => app.undo(true) }, '↷'),
     h('span', { class: 'spacer' }),
+    aiChip(),
     audioControls(),
     broken ? h('button', { style: 'border-color:var(--bad);color:var(--bad)', onclick: () => app.openLocks(), title: T('{0}\nロックマネージャーで確かめます', s.integrity.reason) }, T('🔒⚠ ロックの記録を確認')) : null,
     h('span', { class: 'status' }, s?.error ? `⚠ ${s.error}` : `${s.issues.length ? `⚠${s.issues.length} ` : ''}`, s?.error ? null : h('a', { style: 'cursor:pointer', title: T('ロックマネージャーを開く（ロックの一覧・付ける・外す）'), onclick: () => app.openLocks() }, `🔒${locks}`), s?.error ? '' : `  v${s.version}`),
@@ -131,6 +168,24 @@ const renderTop = () => {
 };
 app.on('change', renderTop);
 app.on('play', renderTop);
+app.on('ai', renderTop);
+
+/** 上のバーの AI: いまの作業（段階）・確かめていない変更・質問・付箋。押すと AI のパネル */
+function aiChip(): HTMLElement | null {
+  const ai = app.ai;
+  const k = ai.activeTasks()[0];
+  const n = ai.unseen().length, q = ai.waitingAsks().length, notes = ai.openNotes().length;
+  if (!k && !n && !q && !notes) return null;
+  const step = k && k.steps.length ? ` ${k.step}/${k.steps.length}` : '';
+  return h('button', {
+    class: `ai-chip ${q ? 'ask' : ''}`,
+    title: [k ? T('🤖 AI の作業: {0}{1}', k.title, k.steps[k.step - 1] ? `（${k.step}/${k.steps.length} ${k.steps[k.step - 1]}）` : '') : '', n ? T('AI の変更 {0}件（確かめていない）', n) : '', q ? T('AI からの質問 {0}件', q) : '', notes ? T('AI への付箋 {0}件（まだ片付いていない）', notes) : ''].filter(Boolean).join('\n'),
+    onclick: () => app.emit('showPanel', 'ai'),
+  }, k ? h('span', { class: 'ai-task' }, `🤖 ${k.title}${step}`) : '🤖',
+  n ? h('span', { class: 'ai-badge' }, String(n)) : null,
+  q ? h('span', { class: 'ai-badge ask' }, `❓${q}`) : null,
+  notes ? h('span', { class: 'ai-badge note' }, `📌${notes}`) : null);
+}
 app.on('audio', renderTop);
 
 /** 再生の速さ（拡張の api.speed と同じ） */
@@ -283,7 +338,10 @@ const events = new EventSource('/api/events');
 events.onmessage = async (msg) => {
   const ev = JSON.parse(msg.data);
   if (ev.type === 'hello') return;
+  // AI とのやり取り・確かめた印だけが変わったときは、AI の所だけ読み直す
+  if (ev.type === 'talk' || ev.type === 'review') { await app.ai.refresh(); return; }
   await app.refresh();
+  void app.ai.refresh();
   if (ev.type === 'docs' && ev.by === 'external') {
     const n = ev.changes?.length ?? 0;
     if (n) toast(T('外部でファイルが編集されました（{0}件の変更）', n));

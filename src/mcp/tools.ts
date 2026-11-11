@@ -1,12 +1,13 @@
 // AGES の MCP の道具（tools）と、使い方の説明（instructions）。
 // server.ts から使う。テスト（毎回読む量の上限）からも読めるよう、標準入出力を開かないこのファイルに分けてある。
-import { cmdAssets, cmdUndo, cmdCheck, cmdUi, cmdGet, cmdInit, cmdLog, cmdMap, cmdFind, cmdPatch, cmdRun, cmdSchema, cmdSheet, cmdSlice, cmdTable } from '../cli/ages.ts';
+import { cmdAssets, cmdUndo, cmdCheck, cmdUi, cmdGet, cmdInit, cmdLog, cmdMap, cmdFind, cmdPatch, cmdRun, cmdSchema, cmdSheet, cmdSlice, cmdTable, cmdTalk } from '../cli/ages.ts';
 import { parseLiteral, splitCell, type Op } from '../core/patch.ts';
 
 /** 使い方の説明（MCP の initialize で毎回渡る）。短く保つ: 機能ごとの手順は ages_schema の guide で要るときに引く */
 export function makeInstructions(defaultProject: string): string {
   return `AGES は、AIと人が一緒に速くゲームを作るためのゲームエンジン兼エディタ。道具の dir を省くと ${defaultProject}。
 - ゲームの企画を受けたら、いきなりコードを書かない。まず ages_init でプロジェクトを作り、EDITOR-PLAN.md で「どんなエディタが必要か」を使用者と決める（「一緒に決めるか、AIにおまかせか」を最初に聞く。おまかせを自分から選ばない）。合意するまでゲームのコードは書かない
+- 作業の始めに ages_talk の task で、人のエディタに何をするかを見せ、終わりに done。人が決めることは ask。出力の先頭に 📌 が出たら ages_talk で読む
 - 作業のたびに最初に ages_map（全体の地図）と ages_log（前回から人が変えたこと）を読む。大きなプロジェクトの地図は目次なので、中身は ages_find（名前・説明から探す）か ages_map の section で引く
 - 値は ages_set / ages_patch で変える。JSONやアセットのファイルを直接書き換えない・動かさない。行列はセル単位（住所[行,列]）、リストの中は 住所[番号]、構造体の中は 住所.名前
 - 同じ形の行が並ぶデータ（武器・敵・カードなど）は表にする（住所は $表.行.列、中身は ages_table）
@@ -30,6 +31,7 @@ export interface Tool {
 /** 道具の一覧。defaultProject は dir を省いたときのフォルダ（説明に出る） */
 export function makeTools(defaultProject: string): Tool[] {
   const dirProp = { dir: { type: 'string', description: 'プロジェクトのフォルダ' } };
+  const strs = { type: 'array', items: { type: 'string' } };
   return [
     {
       name: 'ages_map',
@@ -183,6 +185,18 @@ export function makeTools(defaultProject: string): Tool[] {
         for (const [k, f] of [['auto', 'auto'], ['skipEmpty', 'skip-empty'], ['dry', 'dry'], ['force', 'force']]) if (a[k]) flags[f] = true;
         return cmdSlice(dir, a.image, flags);
       },
+    },
+    {
+      name: 'ages_talk',
+      description: 'エディタの人とのやり取り。作業の始めに task（steps・touch=触る住所）、区切りで step、終わりに done。人が決めることは ask（choices・about）。付箋を片付けたら reply=ID と text。引数なしで人の書き込みを読む',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          ...dirProp, task: { type: 'string' }, steps: strs, step: { type: 'number' }, touch: strs, done: { type: 'string' },
+          ask: { type: 'string' }, choices: strs, about: { type: 'string' }, reply: { type: 'string' }, text: { type: 'string' },
+        },
+      },
+      run: (a, dir) => cmdTalk(dir, { ...a, ...(a.done !== undefined ? { done: a.done || true } : {}) }),
     },
     {
       name: 'ages_init',

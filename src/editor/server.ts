@@ -12,6 +12,8 @@ import { execFile } from 'node:child_process';
 import { resolve, join, relative, extname, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { summarize, readLog } from '../project/oplog.ts';
+import { activeTask, appendTalk, foldTalk, newId, readTalk } from '../project/talk.ts';
+import { ackReview, addCodeChange, lineDiff, readDiff, readReview } from '../project/review.ts';
 import { checkAssetPath, freeName } from '../core/assets.ts';
 import { writeShaderResult } from '../project/shader-status.ts';
 import type { Op } from '../core/patch.ts';
@@ -115,6 +117,12 @@ function onFileEvent(_ev: string, name: string | null): void {
     lockTimer = setTimeout(recheckLocks, 150);
     return;
   }
+  // 人と AI のやり取り（AI の ages talk・Git の取り込み）はエディタに知らせる
+  if (rel === '.ages/talk.jsonl') {
+    clearTimeout(talkTimer);
+    talkTimer = setTimeout(() => broadcast({ type: 'talk' }), 100);
+    return;
+  }
   if (rel.startsWith('.git/') || rel.startsWith('.ages/') || rel.startsWith('dist/') || rel.includes('node_modules/')) return;
   changed.add(rel);
   clearTimeout(timer);
@@ -122,6 +130,7 @@ function onFileEvent(_ev: string, name: string | null): void {
 }
 
 let lockTimer: NodeJS.Timeout | undefined;
+let talkTimer: NodeJS.Timeout | undefined;
 let lastLockOk = true;
 /** Gitパネルからのプル中は、ロックの記録の変化を「外部の書き換え」として扱わない（プルの後でまとめて処理する） */
 let pulling = false;
@@ -154,6 +163,7 @@ async function handleChanges(paths: string[]): Promise<void> {
     fresh.push(rel);
   }
   if (!fresh.length) return;
+  await recordCode(fresh);
   const code = fresh.some((p) => p.endsWith('.ts') || p === 'ages.project.json');
   // 画像の切り方（.sheet.json）もシーン・プレハブと同じ扱い（外からの編集を記録し、ロックを戻す）
   const docs = fresh.some((p) => /^(scenes|prefabs)\/.+\.json$/.test(p) || /^data\/.+\.table\.json$/.test(p) || p.endsWith('.sheet.json'));
@@ -171,6 +181,31 @@ async function handleChanges(paths: string[]): Promise<void> {
     if (assets) await call('recheckLocks'); // アセットとシートを読み直す（reload）
     broadcast({ type: 'files', paths: fresh });
   }
+}
+
+// ---------- エディタの外で変わったコードの差分（エディタの「AI の変更」に出す） ----------
+/** 差分を取るファイル（コード・シェーダー・計画書などの文書・設定） */
+const isCode = (rel: string) => /\.(ts|frag|glsl|md)$/i.test(rel) || rel === 'ages.project.json';
+/** 前の中身（起動したときに読み、変わるたびに入れ替える） */
+const codeText = new Map<string, string>();
+async function loadCodeText(): Promise<void> {
+  for (const f of await listFiles()) if (isCode(f.path)) codeText.set(f.path, await readFile(join(projectDir, f.path), 'utf8').catch(() => ''));
+}
+void loadCodeText();
+async function recordCode(paths: string[]): Promise<void> {
+  const list = paths.filter(isCode);
+  if (!list.length) return;
+  // 誰が変えたかはファイルからは分からない。AI が作業中（ages talk --task）なら、その作業のものとする
+  const k = activeTask(foldTalk(await readTalk(projectDir)));
+  for (const rel of list) {
+    const text = await readFile(join(projectDir, rel), 'utf8').catch(() => null);
+    const before = codeText.get(rel);
+    if (text === before) continue;
+    const d = lineDiff(before ?? '', text ?? '');
+    if (text === null) codeText.delete(rel); else codeText.set(rel, text);
+    await addCodeChange(projectDir, { path: rel, plus: d.plus, minus: d.minus, ...(text === null ? { gone: true } : {}), ...(before === undefined ? { added: true } : {}), ...(k ? { task: k.id, who: k.who } : {}) }, d.text);
+  }
+  broadcast({ type: 'review' });
 }
 
 // ---------- HTTP ----------
@@ -427,6 +462,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
       await mkdir(dirname(abs), { recursive: true });
       await writeFile(abs, text);
       known.set(abs, text);
+      if (isCode(rel)) codeText.set(rel, text);
       const who = human(req, 'text');
       if (/^(scenes|prefabs)\/.+\.json$/.test(rel) || /^data\/.+\.table\.json$/.test(rel) || rel.endsWith('.sheet.json')) {
         const r = await call('humanTextEdit', who);
@@ -488,6 +524,42 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
     return json(res, { ok: true });
   }
   // エディタで人が見ている所（AI の地図の先頭と ages find の並びに使う。手元だけ）。closed なら消す
+  // AI とのやり取り（.ages/talk.jsonl）・AI の変更（操作ログの AI の行と、エディタの外で変わったコード）・人が確かめた印
+  if (m === 'GET' && p === '/api/ai') {
+    const review = await readReview(projectDir);
+    const log = (await readLog(projectDir)).filter((e) => e.kind === 'ai' && (!review.all || e.t > review.all)).slice(-800);
+    return json(res, { talk: foldTalk(await readTalk(projectDir)), review: { all: review.all, ack: review.ack }, code: review.code.filter((c) => !review.all || c.t > review.all), log, now: new Date().toISOString() });
+  }
+  if (m === 'POST' && p === '/api/ai/ack') {
+    const b = JSON.parse((await body(req)).toString('utf8') || '{}') as { keys?: Record<string, string>; all?: boolean };
+    await ackReview(projectDir, { keys: b.keys, ...(b.all ? { all: new Date().toISOString() } : {}) });
+    broadcast({ type: 'review' });
+    return json(res, { ok: true });
+  }
+  if (m === 'GET' && p === '/api/ai/diff') {
+    const d = await readDiff(projectDir, url.searchParams.get('id') ?? '');
+    return d === null ? json(res, { error: '差分が残っていません（ほかの端末での変更か、古い変更）' }, 404) : json(res, { diff: d });
+  }
+  if (m === 'POST' && p === '/api/talk') {
+    // 人の書き込み: 答え（answer）・付箋（note）・取り下げ（drop）。AI の書き込みは ages talk から
+    const b = JSON.parse((await body(req)).toString('utf8') || '{}') as { ev?: string; id?: string; text?: string; about?: string };
+    const who = { who: human(req, '').who, kind: 'human' as const };
+    const text = typeof b.text === 'string' ? b.text.trim().slice(0, 2000) : '';
+    const state = foldTalk(await readTalk(projectDir));
+    if (b.ev === 'answer') {
+      if (!state.asks.some((a) => a.id === b.id)) return json(res, { error: `質問 ${b.id} はありません` }, 404);
+      if (!text) return json(res, { error: '答えが空です' }, 400);
+      await appendTalk(projectDir, who, { ev: 'answer', id: b.id!, text });
+    } else if (b.ev === 'note') {
+      if (!text) return json(res, { error: '付箋が空です' }, 400);
+      await appendTalk(projectDir, who, { ev: 'note', id: newId('n'), text, ...(typeof b.about === 'string' && b.about ? { about: b.about } : {}) });
+    } else if (b.ev === 'drop') {
+      if (![...state.asks, ...state.notes].some((x) => x.id === b.id)) return json(res, { error: `${b.id} はありません` }, 404);
+      await appendTalk(projectDir, who, { ev: 'drop', id: b.id! });
+    } else return json(res, { error: 'ev は answer・note・drop' }, 400);
+    broadcast({ type: 'talk' });
+    return json(res, { ok: true });
+  }
   if (m === 'POST' && p === '/api/focus') {
     const f = JSON.parse((await body(req)).toString('utf8') || '{}') as Omit<EditorFocus, 'at'> & { closed?: boolean };
     await writeFocus(projectDir, f.closed ? null : f);

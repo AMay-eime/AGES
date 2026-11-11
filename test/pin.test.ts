@@ -24,6 +24,10 @@ test('ages pin: 起動用と版を入れ、ages.mjs が本体を取ってきて�
     const cfg = JSON.parse(await readFile(join(g, 'ages.project.json'), 'utf8'));
     assert.deepEqual(cfg.engineSource, { repo: ENGINE, commit: head, agents: mark(await readFile(join(g, 'AGENTS.md'), 'utf8')) });
     assert.match(await readFile(join(g, '.gitignore'), 'utf8'), /^\.ages\/engine\/$/m);
+    // 前の版で作ったプロジェクト: ages talk の行（共有しない読んだ所・統合で両方の行を残す）を足す。重ねない
+    await writeFile(join(g, '.gitattributes'), (await readFile(join(g, '.gitattributes'), 'utf8')).replace(/^.*talk.*\n/gm, ''));
+    await cmdPin(g, ENGINE, head);
+    for (const [f, line] of [['.gitattributes', '.ages/talk.jsonl merge=union'], ['.gitignore', '.ages/talk-cursor']]) assert.equal((await readFile(join(g, f), 'utf8')).split('\n').filter((l) => l === line).length, 1, f);
     assert.match(await readFile(join(g, 'AGENTS.md'), 'utf8'), /`ages` は `node ages\.mjs`.*本体は書き換えない\*\*。ages\.mjs と \.ages\/ は起動の仕組みなので読まなくてよい/);
     assert.deepEqual(JSON.parse(await readFile(join(g, '.mcp.json'), 'utf8')).mcpServers.ages.args, ['ages.mjs', 'mcp']);
     const run = (...a: string[]) => spawnSync(process.execPath, ['ages.mjs', ...a], { cwd: g, encoding: 'utf8' });

@@ -13,6 +13,7 @@ import { Game } from '../core/game.ts';
 import { RUN_DATE, parseDate, type DateStart } from '../core/clock.ts';
 import { FIELD_TYPES, brief, checkAt, fieldAt, suggest, visit, type Field } from '../core/schema.ts';
 import { ROW_ID, type TableDoc } from '../core/table.ts';
+import { editingNow, readFocus } from './focus.ts';
 import { appendLog, localTime, lockedHits, markTouched, movePrefixTouched, moveTouched, readLocks as readLockFile, readLogLines, readTouched, writeLocks, type Actor, type LockMark, type LogEntry } from './oplog.ts';
 import { agesHome, lockDiff, verifyLocks, type LockIntegrity } from './seal.ts';
 import { scanAssets, type AssetInfo } from './assets.ts';
@@ -673,6 +674,13 @@ export class Project {
     const keeper = isKeeper(actor);
     // 人がエディタで行っても、ロックの住所が付いて動くだけで値の意味は変わらない操作（名前の変更・場所の変更）
     const STRUCTURAL = new Set(['renameRow', 'renameScene', 'renamePrefab', 'moveAsset']);
+    // 人がエディタで入力中の欄（と、それを含む物・部品）は AI が変えない（作業のぶつかり防止。人が打つのをやめて少したてば変えられる）
+    if (actor.kind === 'ai') {
+      const editing = editingNow(await readFocus(this.dir));
+      const inside = (a: string, b: string) => b === a || b.startsWith(a + '.') || b.startsWith(a + '[');
+      const hit = editing && ops.map(targetOf).find((t) => t && (inside(t, editing) || inside(editing, t)));
+      if (hit) throw new Error(`人がエディタで ${editing} を入力中です。少し待ってから（ほかの所を先に）変える。急ぐなら ages talk --ask で人に聞く`);
+    }
     if (actor.kind === 'ai' && !this.integrity.ok) {
       throw new Error(`🔒 ロックの記録が人の封印と一致しないため、AIからの編集を止めています（${this.integrity.reason}）。ユーザーにロックマネージャーでの確認を頼んでください`);
     }

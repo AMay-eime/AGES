@@ -21,6 +21,9 @@ export interface Popout {
 interface Geometry { x: number; y: number; w: number; h: number }
 
 const opened = new Set<Window>();
+const hooks: ((w: Window) => void)[] = [];
+/** 別のウインドウを開くたびに呼ぶ（元のエディタのコードが、そのウインドウの document でも待てるように） */
+export function onPopout(fn: (w: Window) => void): void { hooks.push(fn); }
 /** 元の head の style・link と、別のウインドウに写したもの */
 const copies = new Map<Node, Node[]>();
 let installed = false;
@@ -53,6 +56,7 @@ export function openPopout(o: { id: string; title: string; el: HTMLElement; onCl
   track(w);
   forward(w);
   opened.add(w);
+  for (const fn of hooks) fn(w);
   setHere(w);
 
   let done = false;
