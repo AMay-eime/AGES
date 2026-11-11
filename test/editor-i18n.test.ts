@@ -20,6 +20,9 @@ function editorKeys(): Map<string, string> {
     }
   };
   walk(EDITOR);
+  // 追加パッケージのエディタのパネル（src/packages/<名前>/editor.ts）も
+  const PK = join(EDITOR, '..', 'packages');
+  for (const n of readdirSync(PK)) { const f = join(PK, n, 'editor.ts'); try { statSync(f); files.push(f); } catch { /* パネルのないパッケージ */ } }
   const keys = new Map<string, string>();
   for (const f of files) {
     const s = readFileSync(f, 'utf8');

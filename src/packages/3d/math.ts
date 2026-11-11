@@ -56,6 +56,21 @@ export function compose(pos: Vec3, rot: Vec3, scl: Vec3 = [1, 1, 1]): Mat4 {
   ];
 }
 
+/** 軸（長さ1）のまわりに deg 度回す行列（右ねじの向き） */
+export function rotationAbout(axis: Vec3, deg: number): Mat4 {
+  const [x, y, z] = axis, c = Math.cos(deg * RAD), s = Math.sin(deg * RAD), t = 1 - c;
+  return [
+    t * x * x + c, t * x * y + s * z, t * x * z - s * y, 0,
+    t * x * y - s * z, t * y * y + c, t * y * z + s * x, 0,
+    t * x * z + s * y, t * y * z - s * x, t * z * z + c, 0,
+    0, 0, 0, 1,
+  ];
+}
+
+export function translation(p: Vec3): Mat4 {
+  return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, p[0], p[1], p[2], 1];
+}
+
 /** 行列を位置・回転（度）・倍率に戻す（compose の逆。斜めにつぶれた行列は近い値になる） */
 export function decompose(m: Mat4): { pos: Vec3; rot: Vec3; scale: Vec3 } {
   const sx = Math.hypot(m[0], m[1], m[2]), sy = Math.hypot(m[4], m[5], m[6]);

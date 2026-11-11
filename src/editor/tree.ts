@@ -6,15 +6,16 @@ import type { EntityData, PrefabDoc } from '../core/docs.ts';
  * 階層の木の親: UI の物は UI.parent、ほかは位置の親（Transform.parent）。プレハブのインスタンスはプレハブの値も見る。
  * 親がシーンにない・自分なら親なし。kind は親子にできる種類（UI どうし・Transform どうし）
  */
-export function treeParents(ents: EntityData[], prefabs: Record<string, PrefabDoc>): { parent: Map<string, string>; kind: Map<string, 'UI' | 'Transform'> } {
+export function treeParents(ents: EntityData[], prefabs: Record<string, PrefabDoc>): { parent: Map<string, string>; kind: Map<string, 'UI' | 'Transform' | 'Transform3D'> } {
   const ids = new Set(ents.map((e) => e.id));
   const map = new Map(Object.entries(prefabs));
   const parent = new Map<string, string>();
-  const kind = new Map<string, 'UI' | 'Transform'>();
+  const kind = new Map<string, 'UI' | 'Transform' | 'Transform3D'>();
   for (const e of ents) {
     let c = e.components;
     if (e.prefab) { try { c = resolveEntity(map, e).components; } catch { /* プレハブがない */ } }
-    const k = c?.UI ? 'UI' : c?.Transform ? 'Transform' : null;
+    // Transform3D は追加パッケージ 3d の位置
+    const k = c?.UI ? 'UI' : c?.Transform ? 'Transform' : c?.Transform3D ? 'Transform3D' : null;
     if (!k) continue;
     kind.set(e.id, k);
     const p = (c[k] as { parent?: unknown }).parent;
