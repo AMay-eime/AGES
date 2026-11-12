@@ -111,7 +111,7 @@ export function makeTools(defaultProject: string): Tool[] {
           saveOut: { type: 'string', description: '終わりの保存データを書き出す' },
           lang: { type: 'string', description: '言語' }, date: { type: 'string', description: 'ctx.date の始め' },
           params: { type: 'object', description: '始めのシーンの scene.params' },
-          shot: { type: 'string', description: 'その画面を撮る（例 "0,600"）' }, shotScale: { type: 'number' },
+          shot: { type: 'string', description: 'その画面を撮る（例 "0,600"）' }, shotScale: { type: 'number' }, shotAround: { type: 'string' }, shotSheet: { type: 'boolean' },
           perf: { type: 'boolean', description: '重い所を探す（guide:perf）' },
         },
       },
@@ -125,6 +125,8 @@ export function makeTools(defaultProject: string): Tool[] {
         if (a.params) f.params = JSON.stringify(a.params);
         if (a.shot !== undefined) f.shot = String(a.shot);
         if (a.shotScale !== undefined) f['shot-scale'] = String(a.shotScale);
+        if (a.shotAround) f['shot-around'] = String(a.shotAround);
+        if (a.shotSheet) f['shot-sheet'] = true;
         if (a.perf) f.perf = true;
         return cmdRun(dir, f);
       },

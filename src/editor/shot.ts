@@ -11,6 +11,7 @@ import { spawnTryout, tryoutScene, type TryoutSpawn } from '../core/tryout.ts';
 import { RunInput, type RunKeys } from '../core/runinput.ts';
 import { parseDate } from '../core/clock.ts';
 import { Renderer } from '../render/webgl.ts';
+import { camerasOf, worldToScreen } from '../core/camera.ts';
 import type { EditorState } from './app.ts';
 
 export interface ShotConfig {
@@ -30,13 +31,19 @@ export interface ShotConfig {
   scale?: number;
   /** 状態をまるごと返す（ages run と違うときに、どこが違うかを調べる） */
   dump?: boolean;
+  /** 物のまわり（または画面の点 x:y）を w×h だけ切り抜いて、zoom 倍に（最近傍。ドット絵がにじまない） */
+  around?: { target: string; w: number; h: number; zoom: number };
+  /** 撮ったフレームを、フレームの番号つきで1枚に並べる */
+  sheet?: boolean;
 }
 
 /** そのフレームを描いたときの数（描く命令の回数・2D の四角・2D の粒と、層ごとの数） */
 export interface DrawStats { draws: number; quads: number; particles: number; layers: Record<string, Record<string, number>> }
 
 export interface ShotResult {
-  shots: { frame: number; hash: string; png: string; snapshot?: unknown; stats: DrawStats }[];
+  shots: { frame: number; hash: string; png: string; snapshot?: unknown; stats: DrawStats; /** 切り抜いた真ん中（画面の画素）と、注意 */ at?: [number, number]; note?: string }[];
+  /** 並べた1枚（sheet のとき）と、その並び */
+  sheet?: { png: string; cols: number; rows: number; w: number; h: number };
   /** 進めたフレーム */
   frame: number;
   error?: string;
@@ -86,6 +93,38 @@ async function shoot(cfg: ShotConfig): Promise<ShotResult> {
     return canvas.toDataURL('image/png').split(',')[1];
   };
 
+  /** 切り抜く真ん中（画面の画素）。物は 2D の Transform の位置をカメラで写したもの。x:y なら画面の点 */
+  const centerOf = (target: string): { at: [number, number]; note?: string } => {
+    const k = canvas.width / v.width;
+    const pt = /^(-?\d+(?:\.\d+)?):(-?\d+(?:\.\d+)?)$/.exec(target);
+    if (pt) return { at: [Number(pt[1]) * k, Number(pt[2]) * k] };
+    const e = target.startsWith('@')
+      ? [...game.world.entities.values()].find((x) => game.world.isAlive(x.id) && (x.id === target.slice(1) || x.id.startsWith(target.slice(1) + '~')))
+      : game.world.get(target);
+    const mid: [number, number] = [canvas.width / 2, canvas.height / 2];
+    if (!e || !game.world.isAlive(e.id)) return { at: mid, note: `${target} がいないので、画面の真ん中` };
+    if (!e.c.Transform) return { at: mid, note: `${target} は 2D の物でない（3D は ages space で画面の位置を見て x:y で）。画面の真ん中` };
+    const t = game.world.pose(e)!;
+    const cams = camerasOf(game.world, v.width, v.height);
+    const layer = Number(e.c.Sprite?.layer ?? e.c.Shape?.layer ?? e.c.Text?.layer ?? 0);
+    const cam = cams.find((c) => layer >= c.layerMin && layer <= c.layerMax) ?? cams[0];
+    const [sx, sy] = worldToScreen(cam, t.x, t.y);
+    return { at: [sx * k, sy * k] };
+  };
+  /** 切り抜いて拡大した canvas（外にはみ出した所は灰色） */
+  const crop = (src: HTMLCanvasElement, at: [number, number], a: NonNullable<ShotConfig['around']>): HTMLCanvasElement => {
+    const k = canvas.width / v.width, w = Math.round(a.w * k), hh = Math.round(a.h * k);
+    const out = document.createElement('canvas');
+    out.width = w * a.zoom; out.height = hh * a.zoom;
+    const g = out.getContext('2d')!;
+    g.imageSmoothingEnabled = false;
+    g.fillStyle = '#808080';
+    g.fillRect(0, 0, out.width, out.height);
+    g.drawImage(src, Math.round(at[0] - w / 2), Math.round(at[1] - hh / 2), w, hh, 0, 0, out.width, out.height);
+    return out;
+  };
+  const tiles: { frame: number; img: HTMLCanvasElement }[] = [];
+
   const targets = [...new Set(cfg.frames)].sort((a, b) => a - b);
   const shots: ShotResult['shots'] = [];
   const dt = 1 / state.config.fps;
@@ -99,12 +138,40 @@ async function shoot(cfg: ShotConfig): Promise<ShotResult> {
       }
       const hash = game.hash();
       const snapshot = cfg.dump ? game.snapshot() : undefined;
-      const png = await capture();
+      let png = await capture();
+      let at: [number, number] | undefined, note: string | undefined;
+      if (cfg.around || cfg.sheet) {
+        let img: HTMLCanvasElement = canvas;
+        if (cfg.around) { const c = centerOf(cfg.around.target); at = c.at; note = c.note; img = crop(canvas, c.at, cfg.around); png = img.toDataURL('image/png').split(',')[1]; }
+        if (cfg.sheet) { const copy = document.createElement('canvas'); copy.width = img.width; copy.height = img.height; copy.getContext('2d')!.drawImage(img, 0, 0); tiles.push({ frame: game.frame, img: copy }); }
+      }
       const stats: DrawStats = { ...renderer.stats, particles: renderer.particles.count(), layers: Object.fromEntries(renderer.layers.filter((l) => l.stats).map((l) => [l.name, { ...l.stats } as Record<string, number>])) };
-      shots.push({ frame: game.frame, hash, png, stats, ...(snapshot ? { snapshot } : {}) });
+      shots.push({ frame: game.frame, hash, png, stats, ...(snapshot ? { snapshot } : {}), ...(at ? { at: [Math.round(at[0]), Math.round(at[1])] as [number, number] } : {}), ...(note ? { note } : {}) });
     }
   } catch (e) {
     return { shots, frame: game.frame, error: (e as Error).message };
+  }
+  // 並べる: 横に、幅 2048 を超えたら折り返す。左上にフレームの番号
+  if (cfg.sheet && tiles.length) {
+    const w = tiles[0].img.width, hh = tiles[0].img.height, gap = 4;
+    const cols = Math.max(1, Math.min(tiles.length, Math.floor((2048 + gap) / (w + gap)))), rows = Math.ceil(tiles.length / cols);
+    const out = document.createElement('canvas');
+    out.width = cols * w + (cols - 1) * gap; out.height = rows * hh + (rows - 1) * gap;
+    const g = out.getContext('2d')!;
+    g.fillStyle = '#ffffff';
+    g.fillRect(0, 0, out.width, out.height);
+    g.imageSmoothingEnabled = false;
+    g.font = 'bold 12px sans-serif';
+    tiles.forEach((t, i) => {
+      const x = (i % cols) * (w + gap), y = Math.floor(i / cols) * (hh + gap);
+      g.drawImage(t.img, x, y);
+      const label = `f${t.frame}`;
+      g.fillStyle = 'rgba(0,0,0,.7)';
+      g.fillRect(x, y, g.measureText(label).width + 8, 16);
+      g.fillStyle = '#ffffff';
+      g.fillText(label, x + 4, y + 12);
+    });
+    return { shots, frame: game.frame, sheet: { png: out.toDataURL('image/png').split(',')[1], cols, rows, w: out.width, h: out.height } };
   }
   return { shots, frame: game.frame };
 }

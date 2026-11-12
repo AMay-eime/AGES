@@ -66,7 +66,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
                [--save saves/x.save.json]（この保存データから始める。省くと空） [--save-out saves/y.save.json]（終わりの保存データを書き出す） [--lang en]（言語）
                [--params stage=s1,level=2]（始めのシーンに渡す ctx.scene.params。JSON でもよい） [--date 2026-12-25T09:00]（ctx.date の始め。省くと決まった日時）
                --keys の "title+30-32:@ui_confirm" は、シーン title に入るたびに、入ってから 30〜31 フレーム目に押す（click=ボタンのID も書ける）
-               [--shot 0,600 [--shot-scale 0.5] [--shot-dir 場所]]（そのフレームの画面を PNG で撮る。既定 .ages/shots。要 Chrome）
+               [--shot 0,600 | 361-421:4 [--shot-scale 0.5] [--shot-dir 場所] [--shot-around 物,160x160,x4] [--shot-sheet]]（そのフレームの画面を PNG で撮る。既定 .ages/shots。要 Chrome。around は物のまわりを切り抜いて拡大、sheet は並べた1枚に）
                [--perf | --perf logic]（速さ: システムごとの1フレームの時間と、物がいちばん多いフレームを描いた量。logic は描いた量を省く）
   log    <dir> [--all] [--peek]      前回からの編集の要約（--peek は既読にしない）
   undo   <dir> [--tx id] [--force]   自分（AI）の直前の編集を元に戻す（その後で変えられた所があれば止まる）。redo <dir> でやり直す
@@ -751,11 +751,21 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
   // --params: 始めのシーンに渡すもの（ctx.scene.params）。stage=s1,level=2 か JSON
   const params = typeof f.params === 'string' ? parseParams(f.params) : recParams;
   // --shot: そのフレームの画面を撮る（headless の Chrome。.ages/shots に PNG）
-  const shotFrames = typeof f.shot === 'string' ? f.shot.split(',').map((x) => x.trim()).filter(Boolean).map((x) => {
+  // 361-421:4 は 361 から 421 まで 4 フレームごと
+  const shotFrames = typeof f.shot === 'string' ? f.shot.split(',').map((x) => x.trim()).filter(Boolean).flatMap((x) => {
+    const range = /^(\d+)-(\d+)(?::(\d+))?$/.exec(x);
+    if (range) {
+      const [a, b, step] = [Number(range[1]), Number(range[2]), Number(range[3] ?? 1)];
+      if (b < a || step < 1) throw new Error(`--shot の ${x}: 始め-終わり:何フレームごと（例 361-421:4）`);
+      const list: number[] = [];
+      for (let n = a; n <= b; n += step) list.push(n);
+      return list;
+    }
     const n = Number(x);
-    if (!Number.isInteger(n) || n < 0) throw new Error(`--shot の ${x} はフレームの番号ではありません（例 --shot 0,600,1200）`);
-    return n;
+    if (!Number.isInteger(n) || n < 0) throw new Error(`--shot の ${x} はフレームの番号ではありません（例 --shot 0,600,1200 か 361-421:4）`);
+    return [n];
   }) : [];
+  if (shotFrames.length > 64) throw new Error(`--shot が ${shotFrames.length} 枚です（64 枚まで。:4 のように間を空ける）`);
   const shotHashes = new Map<number, string>();
   /** 撮るフレームの状態（撮ったページの状態と比べて、違えばどこがどれだけ違うかを出す） */
   const shotSnaps = new Map<number, unknown>();
@@ -900,13 +910,23 @@ export function snapshotDiff(a: unknown, b: unknown): string {
 async function shots(p: Project, f: Args['flags'], frames: number[], hashes: Map<number, string>, snaps: Map<number, unknown>, o: { scene: string; seed: number; keys: RunKeys; params?: Record<string, unknown>; save: Record<string, unknown>; /** --perf: このフレームは、描いたときの数だけを取る（画像は置かない） */ statsAt?: number; stats?: Map<number, DrawStats>; spawns: import('../core/tryout.ts').TryoutSpawn[]; date: string }): Promise<string[]> {
   const scale = f['shot-scale'] !== undefined ? Number(f['shot-scale']) : 1;
   if (!(scale > 0 && scale <= 2)) throw new Error('--shot-scale は 0 より大きく 2 以下（例 0.5 で半分の大きさ。画像のトークンも減る）');
+  // --shot-around 物,160x160,x4（物か x:y の点のまわりを切り抜いて拡大）。--shot-sheet で並べた1枚に
+  let around: { target: string; w: number; h: number; zoom: number } | undefined;
+  if (typeof f['shot-around'] === 'string') {
+    const m = /^([^,]+),(\d+)x(\d+)(?:,x(\d+))?$/.exec(f['shot-around']);
+    if (!m) throw new Error('--shot-around は 物,幅x高さ,x倍率（例 player,160x160,x4・@enemy,64x64,x8・480:270,200x100）。物は ID か @プレハブ名、x:y は画面の点');
+    around = { target: m[1], w: Number(m[2]), h: Number(m[3]), zoom: Number(m[4] ?? 1) };
+    if (around.zoom < 1 || around.zoom > 8) throw new Error('--shot-around の倍率は x1〜x8');
+    if (around.w < 4 || around.h < 4 || around.w > p.config.view.width || around.h > p.config.view.height) throw new Error(`--shot-around の大きさは 4 から画面（${p.config.view.width}x${p.config.view.height}）まで`);
+  }
+  const sheet = f['shot-sheet'] === true;
   const reach = frames.filter((n) => n === 0 || hashes.has(n));
   const out: string[] = [];
   for (const n of frames.filter((x) => !reach.includes(x))) out.push(`⚠ shot f${n}: そのフレームまで進んでいません（--frames を増やすか、--until で止まる前のフレームに）`);
   const all = [...new Set([...reach, ...(o.statsAt !== undefined ? [o.statsAt] : [])])];
   if (!all.length) return out;
   try {
-    const r = await captureShots(p.dir, { scene: o.scene, seed: o.seed, frames: all, keys: o.keys, date: o.date, params: o.params, save: o.save, lang: typeof f.lang === 'string' ? f.lang : undefined, spawns: o.spawns, scale, dump: true });
+    const r = await captureShots(p.dir, { scene: o.scene, seed: o.seed, frames: all, keys: o.keys, date: o.date, params: o.params, save: o.save, lang: typeof f.lang === 'string' ? f.lang : undefined, spawns: o.spawns, scale, dump: true, ...(around ? { around } : {}), ...(sheet && reach.length ? { sheet } : {}) });
     const dir = resolve(p.dir, typeof f['shot-dir'] === 'string' ? f['shot-dir'] : '.ages/shots');
     if (reach.length) await mkdir(dir, { recursive: true });
     const name = o.spawns.length ? 'tryout' : o.scene;
@@ -914,11 +934,23 @@ async function shots(p: Project, f: Args['flags'], frames: number[], hashes: Map
     for (const s of r.shots) {
       o.stats?.set(s.frame, s.stats);
       if (!reach.includes(s.frame)) continue;
-      const file = join(dir, `${name}-f${s.frame}.png`);
-      await writeFile(file, Buffer.from(s.png, 'base64'));
       const same = hashes.get(s.frame) === s.hash;
+      const diff = same ? '' : ' ' + snapshotDiff(snaps.get(s.frame), s.snapshot);
+      const where = s.at ? ` ${around!.target} のまわり（真ん中 ${s.at[0]},${s.at[1]}）${s.note ? `⚠ ${s.note}` : ''}` : '';
+      // 並べるときは、1枚ずつは置かない（並べた1枚だけ）
+      if (sheet) { if (diff || s.note) out.push(`shot f${s.frame}:${where}${diff}`); continue; }
+      const file = join(dir, `${name}-f${s.frame}${around ? '-around' : ''}.png`);
+      await writeFile(file, Buffer.from(s.png, 'base64'));
       const rel = relative(p.dir, file).split(sep).join('/');
-      out.push(`shot f${s.frame}: ${rel.startsWith('..') ? file : rel} ${Math.round(width * scale)}x${Math.round(height * scale)}${same ? '' : ' ' + snapshotDiff(snaps.get(s.frame), s.snapshot)}`);
+      const size = around ? `${Math.round(around.w * scale) * around.zoom}x${Math.round(around.h * scale) * around.zoom}` : `${Math.round(width * scale)}x${Math.round(height * scale)}`;
+      out.push(`shot f${s.frame}: ${rel.startsWith('..') ? file : rel} ${size}${where}${diff}`);
+    }
+    if (r.sheet) {
+      const fs = r.shots.filter((s) => reach.includes(s.frame)).map((s) => s.frame);
+      const file = join(dir, `${name}-f${fs[0]}-f${fs[fs.length - 1]}${around ? '-around' : ''}-sheet.png`);
+      await writeFile(file, Buffer.from(r.sheet.png, 'base64'));
+      const rel = relative(p.dir, file).split(sep).join('/');
+      out.push(`shot ${fs.length}枚を並べた1枚: ${rel.startsWith('..') ? file : rel} ${r.sheet.w}x${r.sheet.h}（${r.sheet.cols}列×${r.sheet.rows}行。左上がフレームの番号）`);
     }
     if (r.error) out.push(`⚠ 画面のページでエラー（f${r.frame}）: ${r.error}`);
   } catch (e) {
