@@ -106,18 +106,18 @@ export function makeTools(defaultProject: string): Tool[] {
           frames: { type: 'number' }, scene: { type: 'string' }, seed: { type: 'number' }, keys: { type: 'string' },
           spawn: { type: 'string', description: 'プレハブだけを空のシーンの真ん中に出して試す（例 "enemy,explosion@40,0"。消えたら止まる）' },
           input: { type: 'string', description: '入力の記録のファイル（recordings/xxx.input.json）' },
-          watch: { type: 'array', items: { type: 'string' } }, every: { type: 'number' }, until: { type: 'string' }, twice: { type: 'boolean' },
+          watch: { type: 'array', items: { type: 'string' } }, log: { type: 'string' }, every: { type: 'number' }, until: { type: 'string' }, twice: { type: 'boolean' },
           save: { type: 'string', description: 'この保存データ（saves/x.save.json）から始める。省くと空' },
           saveOut: { type: 'string', description: '終わりの保存データを書き出す' },
           lang: { type: 'string', description: '言語' }, date: { type: 'string', description: 'ctx.date の始め' },
           params: { type: 'object', description: '始めのシーンの scene.params' },
-          shot: { type: 'string', description: 'その画面を撮る（例 "0,600"）' }, shotScale: { type: 'number' },
+          shot: { type: 'string', description: 'その画面を撮る（例 "0,600"）' }, shotScale: { type: 'number' }, shotAround: { type: 'string' }, shotSheet: { type: 'boolean' },
           perf: { type: 'boolean', description: '重い所を探す（guide:perf）' },
         },
       },
       run: (a, dir) => {
         const f: Record<string, string | true> = {};
-        for (const k of ['frames', 'scene', 'spawn', 'seed', 'keys', 'input', 'every', 'until', 'lang', 'date']) if (a[k] !== undefined) f[k] = String(a[k]);
+        for (const k of ['frames', 'scene', 'spawn', 'seed', 'keys', 'input', 'every', 'until', 'lang', 'date', 'log']) if (a[k] !== undefined) f[k] = String(a[k]);
         if (a.watch?.length) f.watch = a.watch.join(',');
         if (a.twice) f.twice = true;
         if (a.save) f.save = String(a.save);
@@ -125,6 +125,8 @@ export function makeTools(defaultProject: string): Tool[] {
         if (a.params) f.params = JSON.stringify(a.params);
         if (a.shot !== undefined) f.shot = String(a.shot);
         if (a.shotScale !== undefined) f['shot-scale'] = String(a.shotScale);
+        if (a.shotAround) f['shot-around'] = String(a.shotAround);
+        if (a.shotSheet) f['shot-sheet'] = true;
         if (a.perf) f.perf = true;
         return cmdRun(dir, f);
       },

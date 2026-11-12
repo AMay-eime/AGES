@@ -5,6 +5,7 @@ import { checkPackageNames } from '../packages/index.ts';
 import { stripTypeScriptTypes } from 'node:module';
 import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { dirname, extname, join, normalize, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +26,21 @@ export interface ExportOptions {
   id?: string;
   /** デスクトップの窓を全画面で始める */
   fullscreen?: boolean;
+  /** 比べる前の書き出しの一覧（.ages-export のファイル）。省くと、同じ場所の前の書き出しと比べる */
+  diff?: string;
+}
+
+/** 書き出したファイルの一覧（.ages-export の files）: 場所 → 大きさと sha1 */
+export type ExportManifest = Record<string, { bytes: number; sha1: string }>;
+
+/** 前の書き出しとの違い */
+export interface ExportChanges {
+  /** 比べた相手（いつの書き出しか。ファイルを渡したならその場所） */
+  against: string;
+  added: string[];
+  changed: string[];
+  removed: string[];
+  same: number;
 }
 
 export interface ExportResult {
@@ -34,6 +50,8 @@ export interface ExportResult {
   files: number;
   bytes: number;
   notes: string[];
+  /** 前の書き出しとの違い（前のものがなければない） */
+  changes?: ExportChanges;
 }
 
 /** import の書き方（行の頭の import/export … from '…'、import '…'、import('…')） */
@@ -90,6 +108,8 @@ export async function exportProject(p: Project, opts: ExportOptions = {}): Promi
   if (errors.length) throw new Error(`ages check のエラーを直してから書き出してください（${errors.length}件。最初: ${errors[0]}）`);
   const out = resolve(opts.out ?? join(p.dir, 'dist'));
   const web = join(out, 'web');
+  // 比べる相手: 渡されたファイルか、消す前の前の書き出しの一覧
+  const before = opts.diff ? await readManifest(resolve(opts.diff), true) : await readManifest(join(web, EXPORT_MARK), false);
   await clearExportDir(web);
   const notes: string[] = [];
   // 書き出したものは大きいので Git に入れない（プロジェクトの中に書き出すとき）
@@ -133,15 +153,57 @@ export async function exportProject(p: Project, opts: ExportOptions = {}): Promi
     assetBytes += (await stat(dst)).size;
   }
   await writeFile(join(web, 'index.html'), indexHtml(p.config.name, pkgs));
-  await writeFile(join(web, EXPORT_MARK), JSON.stringify({ engine: 'AGES', at: new Date().toISOString() }) + '\n');
+  // 一覧: ファイルごとの大きさと sha1（変わったファイルだけ送る・送った後に照らし合わせるため）
+  const manifest = await manifestOf(web);
+  await writeFile(join(web, EXPORT_MARK), JSON.stringify({ engine: 'AGES', at: new Date().toISOString(), files: manifest }, null, 1) + '\n');
+  const changes = before ? diffManifest(before.files, manifest, opts.diff ? relative(process.cwd(), resolve(opts.diff)) || opts.diff : `前の書き出し（${before.at}）`) : undefined;
 
   const files = engineFiles.length + gameFiles.length + p.assets.length + 3;
   let bytes = assetBytes;
   for (const f of [...engineFiles, ...gameFiles, join(web, 'project.json'), join(web, 'index.html')]) bytes += (await stat(f)).size;
 
-  const result: ExportResult = { out, web, files, bytes, notes };
+  const result: ExportResult = { out, web, files, bytes, notes, ...(changes ? { changes } : {}) };
   if (opts.desktop) result.desktop = await writeDesktop(p, out, opts, notes);
   return result;
+}
+
+/** 書き出したフォルダの中のファイルの一覧（印のファイルは入れない）。場所は / 区切り */
+export async function manifestOf(web: string): Promise<ExportManifest> {
+  const out: ExportManifest = {};
+  const walk = async (dir: string, base: string) => {
+    for (const d of (await readdir(dir, { withFileTypes: true })).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      const rel = base ? `${base}/${d.name}` : d.name;
+      if (d.isDirectory()) await walk(join(dir, d.name), rel);
+      else if (rel !== EXPORT_MARK) {
+        const buf = await readFile(join(dir, d.name));
+        out[rel] = { bytes: buf.length, sha1: createHash('sha1').update(buf).digest('hex') };
+      }
+    }
+  };
+  await walk(web, '');
+  return out;
+}
+
+/** .ages-export を読む（一覧のない古い書き出しは、比べられないので無いことに）。must なら、読めなければエラー */
+async function readManifest(path: string, must: boolean): Promise<{ at: string; files: ExportManifest } | undefined> {
+  let text: string;
+  try { text = await readFile(path, 'utf8'); } catch {
+    if (must) throw new Error(`--diff の ${path} が読めません（前の書き出しの ${EXPORT_MARK} を渡す）`);
+    return undefined;
+  }
+  try {
+    const v = JSON.parse(text) as { at?: string; files?: ExportManifest };
+    if (v.files && typeof v.files === 'object') return { at: String(v.at ?? ''), files: v.files };
+  } catch { /* 壊れた印は、比べないだけ */ }
+  if (must) throw new Error(`--diff の ${path} に、ファイルの一覧がありません（この版より前の書き出しには一覧がない）`);
+  return undefined;
+}
+
+export function diffManifest(a: ExportManifest, b: ExportManifest, against: string): ExportChanges {
+  const added = Object.keys(b).filter((k) => !a[k]).sort();
+  const removed = Object.keys(a).filter((k) => !b[k]).sort();
+  const changed = Object.keys(b).filter((k) => a[k] && a[k].sha1 !== b[k].sha1).sort();
+  return { against, added, changed, removed, same: Object.keys(b).length - added.length - changed.length };
 }
 
 /** 前の書き出しを消す（印のあるフォルダか、空のフォルダだけ。違うフォルダを消さない） */
