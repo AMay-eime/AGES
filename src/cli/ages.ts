@@ -14,7 +14,7 @@ import { codeQuery, indexCode } from '../project/code.ts';
 import { noteCodeEdits, noteRecent, placeOf, readRecent, recentFor, topRecent } from '../project/recent.ts';
 import { eventWarnings } from '../project/events.ts';
 import { focusLine, readFocus, withFocus } from '../project/focus.ts';
-import { exportProject, serveStatic } from '../project/export.ts';
+import { EXPORT_MARK, exportProject, serveStatic } from '../project/export.ts';
 import { writeLaunchers } from '../project/launchers.ts';
 import { checkExport } from './export-check.ts';
 import { readCursor, readLog, readTouched, summarize, writeCursor, type Actor } from '../project/oplog.ts';
@@ -29,7 +29,8 @@ import { parseAddress } from '../core/docs.ts';
 import { cellsToRows, formatDelimited, importOps, parseDelimited, tableToCells } from '../core/csv.ts';
 import type { Row, TableDoc } from '../core/table.ts';
 import { actionsFromRows, type ActionDef } from '../core/input.ts';
-import { GameError, type Game } from '../core/game.ts';
+import { GameError, type Game, type GameEvent } from '../core/game.ts';
+import type { Entity } from '../core/world.ts';
 import { baseNameOf, frameCount, listFrames, type SheetDef } from '../core/sheet.ts';
 import { autoRects, carryClips, gridRects, nameFrames, type Pixels, type Rect } from '../core/slice.ts';
 import { decodePng } from '../project/png.ts';
@@ -61,7 +62,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   table  <dir> <表> [--cols a,b] [--rows id1,id2] [--empty 列]   表を見る（1行1行。--empty はその列が空の行だけ。例 未訳: text --empty en）
                [--export x.csv] [--import x.csv [--force]]   表計算ソフトとの行き来（読み込みは表をまるごと置き換える）
   run    <dir> [--frames 600] [--scene main | --spawn enemy,explosion@40,0（プレハブだけを空のシーンの真ん中に出して試す）] [--seed 1] [--keys "0-120:ArrowLeft+KeyZ;120-200:@move_x=1;30:Mouse0+ptr=240,100"]
-               [--input recordings/x.input.json] [--watch player.Health.hp,@enemy.Health.hp,...（@プレハブ名 はいる最初の1つ）] [--every 60] [--until gameOver | scene:result | click:ボタンのID] [--twice] [--dump]
+               [--input recordings/x.input.json] [--watch player.Health.hp,@enemy.Health.hp,...（@プレハブ名 はいる最初の1つ。@enemy[*] は全部、@enemy[kind=boss] は合う最初の1つ、@enemy[*kind=boss] は合う物全部）] [--log 出来事の名前,…（中身をフレームつきで。* で全部）] [--every 60] [--until gameOver | scene:result | click:ボタンのID] [--twice] [--dump]
                [--save saves/x.save.json]（この保存データから始める。省くと空） [--save-out saves/y.save.json]（終わりの保存データを書き出す） [--lang en]（言語）
                [--params stage=s1,level=2]（始めのシーンに渡す ctx.scene.params。JSON でもよい） [--date 2026-12-25T09:00]（ctx.date の始め。省くと決まった日時）
                --keys の "title+30-32:@ui_confirm" は、シーン title に入るたびに、入ってから 30〜31 フレーム目に押す（click=ボタンのID も書ける）
@@ -73,7 +74,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   talk   <dir> [--task 作業 [--steps "a|b|c"] [--touch 住所,住所]] [--step 2] [--done 結果] [--ask 質問 [--choices "A|B"] [--about 住所]] [--reply 付箋ID 一言]
                エディタの人とのやり取り（何をしているかを見せる・人が決めることを聞く・付箋を読む）。引数なしで読む
   version <dir> [--record]           AGES の版（記録が古ければ直し方を出す）。--record で今の版を残す
-  export <dir> [--out 先] [--check] [--serve [ポート]] [--desktop [--id com.名前.ゲーム] [--fullscreen]]  書き出す（ゲームだけ。dist/web は Web にそのまま置ける。--desktop は Tauri の元 dist/desktop。--check は headless の Chrome で動くか確かめる）
+  export <dir> [--out 先] [--diff 前の.ages-export] [--check] [--serve [ポート]] [--desktop [--id com.名前.ゲーム] [--fullscreen]]  書き出す（ゲームだけ。dist/web は Web にそのまま置ける。--desktop は Tauri の元 dist/desktop。--check は headless の Chrome で動くか確かめる）
   pin    <dir> [--repo URL] [--commit SHA] [--force]  版だけ同梱の形に（ages.mjs が本体を .ages/engine に取ってくる。GitHub との連携用）。AGENTS.md は手で直されていなければ本体の版に合わせる（--force で直されていても）
   ui     <dir> [シーン]               UI の配置（四角・置き方）と、重なり・はみ出し。直すのは patch の dockUI / attachUI
   assets <dir> [フォルダ] [--kind image|sound|font|shader|model] [--unused] [--refs 場所]   アセットの一覧（使っている所の数）・使っている所
@@ -265,12 +266,25 @@ export async function cmdExport(dir: string, flags: Record<string, string | bool
     desktop: flags.desktop === true,
     ...(typeof flags.id === 'string' ? { id: flags.id } : {}),
     fullscreen: flags.fullscreen === true,
+    ...(typeof flags.diff === 'string' ? { diff: flags.diff } : {}),
   });
   const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)}MB`;
   const lines = [`書き出しました: ${relative(process.cwd(), r.web) || r.web}（${r.files}ファイル・${mb(r.bytes)}）`,
     '  Web: このフォルダを丸ごと置けば遊べる（itch.io なら zip にして HTML のゲームとして上げる）。手元で試すなら --serve'];
   if (r.desktop) lines.push(`  デスクトップ: ${relative(process.cwd(), r.desktop) || r.desktop}（exe の作り方は中の README.md。Rust と Tauri の道具が要る）`);
   lines.push(...r.notes.map((n) => `  ${n}`));
+  // 前の書き出しとの違い（変わったファイルだけ送るため）。一覧は書き出しの中の .ages-export（場所・大きさ・sha1）
+  if (r.changes) {
+    const c = r.changes, n = c.added.length + c.changed.length + c.removed.length;
+    lines.push(`  ${c.against}との違い: ${n ? `増えた ${c.added.length}・変わった ${c.changed.length}・消えた ${c.removed.length}（同じ ${c.same}）` : 'なし（すべて同じ）'}`);
+    const list = [...c.added.map((x) => `+ ${x}`), ...c.changed.map((x) => `~ ${x}`), ...c.removed.map((x) => `- ${x}`)];
+    lines.push(...list.slice(0, 40).map((x) => `    ${x}`));
+    if (list.length > 40) {
+      const file = join(r.out, 'changes.txt');
+      await writeFile(file, list.join('\n') + '\n');
+      lines.push(`    …ほか ${list.length - 40}（全部は ${relative(process.cwd(), file) || file}）`);
+    }
+  } else lines.push(`  ファイルの一覧（場所・大きさ・sha1）は ${EXPORT_MARK}。次からは前の書き出しとの違いが出る（ほかの書き出しと比べるなら --diff <その ${EXPORT_MARK}>）`);
   // ストアの申告（生成 AI を使ったか）のためのまとめ。未記入があっても止めない
   const og = originSummary(await readOrigins(p.dir), p.assets, languagesOf(p.config));
   if (og.total) lines.push(`  出どころ: 生成 AI を使った物は ${og.ai || 'なし'}${og.missing ? `（未記入 ${og.missing}件）` : ''}。一覧とクレジットは ages assets <dir> --origin`);
@@ -650,20 +664,56 @@ export function actionsOf(p: Project): Map<string, ActionDef> {
   return actionsFromRows(p.registry.tableView('actions').rows);
 }
 
+/** 物の、部品.欄 の値（ない物・ない部品は —）。リスト・構造体は写す（始めの値が後の値で書き変わらないように） */
+function valueOf(e: Entity, comp?: string, field?: string): unknown {
+  if (!comp) return 'alive';
+  const c = e.c[comp];
+  if (!c) return '—';
+  const v = field ? c[field] : c;
+  if (v === undefined) return '—';
+  return v !== null && typeof v === 'object' ? structuredClone(v) : v;
+}
+
+/** [欄=値]・[部品.欄=値]・[欄!=値]: 物がその条件に合うか（部品を書かなければ、どれかの部品のその欄） */
+function matchWhere(e: Entity, cond: string): boolean {
+  const m = /^([^=!]+?)(!?=)(.*)$/.exec(cond);
+  if (!m) throw new Error(`--watch の [${cond}] は 欄=値 か 部品.欄=値 です（!= も使えます）`);
+  const [, key, op, want] = m;
+  const [a, b] = key.split('.');
+  const values = b ? [e.c[a]?.[b]] : Object.values(e.c).map((c) => (c as Record<string, unknown>)[a]).filter((v) => v !== undefined);
+  const hit = values.some((v) => v !== undefined && (typeof v === 'string' ? v : JSON.stringify(v)) === want);
+  return op === '=' ? hit : !hit;
+}
+
+/**
+ * --watch の1つを読む。ID.部品.欄、@プレハブ名.部品.欄（いる最初の1つ）、
+ * @プレハブ名[*]（いる物全部。ID ごとの値）、@プレハブ名[欄=値]（合う最初の1つ）、@プレハブ名[*欄=値]（合う物全部）
+ */
 function readWatch(game: Game, addr: string): unknown {
   const s = addr.includes('#') ? addr.slice(addr.indexOf('#') + 1) : addr;
+  const sel = /^@([^.[\]]+)\[(\*?)([^\]]*)\](.*)$/.exec(s);
+  if (sel) {
+    const [, prefab, all, cond, rest] = sel;
+    const [, comp, field] = rest.split('.');
+    const list = [...game.world.entities.values()].filter((x) => game.world.isAlive(x.id) && (x.id === prefab || x.id.startsWith(prefab + '~')) && (!cond || matchWhere(x, cond)));
+    if (!all) return list[0] ? valueOf(list[0], comp, field) : '—';
+    if (!list.length) return '—';
+    return list.map((x) => `${x.id}=${fmt(valueOf(x, comp, field))}`).join(' ');
+  }
   const [id, comp, field] = s.split('.');
   // @プレハブ名 は、そのプレハブから出した物のうち、いまいる最初の1つ（ID を探さなくてよい）
   const e = id.startsWith('@')
     ? [...game.world.entities.values()].find((x) => game.world.isAlive(x.id) && (x.id === id.slice(1) || x.id.startsWith(id.slice(1) + '~')))
     : game.world.get(id);
   if (!e) return '—';
-  if (!comp) return 'alive';
-  const c = e.c[comp];
-  if (!c) return '—';
-  const v = field ? c[field] : c;
-  // リスト・構造体は写す（始めの値が後の値で書き変わらないように）
-  return v !== null && typeof v === 'object' ? structuredClone(v) : v;
+  return valueOf(e, comp, field);
+}
+
+/** --log: 出来事の中身を、出たフレームごとに1行（多すぎるときは、始めの分だけ） */
+const LOG_MAX = 300;
+function logLine(ev: GameEvent): string {
+  const data = ev.data === undefined ? '' : ' ' + (typeof ev.data === 'string' ? ev.data : JSON.stringify(ev.data));
+  return `f${ev.frame} ${ev.name}${data.length > 240 ? data.slice(0, 239) + '…' : data}`;
 }
 
 export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
@@ -694,6 +744,8 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
     for (const k of keys.scene) if (!p.registry.scenes.has(k.scene) && !p.docs.scenes.has(k.scene)) throw new Error(`--keys の ${k.scene}+${k.a}: シーン ${k.scene} はありません${suggest(k.scene, [...p.docs.scenes.keys()])}`);
   }
   const watch = typeof f.watch === 'string' ? f.watch.split(',').map((s) => s.trim()).filter(Boolean) : [];
+  // --log: 出来事（ctx.emit）の名前。* で全部
+  const logNames = typeof f.log === 'string' ? f.log.split(',').map((s) => s.trim()).filter(Boolean) : [];
   const every = f.every !== undefined ? Number(f.every) : 0;
   const until = typeof f.until === 'string' ? f.until : '';
   // --params: 始めのシーンに渡すもの（ctx.scene.params）。stage=s1,level=2 か JSON
@@ -724,6 +776,11 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
     if (until.startsWith('scene:')) game.sceneListeners.push((_from, to) => { if (to === until.slice(6) && !stopped) stopped = `${until} @f${game.frame}`; });
     else if (until.startsWith('click:')) game.listeners.push((ev) => { if (ev.name === 'ui.click' && (ev.data as { id?: string })?.id === until.slice(6) && !stopped) stopped = `${until} @f${ev.frame}`; });
     else if (until) game.listeners.push((ev) => { if (ev.name === until && !stopped) stopped = `${until} @f${ev.frame}`; });
+    let logged = 0;
+    if (logNames.length) game.listeners.push((ev) => {
+      if (!logNames.includes('*') && !logNames.includes(ev.name)) return;
+      if (logged++ < LOG_MAX) lines.push(logLine(ev));
+    });
     const t0 = performance.now();
     try {
       for (let i = 0; i < frames && !stopped; i++) {
@@ -743,6 +800,8 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
         if (stack) lines.push(`  at ${stack.trim().replace(/^at /, '').replace('file://' + p.dir + '/', '')}`);
       } else throw err;
     }
+    if (logged > LOG_MAX) lines.push(`…出来事はほか ${logged - LOG_MAX}（--log は始めの ${LOG_MAX} まで。--frames か名前で絞る）`);
+    if (logNames.length && !logged) lines.push(`log: ${logNames.join(',')} は1回も出ませんでした`);
     return { game, lines, first, ms: performance.now() - t0, stopped };
   };
 
