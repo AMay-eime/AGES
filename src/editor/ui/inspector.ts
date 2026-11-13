@@ -1,6 +1,6 @@
 // インスペクタ。コンポーネントの宣言（型・範囲・説明）から入力欄を自動で作る。
 // 各フィールドに 🔒（AIが変更できないロック）を付けられる。人が触った値には ★ が付く。
-import type { App } from '../app.ts';
+import { STAGE_ROOT, type App } from '../app.ts';
 import type { Field } from '../../core/schema.ts';
 import { ASSET_LABEL, brief, defaultOf, matrixSize, typeOf, variantDefault, type ListField, type OneOfField, type StructField } from '../../core/schema.ts';
 import { formatSub, getIn, setIn, type EntityData, type PrefabDoc } from '../../core/docs.ts';
@@ -37,7 +37,7 @@ export function inspectorPanel(app: App): Panel {
     if (!sel) return clear(el, h('div', { class: 'pad muted' }, T('階層・ゲーム画面・プロジェクトから選ぶと、ここに表示されます。')));
 
     const playing = !!app.play && sel.kind === 'scene';
-    const base = sel.kind === 'scene' ? `${sel.scene}#${sel.id}` : `@${sel.name}`;
+    const base = sel.kind === 'scene' ? app.addr(sel.id, sel.scene) : `@${sel.name}`;
     let holder: { name?: string; tags?: string[]; components: Record<string, Record<string, unknown>> } | undefined;
     if (playing) {
       const e = app.play!.game.world.get(sel.id);
@@ -66,7 +66,7 @@ export function inspectorPanel(app: App): Panel {
     const savable = sel.kind === 'prefab' || !!app.state.scenes[sel.scene]?.entities.some((e) => e.id === sel.id);
 
     const nameInput = h('input', {
-      type: 'text', value: holder.name ?? '', style: 'flex:1;font-weight:600', disabled: playing,
+      type: 'text', value: holder.name ?? '', style: 'flex:1;font-weight:600', disabled: playing || (sel.kind === 'scene' && sel.scene.startsWith('@')),
       // プレハブの名前はファイルの名前（指している所も直す renamePrefab）。シーンの物の名前は見せる名前（rename）
       onchange: () => {
         if (sel.kind === 'scene') { app.patch([{ op: 'rename', target: base, name: nameInput.value }]); return; }
@@ -83,7 +83,12 @@ export function inspectorPanel(app: App): Panel {
       h('div', { class: 'muted', style: 'margin-top:4px;font:var(--mono)' }, base, holder.tags?.length ? `  tags:${holder.tags.join(',')}` : '',
         playing ? T('  ▶ 実行中（変更は停止時に保存するか選べます）') : ''),
       sel.kind === 'prefab' && !playing ? prefabBar(app, sel.name, app.state.prefabs[sel.name]) : null,
-      rawEnt && !playing ? instanceBar(app, base, rawEnt) : null,
+      // プレハブの編集画面: どのプレハブの中か・閉じる
+      sel.kind === 'scene' && sel.scene.startsWith('@') && !playing ? h('div', { class: 'row', style: 'margin-top:6px;gap:6px' },
+        h('span', { class: 'muted' }, T('プレハブ {0} の中（子の値を変えると、このプレハブのファイルに入る）', sel.scene)),
+        h('span', { style: 'flex:1' }),
+        h('button', { class: 'tiny', onclick: () => app.closePrefab() }, T('シーンに戻る'))) : null,
+      rawEnt && !playing && !(sel.kind === 'scene' && sel.scene.startsWith('@')) ? instanceBar(app, base, rawEnt) : null,
       app.extra.length ? h('div', { class: 'muted', style: 'margin-top:4px' }, T('ほか {0}体も選んでいます（{1}{2}）。ここで変えるのはこの物だけ。動かす・複製・削除はまとめて', app.extra.length, app.extra.slice(0, 4).join(', '), app.extra.length > 4 ? ' …' : '')) : null);
 
     let hiddenCount = 0;
@@ -198,7 +203,9 @@ export function inspectorPanel(app: App): Panel {
     const note = hiddenCount
       ? h('div', { class: 'pad muted', style: 'font-size:12px;cursor:pointer', onclick: () => setHide(false) }, T('🔒 ロック中の {0} 項目を隠しています（クリックで表示）', hiddenCount))
       : null;
-    clear(el, head, note, comps, removed, add);
+    // プレハブ（プレハブの編集画面の親も）: まつわる表の値を並べて、その場で直せるように
+    const pfName = sel.kind === 'prefab' ? sel.name : sel.scene.startsWith('@') && sel.id === STAGE_ROOT ? sel.scene.slice(1) : null;
+    clear(el, head, pfName ? prefabParams(app, pfName, playing) : null, note, comps, removed, add);
   };
 
   // 実行中は値を画面に流し込む（入力中の欄は触らない）
@@ -228,6 +235,50 @@ function resolvedBase(app: App, name: string): PrefabDoc | undefined {
 }
 
 /** プレハブの帯: 派生の元へ移る・派生を作る・切り離す */
+/**
+ * プレハブにまつわる表の値。プレハブの params（AI が並べる。派生は元のもの）か、書いていなければこのプレハブを指す表の行（自動）。
+ * 値の正本は表のまま（ここで直すと表の値が変わる。ロックも表と同じ）
+ */
+function prefabParams(app: App, name: string, playing: boolean): HTMLElement | null {
+  const prefabs = app.state.prefabs;
+  let own: string[] | undefined;
+  for (let p: PrefabDoc | undefined = prefabs[name], n = 0; p && n < 64; p = p.base ? prefabs[p.base] : undefined, n++) if (p.params?.length) { own = p.params; break; }
+  const auto: string[] = [];
+  if (!own) for (const t of app.registry.tables.values()) {
+    const cols = Object.entries(t.columns).filter(([, f]) => f.type === 'prefab').map(([k]) => k);
+    if (cols.length) for (const r of app.state.tables?.[t.name]?.rows ?? []) if (cols.some((c) => r[c] === name)) auto.push(`$${t.name}.${r.id}`);
+  }
+  const list = own ?? auto;
+  if (!list.length) return null;
+  const blocks = list.map((addr) => {
+    const m = /^\$([^.]+)\.([^.]+)(?:\.([^.]+))?$/.exec(addr);
+    const def = m ? app.registry.tables.get(m[1]) : undefined;
+    const row = m ? app.state.tables?.[m[1]]?.rows.find((r) => r.id === m[2]) : undefined;
+    if (!m || !def || !row || (m[3] && !def.columns[m[3]])) return h('div', { class: 'muted', style: 'color:var(--bad)' }, T('⚠ {0} はありません（AI に直してもらう）', addr));
+    const [, table, id, only] = m;
+    // 自動のときは、このプレハブを指している列は出さない（自分の名前なので）
+    const cols = only ? [only] : Object.keys(def.columns).filter((c) => !(def.columns[c].type === 'prefab' && row[c] === name));
+    const fields = cols.map((c) => {
+      const f = def.columns[c], path = `$${table}.${id}.${c}`, lock = lockAt(app.state.locks, path);
+      const value = c in row ? row[c] : defaultOf(f);
+      const ctl = lock || playing
+        ? h('span', { class: 'muted' }, typeof value === 'object' ? JSON.stringify(value) : String(value))
+        : inputWidget(app, f, value, (v, final) => { if (final) app.patch([{ op: 'set', path, value: v }]); });
+      const lockBtn = h('button', { class: 'icon tiny', title: lock ? T('ロックを見る') : T('この値をロックする（AI が変えられなくなる）'), disabled: playing, onclick: () => (lock ? app.openLocks(path) : app.lock([path])) }, lock ? '🔒' : '🔓');
+      return h('div', { class: `field ${isWide(f) ? 'wide' : ''} ${lock ? 'locked' : ''}`, 'data-ai': path, 'data-path': path },
+        h('label', { title: `${c}: ${brief(f)}${f.desc ? '\n' + TD(f.desc) : ''}` }, c), ctl, lockBtn);
+    });
+    return h('div', {},
+      h('div', { class: 'muted', style: 'margin:4px 0 2px' },
+        h('a', { href: '#', style: 'color:var(--accent)', title: T('表のエディタで開く'), onclick: (e: Event) => { e.preventDefault(); app.emit('openTable', { name: table, row: id }); } }, `$${table} › ${id}`)),
+      fields);
+  });
+  return h('div', { class: 'comp', 'data-ai': `@${name}.params` },
+    h('div', { class: 'head', title: T('値の正本は表です。ここで直すと表の値が変わります（ロックも表と同じ）') }, T('まつわる値'),
+      h('span', { class: 'desc' }, own ? T('（AI が並べた表の値。足し引きは AI に頼む）') : T('（このプレハブを指す表の行。並べ方は AI に頼める）'))),
+    blocks);
+}
+
 function prefabBar(app: App, name: string, raw: PrefabDoc): HTMLElement {
   const derive = () => modal((close) => {
     const input = h('input', { type: 'text', value: `${name}_variant`, style: 'flex:1' }) as HTMLInputElement;
@@ -244,6 +295,7 @@ function prefabBar(app: App, name: string, raw: PrefabDoc): HTMLElement {
     raw.base ? h('span', { class: 'muted' }, T('派生の元: '), h('a', { href: '#', style: 'color:var(--accent)', onclick: (e: Event) => { e.preventDefault(); app.select({ kind: 'prefab', name: raw.base! }); } }, '@' + raw.base)) : null,
     kids.length ? h('span', { class: 'muted' }, T('派生: {0}', kids.map((k) => '@' + k).join(' '))) : null,
     h('span', { style: 'flex:1' }),
+    h('button', { class: 'tiny', title: T('親と子をそろえた絵で開き、子を選んでインスペクタとドラッグで直す'), onclick: () => app.openPrefab(name) }, T('開く')),
     h('button', { class: 'tiny', title: T('このプレハブを元にして、一部だけ変えたプレハブを作る'), onclick: derive }, T('＋派生を作る')),
     raw.base ? h('button', { class: 'tiny', title: T('元から切り離して、今の値をまるごと持つふつうのプレハブにする（値は変わらない）'), onclick: () => app.patch([{ op: 'setPrefab', name, base: null }]) }, T('切り離す')) : null);
 }

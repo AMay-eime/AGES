@@ -376,7 +376,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     if (app.play && !app.play.paused) return;
     const { ids } = pickAt(p);
     if (ids.length && !app.selectedIds().includes(ids[0])) app.select({ kind: 'scene', scene: app.scene, id: ids[0] });
-    const targets = app.selectedIds().map((id) => `${app.scene}#${id}`);
+    const targets = app.selectedIds().map((id) => app.addr(id));
     if (!targets.length) return;
     const items = menuItemsFor(app, 'entity', targets);
     if (items.length) menu(e.clientX, e.clientY, items);
@@ -500,7 +500,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     for (const m of d.all) {
       const c = app.preview.world.get(m.id)?.c[m.what];
       if (!c) continue;
-      const base = `${app.scene}#${m.id}.${m.what}`;
+      const base = `${app.addr(m.id)}.${m.what}`;
       // 位置の親から見た値は割り切れないことがある（小数2桁にそろえる）
       const r = (v: number) => (c.parent ? Math.round(v * 100) / 100 : v);
       ops.push({ op: 'set', path: `${base}.x`, value: r(c.x) }, { op: 'set', path: `${base}.y`, value: r(c.y) });
@@ -556,7 +556,7 @@ export function gamePanel(app: App): Panel & { canvas: HTMLCanvasElement } {
     for (const m of gd.all) {
       const c = app.preview.world.get(m.id)?.c.Transform;
       if (!c) continue;
-      const base = `${app.scene}#${m.id}.Transform`;
+      const base = `${app.addr(m.id)}.Transform`;
       const set = (f: string, v: unknown) => ops.push({ op: 'set', path: `${base}.${f}`, value: v });
       if (gd.tool === 'move') {
         const r = (v: number) => (c.parent ? Math.round(v * 100) / 100 : v);

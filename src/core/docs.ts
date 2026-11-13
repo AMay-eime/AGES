@@ -39,6 +39,11 @@ export interface PrefabDoc {
   name: string;
   /** 子（親と一緒に出る物）。派生では、元の子の値を変えるだけ（名前で重ねる。足す・消すはしない） */
   children?: PrefabChild[];
+  /**
+   * このプレハブにまつわる表の値（$表.行 か $表.行.列）。エディタでプレハブを選ぶと、ここに並べて直せる。
+   * 書くのは AI（使用者に頼まれて足し引きする）。書いていなければ、このプレハブを指す表の行を出す。派生は書いていなければ元のものを使う
+   */
+  params?: string[];
   /** 派生の元（あれば、元を受け継いで components に書いた値だけを変える。core/variant.ts） */
   base?: string;
   desc?: string;

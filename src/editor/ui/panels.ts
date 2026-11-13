@@ -31,17 +31,29 @@ export function hierarchyPanel(app: App): Panel {
       if (id !== sel.id) open.add(`${sel.scene}#${id}`);
     }
   };
+  // プレハブの編集画面は、開いたときに子をすべて開いて見せる（子の組を見るための画面なので）
+  let shownStage: string | null = null;
   const render = () => {
     if (!app.state || app.state.error) return clear(el);
     const s = app.state;
     const scene = s.scenes[app.scene];
+    if (app.prefabStage !== shownStage) {
+      shownStage = app.prefabStage;
+      if (shownStage) for (const e of scene?.entities ?? []) open.add(`${app.scene}#${e.id}`);
+    }
     const lockCount = (prefix: string) => Object.keys(s.locks).filter((k) => k.startsWith(prefix + '.')).length;
     const sel = app.sel;
     const sceneSel = h('select', {
       title: scene?.desc ?? '',
       disabled: !!app.play,
-      onchange: (e: Event) => { app.scene = (e.target as HTMLSelectElement).value; app.rebuildPreview(); app.select(null); app.emit('change'); },
-    }, Object.keys(s.scenes).map((n) => h('option', { value: n, selected: n === app.scene }, T('シーン: {0}{1}', n, n === s.config.startScene ? T('（開始）') : ''))));
+      onchange: (e: Event) => {
+        const v = (e.target as HTMLSelectElement).value;
+        if (app.prefabStage) { app.closePrefab(v); return; }
+        app.scene = v; app.rebuildPreview(); app.select(null); app.emit('change');
+      },
+    },
+    app.prefabStage ? h('option', { value: '', selected: true }, T('プレハブ: @{0}（開いている）', app.prefabStage)) : null,
+    Object.keys(s.scenes).filter((n) => !n.startsWith('@')).map((n) => h('option', { value: n, selected: n === app.scene }, T('シーン: {0}{1}', n, n === s.config.startScene ? T('（開始）') : ''))));
     // シーンを作る・複製・名前・説明・開始・消す
     const ask = (title: string, value: string, done: (v: string) => void, placeholder = '') => modal((close) => {
       const input = h('input', { type: 'text', value, placeholder, style: 'width:100%' }) as HTMLInputElement;
@@ -97,7 +109,7 @@ export function hierarchyPanel(app: App): Panel {
         if (to && ancestorsOf(to).has(child)) { toast(T('{0} は {1} の中にあるので、親にできない', to, child), 'warn'); return; }
         if ((parent.get(child) ?? null) === to) return;
         if (to) open.add(`${app.scene}#${to}`);
-        const base = `${app.scene}#${child}.${k}`;
+        const base = `${app.addr(child)}.${k}`;
         const ops: Op[] = [{ op: 'set', path: `${base}.parent`, value: to }];
         // 位置の親は、画面の位置・向き・大きさを変えない（親から見た値に直す）
         const view = app.sceneView(app.scene);
@@ -156,14 +168,14 @@ export function hierarchyPanel(app: App): Panel {
         out.push(h('div', {
           class: `item ${sel?.kind === 'scene' && sel.id === e.id ? 'sel' : app.extra.includes(e.id) ? 'sel2' : ''}`,
           style: `padding-left:${4 + depth * 14}px`,
-          'data-ai': `${app.scene}#${e.id}`,
+          'data-ai': app.addr(e.id),
           title: T('Shift・Ctrl+クリックで足す・外す。右クリックで複製・削除・プレハブにする。ほかの物の上へ運ぶとその子に（UI どうしは UI.parent・位置のある物どうしは Transform.parent。シーン名の行へ運ぶと親なし。Ctrl+Z で戻せる）'),
           onclick: (ev: MouseEvent) => app.select({ kind: 'scene', scene: app.scene, id: e.id }, { add: ev.shiftKey || ev.ctrlKey || ev.metaKey }),
           oncontextmenu: (ev: MouseEvent) => {
             ev.preventDefault();
             if (app.play) return;
             if (!app.selectedIds().includes(e.id)) app.select({ kind: 'scene', scene: app.scene, id: e.id });
-            const items = menuItemsFor(app, 'entity', app.selectedIds().map((id) => `${app.scene}#${id}`));
+            const items = menuItemsFor(app, 'entity', app.selectedIds().map((id) => app.addr(id)));
             if (items.length) menu(ev.clientX, ev.clientY, items);
           },
           draggable: !app.play && kind.has(e.id),
@@ -212,7 +224,7 @@ export function hierarchyPanel(app: App): Panel {
     const tree = entityRows();
     clear(el,
       s.issues.length ? h('div', { class: 'issues' }, s.issues.map((i) => h('div', {}, '⚠ ' + i))) : null,
-      h('div', { class: 'toolbar' }, sceneSel, h('button', { class: 'icon', title: T('シーンを作る・複製・名前・説明・開始・消す'), onclick: sceneMenu, disabled: !!app.play }, '⚙'), h('span', { style: 'flex:1' }),
+      h('div', { class: 'toolbar' }, sceneSel, h('button', { class: 'icon', title: T('シーンを作る・複製・名前・説明・開始・消す'), onclick: sceneMenu, disabled: !!app.play || !!app.prefabStage }, '⚙'), h('span', { style: 'flex:1' }),
         h('button', { title: T('エンティティを追加'), onclick: addEntity, disabled: !!app.play }, T('＋')),
         h('button', { title: T('選択中のエンティティを削除'), onclick: remove, disabled: !!app.play || sel?.kind !== 'scene' }, '−')),
       h('div', { class: 'list' },
@@ -224,6 +236,7 @@ export function hierarchyPanel(app: App): Panel {
           return h('div', {
             class: `item ${sel?.kind === 'prefab' && sel.name === p.name ? 'sel' : ''}`,
             onclick: () => app.select({ kind: 'prefab', name: p.name }),
+            ondblclick: () => app.openPrefab(p.name),
             'data-ai': `@${p.name}`,
             // 右クリック: 拡張の menus（where: 'prefab'。本体の写す・名前を変える・削除も）
             oncontextmenu: (ev: MouseEvent) => {
@@ -234,7 +247,7 @@ export function hierarchyPanel(app: App): Panel {
               if (items.length) menu(ev.clientX, ev.clientY, items);
             },
             // ゲームの画面へ運ぶと、落とした所にインスタンス（プレハブとつながった物）を置く
-            draggable: true, title: T('ゲームの画面へ運ぶと、その場所にこのプレハブのインスタンスを置く。右クリックで写す・名前を変える・削除'),
+            draggable: true, title: T('ダブルクリックで開く（親と子をそろえた絵で直す）。ゲームの画面へ運ぶと、その場所にこのプレハブのインスタンスを置く。右クリックで写す・名前を変える・削除'),
             ondragstart: (e: DragEvent) => { e.dataTransfer!.setData(PREFAB_MIME, p.name); e.dataTransfer!.effectAllowed = 'copy'; },
           }, '@' + p.name, h('span', { class: 'muted' }, p.base ? `← @${p.base}${p.desc ? ' ' + p.desc : ''}` : p.desc ?? ''), n ? h('span', { style: 'color:var(--lock)' }, '🔒' + n) : null);
         }),

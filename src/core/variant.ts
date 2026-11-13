@@ -216,3 +216,24 @@ export function childPrefabRefs(p: PrefabDoc): { at: string; node: PrefabChild }
   walk(p.children, `@${p.name}`);
   return out;
 }
+
+/** 書いてある形の子の並びを、名前で重ねる（部品は欄ごと。どちらも 変えた値・中身のどちらの形でもよい） */
+function mergeRaw(base: PrefabChild[], over: PrefabChild[] | undefined): PrefabChild[] {
+  const out = structuredClone(base);
+  for (const o of over ?? []) {
+    const b = out.find((c) => c.name === o.name);
+    if (!b) continue;
+    for (const [c, v] of Object.entries(o.components ?? {})) b.components[c] = { ...(b.components[c] ?? {}), ...structuredClone(v) };
+    if (o.remove?.length) b.remove = [...new Set([...(b.remove ?? []), ...o.remove])];
+    if (o.children?.length) b.children = mergeRaw(b.children ?? [], o.children);
+  }
+  return out;
+}
+
+/** 派生を切り離すときの子: 元から順に、書いてある形のまま重ねた並び（子にしたプレハブとのつながりは残る） */
+export function flatChildren(prefabs: Map<string, PrefabDoc>, name: string): PrefabChild[] {
+  const chain = baseChain(prefabs, name).reverse();
+  let kids: PrefabChild[] = structuredClone(chain[0].children ?? []);
+  for (const d of chain.slice(1)) kids = mergeRaw(kids, d.children);
+  return kids;
+}

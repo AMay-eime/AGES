@@ -249,8 +249,8 @@ export function mount(app: App): Panel {
     const ent = gizmo && w?.get(gizmo.id);
     if (hd && gizmo && ent && w) {
       const t = ent.c.Transform3D as Pose3;
-      const locked = (['x', 'y', 'z', 'rx', 'ry', 'rz', 'sx', 'sy', 'sz'] as const).some((f) => app.state.locks[`${app.scene}#${gizmo!.id}.Transform3D.${f}`]) || !!app.state.locks[`${app.scene}#${gizmo.id}`];
-      if (locked) { toast(T('🔒 {0} はロックされています', `${app.scene}#${gizmo.id}.Transform3D`), 'lock'); return; }
+      const locked = (['x', 'y', 'z', 'rx', 'ry', 'rz', 'sx', 'sy', 'sz'] as const).some((f) => app.state.locks[`${app.addr(gizmo!.id)}.Transform3D.${f}`]) || !!app.state.locks[`${app.scene}#${gizmo.id}`];
+      if (locked) { toast(T('🔒 {0} はロックされています', `${app.addr(gizmo.id)}.Transform3D`), 'lock'); return; }
       const axis = hd.axis === 3 ? cam.dir : gizmo.axes[hd.axis];
       const parent = t.parent ? matrixOf(w, t.parent) : null;
       const o = px(gizmo.origin)!;
@@ -364,7 +364,7 @@ export function mount(app: App): Panel {
     const d = drag!, t = d.cur;
     drag = null;
     const ops: Op[] = [];
-    for (const f of ['x', 'y', 'z', 'rx', 'ry', 'rz', 'sx', 'sy', 'sz'] as const) if (t[f] !== d.start[f]) ops.push({ op: 'set', path: `${app.scene}#${d.id}.Transform3D.${f}`, value: t[f] });
+    for (const f of ['x', 'y', 'z', 'rx', 'ry', 'rz', 'sx', 'sy', 'sz'] as const) if (t[f] !== d.start[f]) ops.push({ op: 'set', path: `${app.addr(d.id)}.Transform3D.${f}`, value: t[f] });
     if (!ops.length) return;
     const r = await app.patch(ops, 'scene3d');
     if (!r) app.rebuildPreview();
@@ -428,7 +428,7 @@ export function mount(app: App): Panel {
         : { shape: 'box', size };
     } else if (info) values = { shape: 'box', size: info.size.map((v) => round(v, 1000)), offset: info.center.map((v) => round(v, 1000)) };
     else values = { shape: 'box', size: [1, 1, 1] };
-    const target = `${app.scene}#${id}`;
+    const target = app.addr(id);
     await app.patch(e.c.Collider3D
       ? Object.entries(values).map(([k, v]) => ({ op: 'set' as const, path: `${target}.Collider3D.${k}`, value: v }))
       : [{ op: 'addComponent' as const, target, component: 'Collider3D', values }], 'scene3d');
