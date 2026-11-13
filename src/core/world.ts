@@ -2,6 +2,7 @@
 import type { Registry } from './registry.ts';
 import type { EntityData } from './docs.ts';
 import { poseOf, relativeTo, type Pose } from './transform.ts';
+import { expandChildren, hasChildren, prefabChildren } from './variant.ts';
 
 export interface Entity {
   id: string;
@@ -41,7 +42,21 @@ export class World {
     for (const [name, values] of Object.entries(p.components)) components[name] = { ...values };
     for (const [name, values] of Object.entries(overrides)) components[name] = { ...(components[name] ?? {}), ...values };
     const id = `${prefabName}~${++this.seq}`;
-    return this.add({ id, name: p.name, tags: p.tags, components }, prefabName);
+    const e = this.add({ id, name: p.name, tags: p.tags, components }, prefabName);
+    this.addChildren(e, prefabName);
+    return e;
+  }
+
+  /** 子を持つプレハブなら、子（と孫）も出す。ID は 親のID/名前（シーンに置いた物にも使う） */
+  addChildren(e: Entity, prefabName: string): void {
+    if (!hasChildren(this.registry.prefabs, prefabName)) return;
+    for (const d of expandChildren(prefabChildren(this.registry.prefabs, prefabName), e.id, !!e.c.Transform3D && !e.c.Transform)) this.add(d, d.prefab);
+  }
+
+  /** 子（ID は 親のID/名前。孫は 'gun_l/muzzle' のように / でつなぐ）。いなければ undefined */
+  child(parent: Entity | string, path: string): Entity | undefined {
+    const id = `${typeof parent === 'string' ? parent : parent.id}/${path}`;
+    return this.isAlive(id) ? this.entities.get(id) : undefined;
   }
 
   /** フレームの終わりにまとめて消す */

@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { registerHooks } from 'node:module';
-import { formatJson, type PrefabDoc, type ProjectConfig, type SceneDoc } from '../core/docs.ts';
+import { formatJson, type PrefabChild, type PrefabDoc, type ProjectConfig, type SceneDoc } from '../core/docs.ts';
 import { Registry, type CheckView, type GameModule } from '../core/registry.ts';
 import { applyOps, diffDocs, getValue, setValue, sheetRoot, splitItem, type Change, type Docs, type Op, type PatchResult } from '../core/patch.ts';
 import { formatAddress, parseAddress } from '../core/docs.ts';
@@ -19,7 +19,7 @@ import { appendLog, localTime, lockedHits, markTouched, movePrefixTouched, moveT
 import { agesHome, lockDiff, verifyLocks, type LockIntegrity } from './seal.ts';
 import { scanAssets, type AssetInfo } from './assets.ts';
 import { assetRefs, codePrefabRefs, codeRefs, codeSceneRefs, isUnder, modelsOf, modelTexturesOf } from '../core/assets.ts';
-import { resolveEntity, resolvePrefab } from '../core/variant.ts';
+import { CHILD_NAME, hasChildren, prefabChildren, resolveEntity, resolvePrefab, type ResolvedChild } from '../core/variant.ts';
 import { allowedByDrawers, checkKept, checkWindows, loadWindows, prefabTags, tagCounts, tagEdit, unlistedWindows, windowAllows, windowTargets, type WindowInfo } from './windows.ts';
 import { Journal, inverseFiles, type DocState, type FileMove, type TxRecord } from './journal.ts';
 import { revert as revertValue, same } from '../core/revert.ts';
@@ -596,6 +596,25 @@ export class Project {
       const base = this.registry.findPrefab(p.base);
       for (const c of p.remove ?? []) if (!base?.components[c]) errs.push(`@${p.name}.remove: 元 @${p.base} に部品 ${c} はありません${suggest(c, Object.keys(base?.components ?? {}))}`);
       check(`@${p.name}`, Object.fromEntries(Object.keys(p.components ?? {}).map((c) => [c, r.components[c] ?? p.components[c]])));
+    }
+    // 子を持つプレハブ: 名前・重なり・子にしたプレハブ（輪・ない）・元の子との重ね方、子の値（重ねた形で）
+    for (const p of this.docs.prefabs.values()) {
+      if (!hasChildren(this.docs.prefabs, p.name)) continue;
+      const names = (list: PrefabChild[] | undefined, at: string) => {
+        const seen = new Set<string>();
+        for (const c of list ?? []) {
+          if (!CHILD_NAME.test(c.name ?? '')) errs.push(`${at}: 子の名前 "${c.name}" には英数字・_・- だけが使えます`);
+          if (seen.has(c.name)) errs.push(`${at}: 子の名前 ${c.name} が重なっています`);
+          seen.add(c.name);
+          names(c.children, `${at}/${c.name}`);
+        }
+      };
+      names(p.children, `@${p.name}`);
+      let kids: ResolvedChild[];
+      try { kids = prefabChildren(this.docs.prefabs, p.name); } catch (e) { errs.push((e as Error).message); continue; }
+      const walk = (list: ResolvedChild[], at: string) => { for (const k of list) { check(`${at}/${k.name}`, k.components); walk(k.children, `${at}/${k.name}`); } };
+      // 派生の子の値は、元で確かめる（同じ値を2回知らせない）
+      if (!p.base) walk(kids, `@${p.name}`);
     }
     if (!this.docs.scenes.has(this.config.startScene)) errs.push(`開始シーン ${this.config.startScene} がありません`);
     for (const [image, sheet] of this.docs.sheets) {

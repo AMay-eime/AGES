@@ -44,6 +44,8 @@ export interface Ctx {
    * 画面の位置が要るとき（狙う・距離・当たり）はこれで読む。親がなければ Transform と同じ。Transform がなければ null
    */
   worldOf(e: Entity | string): Pose | null;
+  /** 子を持つプレハブの子（名前。孫は 'gun_l/muzzle'）。いなければ undefined */
+  child(parent: Entity | string, path: string): Entity | undefined;
   /** 画面のこの位置に置く（親があれば親から見た位置に直して書く） */
   setWorldPos(e: Entity | string, x: number, y: number): void;
   /** 画面の位置・向き・大きさを決めて置く（渡した値だけ。例 ctx.setWorld(part, { x, y, rot: 30 })。親があれば親から見た値に直して書く） */
@@ -272,7 +274,7 @@ export class Game {
     if (opts.params) this.sceneParams = { ...opts.params };
     if (!registry.scenes.has(scene.name)) registry.scenes.set(scene.name, scene);
     // プレハブのインスタンスは、プレハブと重ねた中身で置く（どのプレハブから来たかも覚える）
-    for (const e of scene.entities) this.world.add(resolveEntity(registry.prefabs, e), e.prefab);
+    for (const e of scene.entities) { const x = this.world.add(resolveEntity(registry.prefabs, e), e.prefab); if (e.prefab) this.world.addChildren(x, e.prefab); }
     // 操作の名前と割り当て（標準の表 $actions）
     if (registry.tables.has('actions')) {
       this.input.setActions(actionsFromRows(registry.tableView('actions').rows));
@@ -325,6 +327,7 @@ export class Game {
       },
       destroy: (id) => this.world.destroy(id),
       worldOf: (e) => this.world.pose(e),
+      child: (p, path) => this.world.child(p, path),
       setWorldPos: (e, x, y) => this.world.setWorldPos(e, x, y),
       setWorld: (e, w) => this.world.setWorld(e, w),
       attach: (c, p) => this.world.attach(c, p),
@@ -689,7 +692,7 @@ export class Game {
     for (const e of this.world.entities.values()) if (!e.tags.includes('keep') && !keep.has(e.id)) this.world.destroy(e.id);
     this.world.flush();
     const doc = this.registry.scenes.get(t.to)!;
-    for (const e of doc.entities) if (!this.world.entities.has(e.id)) this.world.add(resolveEntity(this.registry.prefabs, e), e.prefab);
+    for (const e of doc.entities) if (!this.world.entities.has(e.id)) { const x = this.world.add(resolveEntity(this.registry.prefabs, e), e.prefab); if (e.prefab) this.world.addChildren(x, e.prefab); }
     this.sceneName = t.to;
     this.sceneFrame = 0;
     this.sceneParams = t.params;
