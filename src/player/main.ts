@@ -16,6 +16,7 @@ import type { PrefabDoc, ProjectConfig, SceneDoc } from '../core/docs.ts';
 import type { TableDoc } from '../core/table.ts';
 import type { SheetDef } from '../core/sheet.ts';
 import type { AssetKind } from '../core/schema.ts';
+import { startReview, type ReviewData } from './review.ts';
 
 /** ages export が書く project.json */
 export interface ExportBundle {
@@ -32,7 +33,7 @@ export interface ExportBundle {
 }
 
 /** 外から様子を見る（ages export --check が headless の Chrome で読む） */
-const status = { ready: false, frame: 0, scene: '', loading: false, error: '', started: false };
+const status: { ready: boolean; frame: number; scene: string; loading: boolean; error: string; started: boolean; hash?: string } = { ready: false, frame: 0, scene: '', loading: false, error: '', started: false };
 (window as unknown as { agesPlayer: typeof status }).agesPlayer = status;
 
 const msg = document.getElementById('msg') as HTMLDivElement;
@@ -67,10 +68,13 @@ async function main(): Promise<void> {
   const audio = new AudioPlayer(urlOf);
 
   // 画面の大きさに合わせる（view.fit。エディタのゲームの画面と同じ計算）
+  // 確認用のページ（--review）は、上と下に操作の場所を取る
+  const insets = { top: 0, bottom: 0 };
   const layout = () => {
-    const pf = fitView(v.width, v.height, window.innerWidth, window.innerHeight, v.fit ?? 'contain');
+    const H = Math.max(1, window.innerHeight - insets.top - insets.bottom);
+    const pf = fitView(v.width, v.height, window.innerWidth, H, v.fit ?? 'contain');
     if (canvas.width !== pf.viewW || canvas.height !== pf.viewH) { canvas.width = pf.viewW; canvas.height = pf.viewH; }
-    Object.assign(canvas.style, { left: `${pf.x}px`, top: `${pf.y}px`, width: `${pf.w}px`, height: `${pf.h}px` });
+    Object.assign(canvas.style, { left: `${pf.x}px`, top: `${pf.y + insets.top}px`, width: `${pf.w}px`, height: `${pf.h}px` });
   };
   window.addEventListener('resize', layout);
   layout();
@@ -91,6 +95,45 @@ async function main(): Promise<void> {
   window.addEventListener('keydown', (e) => {
     if (e.code === 'F11' || (e.code === 'Enter' && e.altKey)) { e.preventDefault(); void toggleFullscreen(); }
   }, true);
+
+  // 確認用のページ（ages export --review）: review.json があれば、再生と見本帳を出す
+  const review = await fetch('./review.json').then((r) => (r.ok ? (r.json() as Promise<ReviewData>) : null)).catch(() => null);
+  if (review) {
+    const docs = { scenes: registry.scenes, prefabs: registry.prefabs, tables: new Map(Object.entries(b.tables)) };
+    const refs = assetRefs(docs, registry);
+    let loads = 0;
+    const load = (p: Promise<unknown>) => { loads++; status.loading = true; void p.catch(() => {}).then(() => { if (--loads === 0) status.loading = false; }); };
+    const go = () => {
+      if (status.started) return;
+      status.started = true;
+      show('');
+      audio.ensure();
+      audio.setLocal(1, false);
+      audio.resume();
+      startReview({
+        data: review, registry, config: b.config, scenes: b.scenes, renderer, audio, devices,
+        setInsets: (top, bottom) => { insets.top = top; insets.bottom = bottom; layout(); },
+        hold: (scene, first) => {
+          const paths = preloadSet(refs, scene, first, b.codeRefs);
+          if (paths.length) load(Promise.all([renderer.preload(paths.filter((p) => kindOf(p) === 'image')), audio.preload(paths.filter((p) => kindOf(p) === 'sound'))]));
+        },
+        preloadAll: async () => {
+          await Promise.all([renderer.preload(b.assets.filter((a) => a.kind === 'image').map((a) => a.path)).catch(() => {}), audio.preload(b.assets.filter((a) => a.kind === 'sound').map((a) => a.path)).catch(() => {})]);
+        },
+        loading: () => status.loading,
+        status, fail,
+      });
+    };
+    // 音を鳴らすには、最初に画面に触れる必要がある（スマホ）。触れなくても鳴らせるなら、すぐ始める
+    if (audio.ensure().state === 'running') go();
+    else {
+      show('タップして確認をはじめる\n（再生と見本帳）');
+      for (const t of ['pointerdown', 'keydown', 'touchstart']) window.addEventListener(t, go, { once: true });
+    }
+    document.addEventListener('visibilitychange', () => { if (document.hidden) audio.suspend(); else audio.resume(); });
+    status.ready = true;
+    return;
+  }
 
   // セーブはこのブラウザ（デスクトップでは、このアプリ）の localStorage。エディタの再生と同じ置き方
   const store = new LocalStore(`ages.save.${b.config.name}.`, localStorage);

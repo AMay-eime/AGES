@@ -39,6 +39,7 @@
 - 部分をつなぐコード（出来事・表の言葉・UI。型チェックで見えない）: さらに `ages run` を短く1回。`--twice` は乱数・時間・持ち越す状態に触れたときだけ
 - `ages run <dir> --frames 1800 --keys "0-1800:@fire;0-300:@move_x=-1" --watch player.Health.hp --until gameOver`（keys は guide:input）。人の操作の再現は `--input recordings/<名前>.input.json`、プレハブだけは `--spawn 名前`
 - 画面・画像・音を開かずに、要約の行（`sounds:` `hits:` `ui:` `particles:` `save:` など）と ⚠ で確かめる。見た目の確認が要るときだけ `--shot 600`（画像は高いので `--shot-scale 0.5`）
+- 人に見せる動き・演出・音（動くUIも）は確認用ページだけ。GIF・連番画像・動画は作らない（止まった絵は画像1枚）
 
 ## ゲームコードの決まり（game/*.ts）
 
@@ -70,6 +71,7 @@
 - 独自のエディタ拡張（パネル・欄・部品・表の行の見せ方）: `defineExtension`。作る前に地図の `## editor extensions` を見て、近いものを直す → `window`
 - エディタの人とのやり取り（作業を見せる・人に聞く・付箋に返事）: `ages talk` → `talk`
 - 速さ（重い所を探す）: `ages run --perf` → `perf`
+- 人に見せる: `ages export --review` → `review`
 - 3D など、入れたプロジェクトでだけ使える機能（追加パッケージ）: `ages.project.json` の packages → `packages`
 
 ## 役割分担

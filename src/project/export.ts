@@ -11,6 +11,7 @@ import { dirname, extname, join, normalize, relative, resolve, sep } from 'node:
 import { fileURLToPath } from 'node:url';
 import type { Project } from './project.ts';
 import type { ExportBundle } from '../player/main.ts';
+import type { ReviewData } from '../player/review.ts';
 
 const ENGINE_SRC = fileURLToPath(new URL('..', import.meta.url));
 const ENGINE_ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -28,6 +29,8 @@ export interface ExportOptions {
   fullscreen?: boolean;
   /** 比べる前の書き出しの一覧（.ages-export のファイル）。省くと、同じ場所の前の書き出しと比べる */
   diff?: string;
+  /** 確認用のページにする（再生と見本帳。review.json を置く） */
+  review?: ReviewData;
 }
 
 /** 書き出したファイルの一覧（.ages-export の files）: 場所 → 大きさと sha1 */
@@ -153,6 +156,10 @@ export async function exportProject(p: Project, opts: ExportOptions = {}): Promi
     assetBytes += (await stat(dst)).size;
   }
   await writeFile(join(web, 'index.html'), indexHtml(p.config.name, pkgs));
+  if (opts.review) {
+    await writeFile(join(web, 'review.json'), JSON.stringify(opts.review));
+    notes.push('確認用のページ（再生と見本帳）です。遊ぶ版・ストアに出す版は --review なしで書き出す');
+  }
   // 一覧: ファイルごとの大きさと sha1（変わったファイルだけ送る・送った後に照らし合わせるため）
   const manifest = await manifestOf(web);
   await writeFile(join(web, EXPORT_MARK), JSON.stringify({ engine: 'AGES', at: new Date().toISOString(), files: manifest }, null, 1) + '\n');

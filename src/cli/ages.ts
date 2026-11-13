@@ -15,6 +15,7 @@ import { noteCodeEdits, noteRecent, placeOf, readRecent, recentFor, topRecent } 
 import { eventWarnings } from '../project/events.ts';
 import { focusLine, readFocus, withFocus } from '../project/focus.ts';
 import { EXPORT_MARK, exportProject, serveStatic } from '../project/export.ts';
+import type { ReviewData } from '../player/review.ts';
 import { writeLaunchers } from '../project/launchers.ts';
 import { checkExport } from './export-check.ts';
 import { readCursor, readLog, readTouched, summarize, writeCursor, type Actor } from '../project/oplog.ts';
@@ -38,7 +39,7 @@ import { shaderReport } from '../project/shader-status.ts';
 import { layoutUI } from '../core/ui.ts';
 import { RunInput, parseParams, parseRunKeys, type RunKeys } from '../core/runinput.ts';
 export { parseParams } from '../core/runinput.ts';
-import { RUN_DATE, formatDate, parseDate } from '../core/clock.ts';
+import { RUN_DATE, formatDate, parseDate, type DateStart } from '../core/clock.ts';
 import { captureShots, findChrome } from './shot.ts';
 import { Profile } from '../core/profile.ts';
 import { originReport, originSummary, readOrigins, setOrigin, writeOrigins } from '../project/origin.ts';
@@ -74,7 +75,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   talk   <dir> [--task 作業 [--steps "a|b|c"] [--touch 住所,住所]] [--step 2] [--done 結果] [--ask 質問 [--choices "A|B"] [--about 住所]] [--reply 付箋ID 一言]
                エディタの人とのやり取り（何をしているかを見せる・人が決めることを聞く・付箋を読む）。引数なしで読む
   version <dir> [--record]           AGES の版（記録が古ければ直し方を出す）。--record で今の版を残す
-  export <dir> [--out 先] [--diff 前の.ages-export] [--check] [--serve [ポート]] [--desktop [--id com.名前.ゲーム] [--fullscreen]]  書き出す（ゲームだけ。dist/web は Web にそのまま置ける。--desktop は Tauri の元 dist/desktop。--check は headless の Chrome で動くか確かめる）
+  export <dir> [--out 先] [--diff 前の.ages-export] [--review [--replay "0-120:@fire;…" --frames 600 …ages run と同じ書き方]] [--check] [--serve [ポート]] [--desktop [--id com.名前.ゲーム] [--fullscreen]]  書き出す（ゲームだけ。dist/web は Web にそのまま置ける。--desktop は Tauri の元 dist/desktop。--check は headless の Chrome で動くか確かめる）
   pin    <dir> [--repo URL] [--commit SHA] [--force]  版だけ同梱の形に（ages.mjs が本体を .ages/engine に取ってくる。GitHub との連携用）。AGENTS.md は手で直されていなければ本体の版に合わせる（--force で直されていても）
   ui     <dir> [シーン]               UI の配置（四角・置き方）と、重なり・はみ出し。直すのは patch の dockUI / attachUI
   assets <dir> [フォルダ] [--kind image|sound|font|shader|model] [--unused] [--refs 場所]   アセットの一覧（使っている所の数）・使っている所
@@ -257,11 +258,39 @@ export async function cmdPin(dir: string, repo = DEFAULT_REPO, commit?: string, 
 }
 
 /** 書き出す（段階3）。Web はそのまま置ける一式、--desktop は Tauri（Steam 向け）の元も。--check は headless の Chrome で動くか確かめる */
+/** 確認用のページの中身: 再生（ages run と同じ書き方: --replay が --keys。--scene・--seed・--params・--save・--date・--input・--lang・--frames で止める）と見本帳 */
+async function reviewData(p: Project, flags: Record<string, string | boolean>): Promise<ReviewData> {
+  const f = { ...flags, ...(typeof flags.replay === 'string' ? { keys: flags.replay } : {}) };
+  delete (f as Record<string, unknown>).frames;
+  const s = await runSetup(p, f);
+  if (!p.docs.scenes.has(s.scene)) throw new Error(`シーン ${s.scene} はありません${suggest(s.scene, [...p.docs.scenes.keys()])}`);
+  const params = typeof flags.params === 'string' ? parseParams(flags.params) : s.recParams;
+  const end = typeof flags.frames === 'string' ? Number(flags.frames) : undefined;
+  if (end !== undefined && !(Number.isInteger(end) && end > 0)) throw new Error('--frames は止めるフレーム（1 以上の整数）');
+  const lang = typeof flags.lang === 'string' ? flags.lang : undefined;
+  const prefabs = [...p.docs.prefabs.values()]
+    .filter((d) => !d.components.AudioBus)
+    .map((d) => ({
+      name: d.name,
+      desc: d.desc ?? '',
+      kind: (d.components.Particles || d.components.Particles3D ? 'fx' : d.components.Sound ? 'sound' : 'thing') as 'fx' | 'sound' | 'thing',
+      is3d: !!d.components.Transform3D,
+    }))
+    .sort((a, b) => (a.name < b.name ? -1 : 1));
+  return {
+    replay: { scene: s.scene, seed: s.seed, keys: s.keys, save: s.initialSave, date: formatDate(s.date), ...(params ? { params } : {}), ...(lang ? { lang } : {}), ...(end ? { end } : {}) },
+    gallery: { prefabs, sounds: p.assets.filter((a) => a.kind === 'sound').map((a) => a.path).sort() },
+  };
+}
+
 export async function cmdExport(dir: string, flags: Record<string, string | boolean>): Promise<string> {
   // 型を消す Node の機能（stripTypeScriptTypes）の「試しの機能です」の知らせを出さない（エディタのサーバーと同じ）
   process.removeAllListeners('warning');
   const p = await Project.load(dir);
+  const review = flags.review === true || typeof flags.replay === 'string' ? await reviewData(p, flags) : undefined;
+  if (review && flags.desktop === true) throw new Error('--review は Web だけ（確認用のページ）。--desktop とは一緒にしない');
   const r = await exportProject(p, {
+    ...(review ? { review } : {}),
     ...(typeof flags.out === 'string' ? { out: resolve(flags.out) } : {}),
     desktop: flags.desktop === true,
     ...(typeof flags.id === 'string' ? { id: flags.id } : {}),
@@ -716,9 +745,9 @@ function logLine(ev: GameEvent): string {
   return `f${ev.frame} ${ev.name}${data.length > 240 ? data.slice(0, 239) + '…' : data}`;
 }
 
-export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
-  const p = await Project.load(dir);
-  const frames = Number(f.frames ?? 600);
+/** ages run と確認用ページ（ages export --review）の始め方: シーン・seed・入力・保存データ・日時（同じ書き方で同じように始める） */
+export interface RunSetup { scene: string; seed: number; keys: RunKeys; initialSave: Record<string, unknown>; date: DateStart; recParams?: Record<string, unknown> }
+async function runSetup(p: Project, f: Args['flags']): Promise<RunSetup> {
   let scene = typeof f.scene === 'string' ? f.scene : p.config.startScene;
   const seed = f.seed !== undefined ? Number(f.seed) : p.config.seed;
   let keys: RunKeys = { events: [], clicks: [], scene: [] };
@@ -743,6 +772,15 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
     keys = parseRunKeys(f.keys, actionsOf(p));
     for (const k of keys.scene) if (!p.registry.scenes.has(k.scene) && !p.docs.scenes.has(k.scene)) throw new Error(`--keys の ${k.scene}+${k.a}: シーン ${k.scene} はありません${suggest(k.scene, [...p.docs.scenes.keys()])}`);
   }
+  return { scene, seed, keys, initialSave, date, recParams };
+}
+
+export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
+  const p = await Project.load(dir);
+  const frames = Number(f.frames ?? 600);
+  const setup = await runSetup(p, f);
+  let scene = setup.scene;
+  const { seed, keys, initialSave, date, recParams } = setup;
   const watch = typeof f.watch === 'string' ? f.watch.split(',').map((s) => s.trim()).filter(Boolean) : [];
   // --log: 出来事（ctx.emit）の名前。* で全部
   const logNames = typeof f.log === 'string' ? f.log.split(',').map((s) => s.trim()).filter(Boolean) : [];
