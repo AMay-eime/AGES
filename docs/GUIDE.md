@@ -22,6 +22,11 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
 - シーンに置く物も、プレハブから作ればつながる（インスタンス）: `{"op":"addEntity","scene":"main","entity":{"id":"boss","prefab":"enemy","components":{"Transform":{"x":100,"y":50}}}}`。ファイルにはプレハブと違う値だけが残り、プレハブを直すと変えていない値も一緒に変わる。読み書き・revert・外す/足すは派生と同じ（住所は `main#boss.Health.hp`）
 - 置いてある物をプレハブにつなぐ・切り離すのは `linkPrefab`（`{"op":"linkPrefab","target":"main#boss","prefab":"enemy"}`・`prefab: null`。どちらも値は変わらない）。地図の `#boss ←@enemy` がインスタンス、`変:` がプレハブから変えた所
 - 数値だけが違う行がたくさん並ぶなら、派生より表（table）が向く
+- **子を持つプレハブ**（Unity の子を持つプレハブ）: 自機に武器・銃口の光のように、いつも一緒に出る物の組は子にする（組み立て用のシーンを作って ID で探さない）。`{"op":"addPrefab","name":"ship","components":{…},"children":[{"name":"gun_l","prefab":"gun","components":{"Transform":{"x":-12}}},{"name":"core","components":{"Transform":{"y":2},"Shape":{…}}}]}`
+  - `prefab` を書いた子は、そのプレハブを子にして `components` は変えた値だけ（`children` もその子の値を変えるだけ）。書かなければ `components` が子の中身そのもの。子の子（孫）も書ける
+  - `ctx.spawn('ship')` で親・子・孫がまとめて出る。子の ID は `親のID/名前`、位置（Transform）は親から見た値で、親が消えると子も消える。コードからは `ctx.child(親, 'gun_l')`（孫は `'gun_r/muzzle'`）
+  - 子の値は `@ship/gun_l.Transform.x`・`@ship/gun_r/muzzle.Shape.color` で読み書きする（get・set・ロック・`--watch` も同じ住所）。子にしたプレハブを直すと、変えていない子の値も変わる
+  - 派生（base）は子の値を変えるだけ。子の足し引き・子の部品の足し外しは、addPrefab の children で作り直す（今はできない）。シーンに置いた物の子を、置いた物ごとに直すのもまだ
 - プレハブだけを試すのは `ages run <dir> --spawn enemy_fast`（空のシーンの真ん中に出し、消えたら止まる。`explosion@40,0` で真ん中からずらす。音のプレハブは1回鳴らす）。人はエディタの「試し」の窓で同じものを見る
 - 実行中にプレハブから出た物の値を見るのは `ages run --watch @プレハブ名.部品.値`（いる最初の1つ）。全部は `@弾[*].部品.値`（ID ごと）、値で絞るのは `@弾[kind=pierce].部品.値`（合う最初の1つ。`[*kind=pierce]` で合う物全部、`!=` も）
 - 出来事（`ctx.emit`）の中身は `ages run --log 名前,…`（出たフレームと中身を1行ずつ。`*` で全部）。確かめのためにゲームのコードへ `console.log` を足さない

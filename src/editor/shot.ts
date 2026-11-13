@@ -99,7 +99,7 @@ async function shoot(cfg: ShotConfig): Promise<ShotResult> {
     const pt = /^(-?\d+(?:\.\d+)?):(-?\d+(?:\.\d+)?)$/.exec(target);
     if (pt) return { at: [Number(pt[1]) * k, Number(pt[2]) * k] };
     const e = target.startsWith('@')
-      ? [...game.world.entities.values()].find((x) => game.world.isAlive(x.id) && (x.id === target.slice(1) || x.id.startsWith(target.slice(1) + '~')))
+      ? [...game.world.entities.values()].find((x) => game.world.isAlive(x.id) && !x.id.includes('/') && (x.id === target.slice(1) || x.id.startsWith(target.slice(1) + '~')))
       : game.world.get(target);
     const mid: [number, number] = [canvas.width / 2, canvas.height / 2];
     if (!e || !game.world.isAlive(e.id)) return { at: mid, note: `${target} がいないので、画面の真ん中` };

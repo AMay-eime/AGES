@@ -5,7 +5,7 @@ import { assetRefs, baseOf, dirOf, isUnder } from '../core/assets.ts';
 import type { AssetKind } from '../core/schema.ts';
 import type { Project } from './project.ts';
 import { languagesOf } from '../core/i18n.ts';
-import { instanceOverrides, overridesOf } from '../core/variant.ts';
+import { hasChildren, instanceOverrides, overridesOf, prefabChildren, prefabHolders, type ResolvedChild } from '../core/variant.ts';
 import { tagCounts, type WindowInfo } from './windows.ts';
 import type { LockMark, TouchMark } from './oplog.ts';
 import { RECENT_WINDOW } from './recent.ts';
@@ -298,7 +298,16 @@ function prefabLine(p: Project, raw: PrefabDoc, ins: Ins, short: boolean): strin
   const ov = raw.base ? overridesOf(p.docs.prefabs, raw.name) : [];
   const variant = raw.base ? ` ← @${raw.base}` : '';
   const desc = short ? firstSentence(raw.desc) : raw.desc;
-  return `@${pf.name}${variant}${desc ? ' ' + desc : ''} [${Object.keys(pf.components).join(' ')}]${tags}${ov.length ? ` 変:${ov.join(',')}` : ''}${marks(ins.touched, ins.locks, `@${pf.name}`)}`;
+  // 子: 名前（←子にしたプレハブ・(孫の数)）。派生は元の子の値を変えた所を 変: に足す
+  let kids = '';
+  if (hasChildren(p.docs.prefabs, raw.name)) {
+    try {
+      const count = (k: ResolvedChild): number => k.children.reduce((n, c) => n + 1 + count(c), 0);
+      kids = ` 子:${prefabChildren(p.docs.prefabs, raw.name).map((k) => `${k.name}${k.prefab ? '←@' + k.prefab : ''}${count(k) ? `(${count(k)})` : ''}`).join(',')}`;
+    } catch { kids = ' 子:⚠'; }
+    if (raw.base) for (const [at, comps] of prefabHolders(raw).slice(1)) for (const [c, v] of Object.entries(comps)) for (const f of Object.keys(v)) ov.push(`${at.slice(raw.name.length + 1)}.${c}.${f}`);
+  }
+  return `@${pf.name}${variant}${desc ? ' ' + desc : ''} [${Object.keys(pf.components).join(' ')}]${kids}${tags}${ov.length ? ` 変:${ov.join(',')}` : ''}${marks(ins.touched, ins.locks, `@${pf.name}`)}`;
 }
 
 // ---- 入れ子の目次（とても大きなプロジェクト） ----

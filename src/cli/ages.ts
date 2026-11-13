@@ -693,6 +693,9 @@ export function actionsOf(p: Project): Map<string, ActionDef> {
   return actionsFromRows(p.registry.tableView('actions').rows);
 }
 
+/** その物がプレハブから出した物そのものか（ID が プレハブ名 か プレハブ名~番号。子 親/名前 は入れない） */
+const fromPrefab = (id: string, prefab: string): boolean => !id.includes('/') && (id === prefab || id.startsWith(prefab + '~'));
+
 /** 物の、部品.欄 の値（ない物・ない部品は —）。リスト・構造体は写す（始めの値が後の値で書き変わらないように） */
 function valueOf(e: Entity, comp?: string, field?: string): unknown {
   if (!comp) return 'alive';
@@ -724,16 +727,18 @@ function readWatch(game: Game, addr: string): unknown {
   if (sel) {
     const [, prefab, all, cond, rest] = sel;
     const [, comp, field] = rest.split('.');
-    const list = [...game.world.entities.values()].filter((x) => game.world.isAlive(x.id) && (x.id === prefab || x.id.startsWith(prefab + '~')) && (!cond || matchWhere(x, cond)));
+    const list = [...game.world.entities.values()].filter((x) => game.world.isAlive(x.id) && fromPrefab(x.id, prefab) && (!cond || matchWhere(x, cond)));
     if (!all) return list[0] ? valueOf(list[0], comp, field) : '—';
     if (!list.length) return '—';
     return list.map((x) => `${x.id}=${fmt(valueOf(x, comp, field))}`).join(' ');
   }
   const [id, comp, field] = s.split('.');
-  // @プレハブ名 は、そのプレハブから出した物のうち、いまいる最初の1つ（ID を探さなくてよい）
-  const e = id.startsWith('@')
-    ? [...game.world.entities.values()].find((x) => game.world.isAlive(x.id) && (x.id === id.slice(1) || x.id.startsWith(id.slice(1) + '~')))
-    : game.world.get(id);
+  // @プレハブ名 は、そのプレハブから出した物のうち、いまいる最初の1つ（ID を探さなくてよい）。@プレハブ名/子 はその子
+  const [head, ...child] = id.split('/');
+  const root = head.startsWith('@')
+    ? [...game.world.entities.values()].find((x) => game.world.isAlive(x.id) && fromPrefab(x.id, head.slice(1)))
+    : game.world.get(head);
+  const e = root && child.length ? game.world.child(root, child.join('/')) : root;
   if (!e) return '—';
   return valueOf(e, comp, field);
 }

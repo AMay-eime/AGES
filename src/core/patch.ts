@@ -1,13 +1,13 @@
 // 差分編集。AIも人（エディタ）も、ファイルの変更はすべてここを通る。
 // 返り値は「何がいくつからいくつに変わったか」だけ。
-import { formatSub, getIn, parseAddress, setIn, type Address, type EntityData, type PrefabDoc, type ProjectConfig, type SceneDoc } from './docs.ts';
+import { formatSub, getIn, parseAddress, setIn, type Address, type EntityData, type PrefabChild, type PrefabDoc, type ProjectConfig, type SceneDoc } from './docs.ts';
 import { checkAt, checkCell, defaultOf, filled, mapLeaves, suggest, type CellValue, type Field } from './schema.ts';
 import { ROW_ID, type Row, type TableDoc } from './table.ts';
 import type { Registry } from './registry.ts';
 import { baseNameOf, checkSheet, findFrame, sheetPathOf, toExplicit, type FrameDef, type FrameRef, type SheetDef } from './sheet.ts';
 import { frameMapper, remapRef } from './slice.ts';
 import { assetRefs, checkAssetPath, extOf, isUnder, kindOf, leafRefs } from './assets.ts';
-import { baseChain, resolveEntity, resolvePrefab } from './variant.ts';
+import { baseChain, childPrefabRefs, prefabChildren, prefabHolders, resolveEntity, resolvePrefab, childAt, CHILD_NAME } from './variant.ts';
 import { same } from './revert.ts';
 
 export type Op =
@@ -69,7 +69,7 @@ export type Op =
   /** シーンの説明・開始シーンにする */
   | { op: 'setScene'; name: string; desc?: string; start?: boolean }
   /** プレハブを作る。base で派生（元を受け継ぐ。components には変える値だけ）、copy で中身の写し */
-  | { op: 'addPrefab'; name: string; base?: string; copy?: string; desc?: string; tags?: string[]; components?: Record<string, Record<string, unknown>> }
+  | { op: 'addPrefab'; name: string; base?: string; copy?: string; desc?: string; tags?: string[]; components?: Record<string, Record<string, unknown>>; children?: PrefabChild[] }
   /** プレハブを消す（使われているもの・派生の元は消せない） */
   | { op: 'removePrefab'; name: string }
   /** プレハブの名前を変える（prefab 型の値・派生の元・🔒★の住所も直る） */
@@ -108,7 +108,7 @@ export const OP_DOCS: Record<Op['op'], string> = {
   removeScene: '{name} シーンを消す（開始と、使われているものは消せない）',
   renameScene: '{name,to} シーンの名前を変える（scene 型の値と開始シーンも直る）',
   setScene: '{name,desc?,start?} シーンの説明・開始シーンにする',
-  addPrefab: '{name,base?,copy?,desc?,tags?,components?} プレハブを作る。base で派生（元を受け継ぎ、components には変える値だけ書く）、copy で中身をまるごと写す',
+  addPrefab: '{name,base?,copy?,desc?,tags?,components?,children?} プレハブを作る。base で派生（元を受け継ぎ、components には変える値だけ書く）、copy で中身をまるごと写す。children は子 [{name,prefab?,components,children?}]（guide:prefab）',
   removePrefab: '{name} プレハブを消す（使われているもの・派生の元は消せない）',
   renamePrefab: '{name,to} プレハブの名前を変える（prefab 型の値・派生の元・🔒★も直る。コードの中は直さない）',
   setPrefab: '{name,desc?,tags?,base?} 説明・タグ・派生の元を変える（base: null で切り離す。どちらも今の値は変わらない）',
@@ -182,6 +182,7 @@ function holderOf(docs: Docs, a: Address): { holder: Holder; key: string } {
   if (a.kind === 'prefab') {
     const p = docs.prefabs.get(a.doc);
     if (!p) throw new Error(`プレハブ ${a.doc} はありません${suggest(a.doc, [...docs.prefabs.keys()])}`);
+    if (a.child?.length) throw new Error(`@${a.doc}/${a.child.join('/')}: 子では値を変えるだけ（set）。部品の足し外し・子の足し引きは、プレハブを addPrefab の children で作り直す`);
     return { holder: p, key: `prefab:${a.doc}` };
   }
   const s = docs.scenes.get(a.doc);
@@ -260,6 +261,7 @@ function slotOf(docs: Docs, reg: Registry, a: Address, path: string): Slot {
     return { top: rt, topValue, isDefault: !has, sub: a.sub, ...walk(at, rt, topValue, a.sub), at, key: `table:${a.doc}`, parent: row, siblings: def.columns, write: (v) => { row[a.field!] = v; } };
   }
   if (!a.component || !a.field) throw new Error(`フィールドまでのアドレスが必要です（例: main#player.Mover.speed）。受け取った値: ${path}`);
+  if (a.kind === 'prefab' && a.child?.length) return childSlot(docs, reg, a, path);
   const { holder, key } = holderOf(docs, a);
   const comp = holder.components[a.component];
   if (!comp) throw new Error(`${path}: コンポーネント ${a.component} が付いていません${suggest(a.component, Object.keys(holder.components))}`);
@@ -271,6 +273,46 @@ function slotOf(docs: Docs, reg: Registry, a: Address, path: string): Slot {
   const at = `${a.component}.${a.field}`;
   const rt = resolveParams(reg, top, comp, at, a.sub);
   return { top: rt, topValue, isDefault: !has, sub: a.sub, ...walk(at, rt, topValue, a.sub), at, key, parent: comp, siblings: def.fields, write: (v) => { comp[a.field!] = v; } };
+}
+
+/**
+ * 子の値（@親/子.部品.欄）。読むのは元・子にしたプレハブと重ねた値、書くのはプレハブのファイルの子（なければ、変えた値の入れ物を作る）
+ */
+function childSlot(docs: Docs, reg: Registry, a: Address, path: string): Slot {
+  const where = `@${a.doc}`;
+  if (!docs.prefabs.has(a.doc)) throw new Error(`プレハブ ${a.doc} はありません${suggest(a.doc, [...docs.prefabs.keys()])}`);
+  const resolved = childAt(prefabChildren(docs.prefabs, a.doc), a.child!, where);
+  const rc = resolved.components[a.component!];
+  if (!rc) throw new Error(`${path}: コンポーネント ${a.component} が付いていません${suggest(a.component!, Object.keys(resolved.components))}`);
+  const def = reg.component(a.component!);
+  const top = def.fields[a.field!];
+  if (!top) throw new Error(`${a.component} に ${a.field} はありません${suggest(a.field!, Object.keys(def.fields))}`);
+  /** ファイルの中の子（create なら、ない所は変えた値の入れ物を作る） */
+  const rawNode = (create: boolean): PrefabChild | undefined => {
+    let list: PrefabChild[] | undefined = docs.prefabs.get(a.doc)!.children, holder: { children?: PrefabChild[] } = docs.prefabs.get(a.doc)!;
+    let node: PrefabChild | undefined;
+    for (const seg of a.child!) {
+      node = list?.find((c) => c.name === seg);
+      if (!node) {
+        if (!create) return undefined;
+        node = { name: seg, components: {} };
+        (holder.children ??= []).push(node);
+      }
+      holder = node;
+      list = node.children;
+    }
+    return node;
+  };
+  const raw = rawNode(false)?.components?.[a.component!];
+  const has = !!raw && a.field! in raw;
+  const inherited = rc[a.field!];
+  const topValue = has ? raw![a.field!] : inherited !== undefined ? inherited : defaultOf(top);
+  const at = `${a.component}.${a.field}`;
+  const rt = resolveParams(reg, top, rc, at, a.sub);
+  return {
+    top: rt, topValue, isDefault: inherited === undefined && !has, sub: a.sub, ...walk(at, rt, topValue, a.sub), at, key: `prefab:${a.doc}`, parent: rc, siblings: def.fields,
+    write: (v) => { const n = rawNode(true)!; (n.components[a.component!] ??= {})[a.field!] = v; },
+  };
 }
 
 /** シェーダーの値（params）は、隣の欄で選んだシェーダーの uniform を項目にした構造体として扱う */
@@ -364,7 +406,7 @@ function resolvedView(docs: Docs, path: string): Docs {
     entities[i] = resolveEntity(docs.prefabs, entities[i]);
     return { ...docs, scenes: new Map(docs.scenes).set(a.doc, { ...sc, entities }) };
   }
-  if (!docs.prefabs.get(a.doc)?.base) return docs;
+  if (a.child?.length || !docs.prefabs.get(a.doc)?.base) return docs;
   return { ...docs, prefabs: new Map(docs.prefabs).set(a.doc, resolvePrefab(docs.prefabs, a.doc)) };
 }
 
@@ -771,7 +813,7 @@ function fixLeaves(docs: Docs, reg: Registry, fix: (f: Field, v: unknown) => unk
     }
   };
   for (const s of docs.scenes.values()) for (const e of s.entities) fixHolder(`${s.name}#${e.id}`, e.components, `scene:${s.name}`);
-  for (const p of docs.prefabs.values()) fixHolder(`@${p.name}`, p.components, `prefab:${p.name}`);
+  for (const p of docs.prefabs.values()) for (const [at, comps] of prefabHolders(p)) fixHolder(at, comps, `prefab:${p.name}`);
   for (const t of docs.tables.values()) {
     const def = reg.tables.get(t.name);
     if (!def) continue;
@@ -892,7 +934,7 @@ class VariantTrack {
     const raw = this.docs.prefabs.get(name)!;
     let resolved: PrefabDoc;
     try { resolved = resolvePrefab(this.docs.prefabs, name); } catch { return; } // 元がない・輪: そのまま（検証で知らせる）
-    const copy: PrefabDoc = { name, base: raw.base, ...(resolved.desc ? { desc: resolved.desc } : {}), ...(resolved.tags ? { tags: [...resolved.tags] } : {}), ...(raw.remove ? { remove: [...raw.remove] } : {}), components: structuredClone(resolved.components) };
+    const copy: PrefabDoc = { name, base: raw.base, ...(resolved.desc ? { desc: resolved.desc } : {}), ...(resolved.tags ? { tags: [...resolved.tags] } : {}), ...(raw.remove ? { remove: [...raw.remove] } : {}), components: structuredClone(resolved.components), ...(raw.children ? { children: structuredClone(raw.children) } : {}) };
     this.docs.prefabs.set(name, copy);
     this.items.set(name, { orig: name, before: structuredClone(copy), raw: structuredClone(raw), isNew });
   }
@@ -975,7 +1017,9 @@ function diffBack(t: Tracked, after: PrefabDoc, base: PrefabDoc): PrefabDoc {
   }
   const desc = before.desc !== after.desc ? (after.desc && after.desc !== base.desc ? after.desc : undefined) : t.raw.desc;
   const tags = !same(before.tags, after.tags) ? (after.tags && !same(after.tags, base.tags) ? after.tags : undefined) : t.raw.tags;
-  return { name: after.name, base: after.base, ...(desc ? { desc } : {}), ...(tags ? { tags } : {}), ...(remove.size ? { remove: [...remove] } : {}), components: comps };
+  // 子は、元の子に重ねる値（書いてある形）のまま持っているので、そのまま
+  const kids = after.children?.filter((c) => Object.keys(c.components ?? {}).length || c.children?.length || c.remove?.length);
+  return { name: after.name, base: after.base, ...(desc ? { desc } : {}), ...(tags ? { tags } : {}), ...(remove.size ? { remove: [...remove] } : {}), components: comps, ...(kids?.length ? { children: kids } : {}) };
 }
 
 interface TrackedEntity {
@@ -1128,6 +1172,25 @@ function prefabOp(docs: Docs, reg: Registry, op: Extract<Op, { op: 'addPrefab' |
     if (!comps || typeof comps !== 'object') throw new Error(`${where}: components は { 部品: { 値 } } の形です`);
     for (const [c, v] of Object.entries(comps)) reg.build(c, v ?? {}, where);
   };
+  /** 子の並びの形を確かめる（名前・重なり・子にしたプレハブ・部品の値） */
+  const checkChildren = (where: string, list: unknown): PrefabChild[] => {
+    if (!Array.isArray(list)) throw new Error(`${where}: children は [{ name, prefab?, components, children? }] の並びです`);
+    const names = new Set<string>();
+    for (const c of list as PrefabChild[]) {
+      if (!c || typeof c !== 'object' || typeof c.name !== 'string' || !CHILD_NAME.test(c.name)) throw new Error(`${where}: 子の名前 "${(c as PrefabChild)?.name}" には英数字・_・- だけが使えます`);
+      if (names.has(c.name)) throw new Error(`${where}: 子の名前 ${c.name} が重なっています`);
+      names.add(c.name);
+      const at = `${where}/${c.name}`;
+      if (c.prefab !== undefined) need(c.prefab);
+      c.components ??= {};
+      if (c.prefab) for (const [k, v] of Object.entries(c.components)) { if (!reg.components.has(k)) reg.build(k, v ?? {}, at); }
+      else checkComps(at, c.components);
+      if (c.children !== undefined) checkChildren(at, c.children);
+    }
+    return list as PrefabChild[];
+  };
+  // 子にしているプレハブ（@親/子）
+  const asChild = (name: string) => [...docs.prefabs.values()].flatMap((p) => childPrefabRefs(p).filter((r) => r.node.prefab === name).map((r) => ({ p, ...r })));
   const derived = (name: string) => [...docs.prefabs.values()].filter((p) => p.base === name).map((p) => p.name);
   // シーンに置いたインスタンス（シーン#ID）
   const instances = (name: string) => [...docs.scenes.values()].flatMap((sc) => sc.entities.filter((e) => e.prefab === name).map((e) => ({ sc, e })));
@@ -1140,10 +1203,10 @@ function prefabOp(docs: Docs, reg: Registry, op: Extract<Op, { op: 'addPrefab' |
       }
     };
     for (const sc of docs.scenes.values()) for (const e of sc.entities) scan(`${sc.name}#${e.id}`, e.components, `scene:${sc.name}`);
-    for (const p of docs.prefabs.values()) scan(`@${p.name}`, p.components, `prefab:${p.name}`);
+    for (const p of docs.prefabs.values()) for (const [at, comps] of prefabHolders(p)) scan(at, comps, `prefab:${p.name}`);
     return out;
   };
-  const order = (p: PrefabDoc): PrefabDoc => ({ name: p.name, ...(p.base ? { base: p.base } : {}), ...(p.desc ? { desc: p.desc } : {}), ...(p.tags?.length ? { tags: p.tags } : {}), ...(p.remove?.length ? { remove: p.remove } : {}), components: p.components });
+  const order = (p: PrefabDoc): PrefabDoc => ({ name: p.name, ...(p.base ? { base: p.base } : {}), ...(p.desc ? { desc: p.desc } : {}), ...(p.tags?.length ? { tags: p.tags } : {}), ...(p.remove?.length ? { remove: p.remove } : {}), components: p.components, ...(p.children?.length ? { children: p.children } : {}) });
   switch (op.op) {
     case 'addPrefab': {
       fresh(op.name);
@@ -1151,6 +1214,7 @@ function prefabOp(docs: Docs, reg: Registry, op: Extract<Op, { op: 'addPrefab' |
       if (op.tags !== undefined && (!Array.isArray(op.tags) || op.tags.some((t) => typeof t !== 'string'))) throw new Error('addPrefab の tags は文字列の配列です');
       const comps = structuredClone(op.components ?? {});
       checkComps(`@${op.name}`, comps);
+      const kids = op.children === undefined ? undefined : checkChildren(`@${op.name}`, structuredClone(op.children));
       if (op.base) {
         need(op.base);
         docs.prefabs.set(op.name, order({ name: op.name, base: op.base, components: {} }));
@@ -1159,17 +1223,25 @@ function prefabOp(docs: Docs, reg: Registry, op: Extract<Op, { op: 'addPrefab' |
         for (const [c, v] of Object.entries(comps)) copy.components[c] = { ...(copy.components[c] ?? {}), ...v };
         if (op.desc) copy.desc = op.desc;
         if (op.tags) copy.tags = op.tags;
+        if (kids) copy.children = kids;
       } else {
         const src = op.copy ? need(op.copy) : undefined;
         docs.prefabs.set(op.name, order({ name: op.name, desc: op.desc ?? src?.desc, tags: op.tags ?? (src?.tags && [...src.tags]), components: { ...structuredClone(src?.components ?? {}), ...comps } }));
       }
+      if (!op.base) {
+        const made = docs.prefabs.get(op.name)!;
+        const ch = kids ?? (op.copy ? structuredClone(need(op.copy).children) : undefined);
+        if (ch?.length) docs.prefabs.set(op.name, order({ ...made, children: ch }));
+      }
+      // 子にしたプレハブ・子の名前・元の子との重ね方を、出す形にして確かめる（輪・ない子・ないプレハブ）
+      prefabChildren(docs.prefabs, op.name);
       dirty.add(`prefab:${op.name}`);
       changes.push({ path: `prefab:${op.name}`, to: 'added' });
       return;
     }
     case 'removePrefab': {
       need(op.name);
-      const used = [...(leafRefs(docs, reg, (f) => f.type === 'prefab').get(op.name) ?? []), ...byDefault(op.name).map((d) => `${d.at}（既定値）`), ...derived(op.name).map((n) => `@${n}（派生の元）`), ...instances(op.name).map(({ sc, e }) => `${sc.name}#${e.id}（インスタンス）`)];
+      const used = [...(leafRefs(docs, reg, (f) => f.type === 'prefab').get(op.name) ?? []), ...asChild(op.name).map((r) => `${r.at}（子）`), ...byDefault(op.name).map((d) => `${d.at}（既定値）`), ...derived(op.name).map((n) => `@${n}（派生の元）`), ...instances(op.name).map(({ sc, e }) => `${sc.name}#${e.id}（インスタンス）`)];
       if (used.length) throw new Error(`プレハブ ${op.name} は使われているので消せません: ${used.slice(0, 5).join(', ')}${used.length > 5 ? ' …' : ''}。先にその指定を変えてください`);
       docs.prefabs.delete(op.name);
       track.drop(op.name);
@@ -1192,6 +1264,11 @@ function prefabOp(docs: Docs, reg: Registry, op: Extract<Op, { op: 'addPrefab' |
       dirty.add(`prefab:${op.name}`);
       dirty.add(`prefab:${op.to}`);
       changes.push({ path: `prefab:${op.name}`, from: op.name, to: `renamed:${op.to}` });
+      for (const r of asChild(op.name)) {
+        r.node.prefab = op.to;
+        dirty.add(`prefab:${r.p.name}`);
+        changes.push({ path: `${r.at}.prefab`, from: op.name, to: op.to, auto: true });
+      }
       for (const d of derived(op.name)) {
         docs.prefabs.get(d)!.base = op.to;
         dirty.add(`prefab:${d}`);
@@ -1358,7 +1435,7 @@ function remapSprites(docs: Docs, image: string, map: (i: number) => number, aft
     dirty.add(dirtyKey);
   };
   for (const s of docs.scenes.values()) for (const e of s.entities) fix(`${s.name}#${e.id}`, e.components, `scene:${s.name}`);
-  for (const p of docs.prefabs.values()) fix(`@${p.name}`, p.components, `prefab:${p.name}`);
+  for (const p of docs.prefabs.values()) for (const [at, comps] of prefabHolders(p)) fix(at, comps, `prefab:${p.name}`);
 }
 
 function renameInClips(sheet: SheetDef, from: string, to: string): void {
@@ -1380,7 +1457,7 @@ function renameRefs(docs: Docs, image: string, from: string, to: string, changes
     }
   };
   for (const s of docs.scenes.values()) for (const e of s.entities) fix(`${s.name}#${e.id}`, e.components, `scene:${s.name}`);
-  for (const p of docs.prefabs.values()) fix(`@${p.name}`, p.components, `prefab:${p.name}`);
+  for (const p of docs.prefabs.values()) for (const [at, comps] of prefabHolders(p)) fix(at, comps, `prefab:${p.name}`);
 }
 
 const short = (v: unknown) => (Array.isArray(v) ? v.join(',') : v);

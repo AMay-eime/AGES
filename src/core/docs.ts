@@ -21,8 +21,24 @@ export interface SceneDoc {
   entities: EntityData[];
 }
 
+/**
+ * プレハブの子（Unity の子を持つプレハブ）。出すと、親と一緒に出る（ID は 親/名前、位置は親から見た値）。
+ * prefab を書くと、そのプレハブを子にして components は変えた値だけ（children もその子の値を変えるだけ）。
+ * 書かなければ、components がその子の中身そのもので、children がその子の子
+ */
+export interface PrefabChild {
+  name: string;
+  prefab?: string;
+  /** prefab の子で、そのプレハブから外した部品 */
+  remove?: string[];
+  components: Record<string, Record<string, unknown>>;
+  children?: PrefabChild[];
+}
+
 export interface PrefabDoc {
   name: string;
+  /** 子（親と一緒に出る物）。派生では、元の子の値を変えるだけ（名前で重ねる。足す・消すはしない） */
+  children?: PrefabChild[];
   /** 派生の元（あれば、元を受け継いで components に書いた値だけを変える。core/variant.ts） */
   base?: string;
   desc?: string;
@@ -73,6 +89,8 @@ export interface Address {
   field?: string;
   /** フィールドの中の場所（リストの番号・構造体の項目名） */
   sub: (string | number)[];
+  /** プレハブの子（@親/子/孫 の 子・孫） */
+  child?: string[];
 }
 
 const NAME = /^[^.#@$\[\]\s]+/;
@@ -112,6 +130,14 @@ export function parseAddress(text: string): Address {
     doc = head(s.slice(1));
     if (!doc) throw new Error(`アドレスが不正です: "${text}"。例: @enemy.Mover.speed`);
     rest = s.slice(1 + doc.length);
+    // @親/子/孫.部品.欄（子を持つプレハブ）
+    if (doc.includes('/')) {
+      const [name, ...child] = doc.split('/');
+      if (!name || child.some((c) => !c)) throw new Error(`アドレスが不正です: "${text}"。子は @親/子.部品.欄（孫は @親/子/孫）`);
+      const seg = segments(rest, text);
+      const [component, field, ...sub] = seg as [string?, string?, ...(string | number)[]];
+      return { kind, doc: name, child, component, field, sub };
+    }
   } else {
     const hash = s.indexOf('#');
     if (hash <= 0) throw new Error(`アドレスが不正です: "${text}"。例: main#player.Mover.speed（シーン#エンティティ.コンポーネント.フィールド）、@enemy.Mover.speed、$enemies.basic.hp`);
@@ -132,7 +158,7 @@ export function formatSub(sub: (string | number)[]): string {
 }
 
 export function formatAddress(a: Address): string {
-  const head = a.kind === 'prefab' ? `@${a.doc}` : a.kind === 'table' ? `$${a.doc}` : `${a.doc}#${a.entity}`;
+  const head = a.kind === 'prefab' ? `@${a.doc}${a.child?.length ? '/' + a.child.join('/') : ''}` : a.kind === 'table' ? `$${a.doc}` : `${a.doc}#${a.entity}`;
   const mid = a.kind === 'table' ? [a.entity, a.field] : [a.component, a.field];
   return [head, ...mid.filter(Boolean)].join('.') + formatSub(a.sub);
 }
