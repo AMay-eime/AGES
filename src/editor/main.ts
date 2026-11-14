@@ -269,9 +269,17 @@ const typing = (e: KeyboardEvent) => e.target instanceof HTMLInputElement || e.t
 const inExtension = (e: KeyboardEvent) => !!(e.target as HTMLElement)?.closest?.('.ext-panel');
 app.devices.enabled = () => !!app.play;
 app.devices.bindKeyboard(window, typing);
-// 元に戻す・やり直す（文字を入力している欄では、その欄の中の取り消しを優先する）
+// 元に戻す・やり直す（文字を入力している欄では、その欄の中の取り消しを優先する。
+// ただし、値を決めた後（change の後で書き換えていない欄・選ぶ欄・チェック）なら、エディタの元に戻すにする）
+window.addEventListener('change', (e) => { const t = e.target; if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) t.dataset.committed = t.value; }, true);
+const settled = (e: KeyboardEvent) => {
+  const t = e.target;
+  if (t instanceof HTMLSelectElement) return true;
+  if (t instanceof HTMLInputElement && ['checkbox', 'radio', 'range', 'color', 'button'].includes(t.type)) return true;
+  return (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) && t.dataset.committed !== undefined && t.dataset.committed === t.value;
+};
 window.addEventListener('keydown', (e) => {
-  if (!(e.ctrlKey || e.metaKey) || typing(e) || (e.target as HTMLElement)?.isContentEditable || app.play) return;
+  if (!(e.ctrlKey || e.metaKey) || (typing(e) && !settled(e)) || (e.target as HTMLElement)?.isContentEditable || app.play) return;
   const k = e.key.toLowerCase();
   if (k === 'z' && !e.shiftKey) { e.preventDefault(); app.undo(); }
   else if ((k === 'z' && e.shiftKey) || k === 'y') { e.preventDefault(); app.undo(true); }

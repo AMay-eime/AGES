@@ -56,6 +56,10 @@ export const tables: GameModule['tables'] = [kinds];
       if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text);
       return r.result.value;
     };
+    const ctrlZ = async (shift = false) => {
+      await ev(`document.activeElement?.blur?.()`);
+      for (const type of ['keyDown', 'keyUp']) await cdp.send('Input.dispatchKeyEvent', { type, key: shift ? 'Z' : 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: 2 | (shift ? 8 : 0) }, sessionId);
+    };
     await waitFor('editor page', 20_000, async () => ((await ev(`!!(window.ages?.registry && window.ages.state?.prefabs?.ship)`)) ? true : undefined));
     // 開く: 階層に親と子、ゲームの画面の世界にも子が出る
     await ev(`ages.openPrefab('ship')`);
@@ -77,6 +81,14 @@ export const tables: GameModule['tables'] = [kinds];
       const ship = JSON.parse(await readFile(join(dir, 'prefabs', 'ship.prefab.json'), 'utf8'));
       return ship.children[0].children?.[0]?.components?.Transform?.y === -20 ? ship : undefined;
     });
+    // Ctrl+Z で戻り、Ctrl+Shift+Z でやり直せる（プレハブの編集画面のまま）
+    const muzzleY = async () => JSON.parse(await readFile(join(dir, 'prefabs', 'ship.prefab.json'), 'utf8')).children[0].children?.[0]?.components?.Transform?.y;
+    await ctrlZ();
+    await waitFor('元に戻す（プレハブの子）', 10_000, async () => ((await muzzleY()) === undefined ? true : undefined));
+    assert.equal(await ev(`ages.scene`), '@ship');
+    await waitFor('絵も戻る', 10_000, async () => ((await ev(`ages.state.scenes['@ship'].entities.find((e) => e.id === '$root/gun_l/muzzle').components.Transform.y`)) === -8 ? true : undefined));
+    await ctrlZ(true);
+    await waitFor('やり直す（プレハブの子）', 10_000, async () => ((await muzzleY()) === -20 ? true : undefined));
     // 書かれていない位置の部品も直せる（core に Transform はないが、出すときに付く）
     assert.ok(await ev(`ages.patch([{ op: 'set', path: ages.addr('$root/core') + '.Transform.x', value: 3 }], 'game').then((r) => !!r)`));
     const ship = JSON.parse(await readFile(join(dir, 'prefabs', 'ship.prefab.json'), 'utf8'));
@@ -98,6 +110,20 @@ export const tables: GameModule['tables'] = [kinds];
       return sc.entities.find((e: { id: string }) => e.id === 'boss')?.children?.[0]?.components?.Transform?.x === -40 ? true : undefined;
     });
     assert.equal(await ev(`ages.patch([{ op: 'set', path: 'main#boss/gun_l.Transform.parent', value: null }])`), null);
+    // 欄で値を決めた直後（欄にカーソルがあるまま）でも、Ctrl+Z はエディタの元に戻す
+    await ev(`(() => { const i = document.querySelector('[data-path="main#boss/gun_l.Transform.x"] input'); i.focus(); i.value = '-50'; i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await waitFor('置いた物の子 -50', 10_000, async () => (JSON.parse(await readFile(join(dir, 'scenes', 'main.scene.json'), 'utf8')).entities.find((e: { id: string }) => e.id === 'boss')?.children?.[0]?.components?.Transform?.x === -50 ? true : undefined));
+    await waitFor('欄', 10_000, async () => ((await ev(`!!document.querySelector('[data-path="main#boss/gun_l.Transform.x"] input')`)) ? true : undefined));
+    await ev(`(() => { const i = document.querySelector('[data-path="main#boss/gun_l.Transform.x"] input'); i.focus(); i.dataset.committed = i.value; })()`);
+    for (const type of ['keyDown', 'keyUp']) await cdp.send('Input.dispatchKeyEvent', { type, key: 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: 2 }, sessionId);
+    await waitFor('欄にいても戻る', 10_000, async () => (JSON.parse(await readFile(join(dir, 'scenes', 'main.scene.json'), 'utf8')).entities.find((e: { id: string }) => e.id === 'boss')?.children?.[0]?.components?.Transform?.x === -40 ? true : undefined));
+    // 置いた物の子も Ctrl+Z で戻る
+    const bossX = async () => JSON.parse(await readFile(join(dir, 'scenes', 'main.scene.json'), 'utf8')).entities.find((e: { id: string }) => e.id === 'boss')?.children?.[0]?.components?.Transform?.x;
+    await ctrlZ();
+    await waitFor('元に戻す（置いた物の子）', 10_000, async () => ((await bossX()) === undefined ? true : undefined));
+    await waitFor('絵も戻る（置いた物の子）', 10_000, async () => ((await ev(`ages.sceneView('main').entities.find((e) => e.id === 'boss/gun_l').components.Transform.x`)) === -12 ? true : undefined));
+    await ctrlZ(true);
+    await waitFor('やり直す（置いた物の子）', 10_000, async () => ((await bossX()) === -40 ? true : undefined));
 
     assert.deepEqual(await ev(`[ages.scene, ages.prefabStage, Object.keys(ages.state.scenes).includes('@ship')]`), ['main', null, false]);
     await cdp.send('Browser.close').catch(() => {});
