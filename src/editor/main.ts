@@ -298,7 +298,8 @@ window.addEventListener('keydown', (e) => {
   if (!scene || !ids.length) return;
   if (mod && k === 'd') {
     e.preventDefault();
-    const r = duplicateOps(scene, ids, 16, new Map(Object.entries(app.state.prefabs)));
+    let r: ReturnType<typeof duplicateOps>;
+    try { r = duplicateOps(scene, ids, 16, new Map(Object.entries(app.state.prefabs))); } catch (err) { toast((err as Error).message, 'bad'); return; }
     void app.patch(r.ops, 'hierarchy').then((ok) => { if (ok) app.selectMany(r.ids); });
   } else if ((e.key === 'Delete' || e.key === 'Backspace') && !mod) {
     e.preventDefault();

@@ -1,4 +1,5 @@
 // エディタの中心。状態の読み込み、サーバーとのやりとり、再生（プレイモード）を受け持つ。
+import { stageOps } from './stage-ops.ts';
 import { Registry, type GameModule } from '../core/registry.ts';
 import { Game, busesOf } from '../core/game.ts';
 import { InputRecorder, type InputEvent } from '../core/input.ts';
@@ -269,14 +270,10 @@ export class App {
       toast(T('プレハブの中の親子は、プレハブの形で決まります（parent は変えられません）'), 'bad', 5000);
       return null;
     }
-    // プレハブの編集画面の仮のシーンへの操作（物を足す・消す・見るためのカメラ）は、サーバーに送らない
+    // プレハブの編集画面の仮のシーンへの操作: 物を足す・消す・名前を変えるは、プレハブの子の操作に直す（見るためのカメラなどは送らない）
     if (this.prefabStage) {
       const stage = `@${this.prefabStage}`;
-      const bad = ops.find((o) => (o as { scene?: string }).scene === stage || JSON.stringify(o).includes(`"${stage}#`));
-      if (bad) {
-        toast(T('プレハブの編集画面では、子の値を変えるだけです。子の足し引き・部品の足し外しは、AI に頼む（addPrefab の children）'), 'bad', 6000);
-        return null;
-      }
+      try { ops = stageOps(ops, this.prefabStage, this.state.prefabs, this.sceneView(stage) ?? this.state.scenes[stage]); } catch (e) { toast((e as Error).message, 'bad', 6000); return null; }
       if (ops.some((o) => /\.Transform3?D?\.parent$/.test((o as { path?: string }).path ?? ''))) {
         toast(T('プレハブの中の親子は、プレハブの形で決まります（parent は変えられません）'), 'bad', 5000);
         return null;
