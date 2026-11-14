@@ -35,7 +35,8 @@ export const editRoot = (pattern: string) => pattern.replace(/\.\*$/, '').replac
 export function withinEdits(edits: string[], target: string): boolean {
   return edits.some((e) => {
     const root = editRoot(e);
-    return target === root || target.startsWith(root + '.') || target.startsWith(root + '[') || target.startsWith(root + '|');
+    // プレハブ（@名前）は、その子・孫（@名前/子…）も中
+    return target === root || target.startsWith(root + '.') || target.startsWith(root + '[') || target.startsWith(root + '|') || (root.startsWith('@') && target.startsWith(root + '/'));
   });
 }
 
@@ -182,6 +183,7 @@ export function windowTargets(op: Op, targetOf: (op: Op) => string | null): stri
     case 'renamePrefab': return [`@${op.name}`, `@${op.to}`];
     case 'addChild': return [`${op.parent}/${op.child?.name}`];
     case 'renameChild': return [op.path, op.path.replace(/[^/]+$/, op.to)];
+    case 'moveChild': return op.parent ? [op.path, `${op.parent}/${op.path.slice(op.path.lastIndexOf('/') + 1)}`] : [op.path];
     case 'renameRow': return [`$${op.table}.${op.id}`, `$${op.table}.${op.to}`];
     case 'addComponent': return [`${op.target}.${op.component}`];
     case 'addEntity': return [`${op.scene}#${op.entity.id}`];

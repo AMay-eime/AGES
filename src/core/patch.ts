@@ -84,8 +84,8 @@ export type Op =
   | { op: 'removeChild'; path: string }
   /** プレハブの子の名前を変える（派生・置いた物の値・🔒★の住所も付いてくる） */
   | { op: 'renameChild'; path: string; to: string }
-  /** プレハブの子の並びを変える（to は動かした後の番号。同じ層・順番なら、後のものが手前に描かれる） */
-  | { op: 'moveChild'; path: string; to: number };
+  /** プレハブの子の並びを変える（to は動かした後の番号。同じ層・順番なら、後のものが手前に描かれる）。parent（@プレハブ か @プレハブ/子）で親も変える（値はそのまま） */
+  | { op: 'moveChild'; path: string; to?: number; parent?: string };
 
 /**
  * 操作（op）の書き方の一覧。ages schema <dir> ops で引く（毎回読む MCP の説明には並べない）。
@@ -123,7 +123,7 @@ export const OP_DOCS: Record<Op['op'], string> = {
   addChild: '{parent,child:{name,prefab?,components?,children?},index?} プレハブに子を足す。parent は @プレハブ か @プレハブ/子。並びは描く順（guide:prefab）',
   removeChild: '{path:"@プレハブ/子"} 子を消す（派生・置いた物がその子に書いた値も消え、結果に並ぶ）',
   renameChild: '{path:"@プレハブ/子",to} 子の名前を変える（派生・置いた物の値・🔒★も付いてくる）',
-  moveChild: '{path:"@プレハブ/子",to} 子の並び（描く順）を変える。to は動かした後の番号',
+  moveChild: '{path:"@プレハブ/子",to?,parent?} 子の並び（描く順）を変える。to は動かした後の番号。parent（@プレハブ/子）で親も変える（値・孫・派生と置いた物の値は付いてくる）',
   revert: '{path} 書いた値を消して、派生・インスタンスならプレハブ（元）の値に、そうでなければ既定値に戻す（@x.部品・シーン#ID.部品 で部品ごと）',
   dockUI: '{target,edge,margin?} UI を画面（親）の端・角に付ける。edge は topLeft top topRight left center right bottomLeft bottom bottomRight、margin は端からの間(px)。例 {"op":"dockUI","target":"main#hp","edge":"topRight","margin":8}',
   attachUI: '{target,to,side?,gap?,align?} UI を別の UI の隣に接して置く（重ならず、相手と一緒に動く）。side は right left below above、align は start center end。例 {"op":"attachUI","target":"main#lives","to":"hp","side":"below","gap":4}',
@@ -1308,9 +1308,47 @@ function childOp(docs: Docs, reg: Registry, op: Extract<Op, { op: 'addChild' | '
     }
     return;
   }
-  // moveChild
+  // moveChild（parent を書けば親も変える）
+  const from = t.path.length > 1 ? `@${t.p.name}/${parentAt.join('/')}` : `@${t.p.name}`;
+  if (op.parent !== undefined && op.parent !== from) {
+    const np = defTarget(docs, op.parent, 'moveChild');
+    if (np.p !== t.p) throw new Error(`moveChild の parent は同じプレハブ（@${t.p.name} か @${t.p.name}/子）です（受け取った値: ${op.parent}）`);
+    if (np.node?.prefab) throw new Error(`${op.parent} は @${np.node.prefab} を子にしているので、その中へは動かせません（@${np.node.prefab} で足し引きします）`);
+    if (np.path.length >= t.path.length && t.path.every((x, i) => np.path[i] === x)) throw new Error(`${op.path} を自分や自分の子の下（${op.parent}）へは動かせません`);
+    const host: { children?: PrefabChild[] } = np.node ?? np.p;
+    const dest = host.children ?? [];
+    if (dest.some((c) => c.name === name)) throw new Error(`${op.parent}/${name} はすでにあります`);
+    const to = op.to ?? dest.length;
+    if (!Number.isInteger(to) || to < 0 || to > dest.length) throw new Error(`moveChild の to は 0〜${dest.length} です`);
+    t.list.splice(idx, 1);
+    if (!t.list.length) delete t.holder.children;
+    (host.children ??= []).splice(to, 0, t.node);
+    dirty.add(keyOf(t.p));
+    const target = `${op.parent}/${name}`;
+    changes.push({ path: op.path, from: { parent: from, index: idx }, to: `renamed:${target}` });
+    // 派生・置いた物・別のプレハブの中の値も、同じ入れ物の新しい親の下へ（なければ作る）
+    const all = overlayLists(docs.prefabs, docs.scenes);
+    for (const { o, n } of hits) {
+      const rootWhere = parentAt.length ? o.where.slice(0, -(parentAt.join('/').length + 1)) : o.where;
+      const root = parentAt.length ? all.find((x) => x.key === o.key && x.owner === t.p.name && !x.at.length && x.where === rootWhere)?.holder : o.holder;
+      if (!root) continue;
+      o.holder.children = o.holder.children!.filter((c) => c !== n);
+      if (!o.holder.children.length) delete o.holder.children;
+      let at: { children?: PrefabChild[] } = root;
+      for (const seg of np.path) {
+        const list = (at.children ??= []);
+        let next = list.find((c) => c.name === seg);
+        if (!next) { next = { name: seg, components: {} }; list.push(next); }
+        at = next;
+      }
+      (at.children ??= []).push(n);
+      dirty.add(o.key);
+      changes.push({ path: `${o.where}/${name}`, from: name, to: `renamed:${rootWhere}${np.path.length ? '/' + np.path.join('/') : ''}/${name}`, auto: true });
+    }
+    return;
+  }
   const to = op.to;
-  if (!Number.isInteger(to) || to < 0 || to >= t.list.length) throw new Error(`moveChild の to は 0〜${t.list.length - 1} です`);
+  if (to === undefined || !Number.isInteger(to) || to < 0 || to >= t.list.length) throw new Error(`moveChild の to は 0〜${t.list.length - 1} です`);
   if (to === idx) return;
   t.list.splice(idx, 1);
   t.list.splice(to, 0, t.node);
