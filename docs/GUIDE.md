@@ -29,7 +29,7 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
   - 今あるプレハブの子は `addChild`（`{"op":"addChild","parent":"@bg","child":{"name":"mist","components":{…}},"index":1}`。`parent` を `@bg/mist` にすると孫）・`removeChild`・`renameChild`・`moveChild`（並び＝同じ層なら描く順）で足し引きし、子の部品は `addComponent`・`removeComponent`（target `@bg/mist`）。作り直さない。派生・置いた物がその子に書いた値は名前で付いてくる（消すと値も消え、結果に並ぶ）
   - 足し引きは子を決めているプレハブでだけ。派生・置いた物は子の値を変えるだけ。別のプレハブを子にした所（`@ship/gun_l`）の中は、そのプレハブ（`@gun`）で足し引きする（使っている所すべてに出る）
   - シーンに置いたインスタンスの子は、置いた物ごとに値を変えられる: `main#boss/gun_l.Transform.x`（値はシーンのその物の `children` に、変えた値だけ入る。プレハブを直すと、変えていない値は伝わる）。置いた物ごとの子の足し引き・切り離し（linkPrefab null）はできない
-  - 人はエディタでプレハブを開いて（ダブルクリックか「開く」）、親と子がそろった絵で子を選び、インスペクタとドラッグで直せる。子の足し引き・名前・並べ替え・複製は階層の右クリックと＋、アセットやプレハブを階層へ運ぶと子になる
+  - 人はエディタのアセットの画面の「🧩 プレハブ」（タグごと・名前の頭でまとめる）から、プレハブを開いて（ダブルクリックか「開く」）、親と子がそろった絵で子を選び、インスペクタとドラッグで直せる。子の足し引き・名前・並べ替え・複製は階層の右クリックと＋、アセットやプレハブを階層へ運ぶと子になる
 - **まつわる値**（`params`）: エディタでプレハブを選ぶと、そのプレハブにまつわる表の値が並び、その場で直せる（値は表のまま。ロックも同じ）。並べる値は AI が決める: `{"op":"setPrefab","name":"enemy_fast","params":["$enemies.fast","$waves.w3.interval"]}`（`$表.行` は行の列すべて、`$表.行.列` はその値）。書いていなければ、そのプレハブを指す表の行（`prefab` の列）が出る。プレハブを作ったら、人がよく触る表の値を並べておき、使用者に「足りない・要らない」と言われたら足し引きする
 - プレハブだけを試すのは `ages run <dir> --spawn enemy_fast`（空のシーンの真ん中に出し、消えたら止まる。`explosion@40,0` で真ん中からずらす。音のプレハブは1回鳴らす）。人はエディタの「試し」の窓で同じものを見る
 - 実行中にプレハブから出た物の値を見るのは `ages run --watch @プレハブ名.部品.値`（いる最初の1つ）。全部は `@弾[*].部品.値`（ID ごと）、値で絞るのは `@弾[kind=pierce].部品.値`（合う最初の1つ。`[*kind=pierce]` で合う物全部、`!=` も）
@@ -162,7 +162,7 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
   - `fields: [{ match, mount(el, field, api) }]` インスペクタと表のエディタの欄の見せ方。match は 型（`'color'`）・部品.フィールド（`'Health.hp'`）・`$表.列`（`'$talks.face'`。どの行にも）・住所（`'main#player.Health.hp'`）。入れ子の中は `[]` と `.名前`（`'Stage.elements[].enemy'`・`'$talks.lines[].face'`）。`field.value` を見せ、`field.set(値)` で変える。`field.standard()` で標準の欄も並べられる。入れ子の中なら `field.parent`（すぐ外の値）、表なら `field.row`（例 `examples/shooter/editor/hp-hearts.ext.ts`）
   - `components: [{ component, hide?, mount(el, comp, api) }]` 部品の欄の上に中身を足す。`hide: 'all'` か名前の並びで標準の欄を隠す。`comp.set(フィールド, 値)`（例 AGES 本体の `src/editor/builtin/ui-dock.ts`）
   - `rows: [{ table, hide?, mount(el, row, api) }]` 表のエディタで行を選んだときの右の欄の上に中身を足す（部品の見せ方の表版。`row.values` は既定値で埋めた行、`row.set(列, 値)`・`row.locked(列)`）。表の一覧は標準のまま、行の中身だけを作る
-  - `menus: [{ label, where: 'entity', when?(targets, api), run(targets, api) }]` シーンの物の右クリックのメニュー。targets は選んでいる物の住所（例 AGES 本体の `src/editor/builtin/entity-menu.ts`）。`where: 'prefab'` は階層のプレハブの右クリック（targets は `['@名前']`。例 `prefab-menu.ts`）
+  - `menus: [{ label, where: 'entity', when?(targets, api), run(targets, api) }]` シーンの物の右クリックのメニュー。targets は選んでいる物の住所（例 AGES 本体の `src/editor/builtin/entity-menu.ts`）。`where: 'prefab'` はアセットの画面のプレハブの右クリック（targets は `['@名前']`。例 `prefab-menu.ts`）
 - `desc`（何のためか、1行）を必ず書く。パネルがあるなら `title` と `edits`（パネルが変える値の住所。`main#spawner.Spawner.*` のようにまとめても書ける）も。地図にはこの宣言が1行で出る
 - プレハブを作る・写す・名前を変える・消す拡張は `edits: ['@[enemy]']`（タグ enemy のプレハブすべて。派生が受け継いだタグも数える）。addPrefab（copy・base も）・renamePrefab・setPrefab・removePrefab・部品の付け外し・revert と中の値を変えられる。対象は変える前からそのタグを持つプレハブと新しく作るプレハブで、変えた後もタグを持つこと（作るときは tags を書くか、タグを持つものを copy・base に）。値だけなら `@[enemy].Enemy.*`。表の行の追加・削除・名前・並びは `$表.*`
 - 拡張から変えられるのは、`edits` に書いた値と、見せている欄（その中も）・部品・行の値だけ。🔒ロックされた値は拡張からは変えられない。ロックの操作を拡張に作らない（作っても、サーバーが受け付けない）

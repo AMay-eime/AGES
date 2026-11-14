@@ -13,7 +13,7 @@ import { docPose } from '../edit-ops.ts';
 import { relativeTo } from '../../core/transform.ts';
 import type { Op } from '../../core/patch.ts';
 import type { GitFix, GitHelp } from '../git-help.ts';
-import { T, TD } from '../i18n.ts';
+import { T } from '../i18n.ts';
 
 // ---------- 階層 ----------
 const ENTITY_MIME = 'application/x-ages-entity';
@@ -294,36 +294,8 @@ export function hierarchyPanel(app: App): Panel {
       h('div', { class: 'list' },
         h('div', { class: 'folder', title: (scene?.desc ? scene.desc + '\n' : '') + T('UI の物をここへ運ぶと親なしに'), ...(app.play ? {} : tree.drop) }, T('{0}（{1}）{2}', app.scene, scene?.entities.length ?? 0, app.play && app.play.game.sceneName === app.scene && app.play.from !== app.scene ? T(' ▶実行中') : '')),
         tree.rows,
-        h('div', { class: 'folder' }, T('プレハブ（{0}）', Object.keys(s.prefabs).length)),
-        Object.values(s.prefabs).map((p) => {
-          const n = lockCount(`@${p.name}`);
-          return h('div', {
-            class: `item ${sel?.kind === 'prefab' && sel.name === p.name ? 'sel' : ''}`,
-            onclick: () => app.select({ kind: 'prefab', name: p.name }),
-            ondblclick: () => app.openPrefab(p.name),
-            'data-ai': `@${p.name}`,
-            // 右クリック: 拡張の menus（where: 'prefab'。本体の写す・名前を変える・削除も）
-            oncontextmenu: (ev: MouseEvent) => {
-              ev.preventDefault();
-              if (app.play) return;
-              app.select({ kind: 'prefab', name: p.name });
-              const items = menuItemsFor(app, 'prefab', [`@${p.name}`]);
-              if (items.length) menu(ev.clientX, ev.clientY, items);
-            },
-            // ゲームの画面へ運ぶと、落とした所にインスタンス（プレハブとつながった物）を置く
-            draggable: true, title: T('ダブルクリックで開く（親と子をそろえた絵で直す）。ゲームの画面へ運ぶと、その場所にこのプレハブのインスタンスを置く。右クリックで写す・名前を変える・削除'),
-            ondragstart: (e: DragEvent) => { e.dataTransfer!.setData(PREFAB_MIME, p.name); e.dataTransfer!.effectAllowed = 'copy'; },
-          }, '@' + p.name, h('span', { class: 'muted' }, p.base ? `← @${p.base}${p.desc ? ' ' + p.desc : ''}` : p.desc ?? ''), n ? h('span', { style: 'color:var(--lock)' }, '🔒' + n) : null);
-        }),
-        app.registry?.tables.size ? h('div', { class: 'folder' }, T('表（{0}）', app.registry.tables.size)) : null,
-        [...(app.registry?.tables.values() ?? [])].map((t) => {
-          const n = lockCount(`$${t.name}`);
-          const rows = s.tables?.[t.name]?.rows.length ?? 0;
-          // 説明は最初の文だけ（全体は名前にカーソルを乗せると出る）
-          const first = TD(t.desc).split(/。|\. /)[0];
-          return h('div', { class: 'item', onclick: () => app.emit('openTable', { name: t.name }), title: T('{0}\n表のエディタで開く', t.desc ?? '') },
-            '$' + t.name, h('span', { class: 'muted' }, T('{0}行 {1}', rows, first)), n ? h('span', { style: 'color:var(--lock)' }, '🔒' + n) : null);
-        })),
+        // プレハブと表は、アセットの画面に並べる（issue #141）
+      ),
     );
   };
   app.on('change', render);
