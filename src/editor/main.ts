@@ -84,7 +84,7 @@ app.on('openText', (path) => text.open(String(path)));
 // エディタで人が見ている所を、AI の地図に出すために知らせる（選びが変わったら少し待って、開いている間は1分ごと。閉じたら消す）
 const focusNow = () => ({
   scene: app.scene,
-  selected: app.sel?.kind === 'prefab' ? [`@${app.sel.name}`] : app.selectedIds().map((id) => `${app.scene}#${id}`),
+  selected: app.sel?.kind === 'prefab' ? [`@${app.sel.name}`] : app.selectedIds().map((id) => app.addr(id)),
   ...(app.row ? { row: `$${app.row.table}.${app.row.id}` } : {}),
   ...(layout.isVisible('table') && table.current() ? { table: table.current() } : {}),
   windows: [...layout.panels.values()].filter((p) => p.id.startsWith('win:') && layout.isVisible(p.id)).map((p) => ({ id: p.id.slice(4), title: p.title })),

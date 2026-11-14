@@ -16,7 +16,7 @@ import { shaderMap, type ShaderDef } from '../core/shader.ts';
 import { LocalStore } from '../core/save.ts';
 import { languagesOf } from '../core/i18n.ts';
 import type { Origins } from '../core/origin.ts';
-import { resolveEntity } from '../core/variant.ts';
+import { expandChildren, prefabChildren, resolveEntity, resolvePrefab } from '../core/variant.ts';
 import { T, lang } from './i18n.ts';
 import { AiModel } from './ai.ts';
 import { loadPackages } from '../packages/index.ts';
@@ -88,6 +88,48 @@ export class App {
   registry!: Registry;
   scene = '';
   sel: Selection = null;
+  /**
+   * プレハブの編集画面で開いているプレハブ（null ならシーン）。開いている間、シーンの代わりに @名前 という仮のシーンを出す:
+   * 親が $root、子が $root/子 の物。書くときの住所は addr() で @名前/子 に直す（仮のシーンはサーバーにない）
+   */
+  prefabStage: string | null = null;
+
+  /** 物の ID を書くときの住所に（プレハブの編集画面なら @名前/子、シーンなら シーン#ID） */
+  addr(id: string, scene = this.scene): string {
+    if (!scene.startsWith('@')) return `${scene}#${id}`;
+    const name = scene.slice(1);
+    return id === STAGE_ROOT ? `@${name}` : id.startsWith(STAGE_ROOT + '/') ? `@${name}/${id.slice(STAGE_ROOT.length + 1)}` : `@${name}#${id}`;
+  }
+
+  /** プレハブの編集画面を開く（親と子がそろった絵。子を選んでインスペクタとドラッグで直す） */
+  openPrefab(name: string): void {
+    if (this.play) return;
+    this.prefabStage = name;
+    this.scene = `@${name}`;
+    this.injectStage();
+    this.rebuildPreview();
+    this.select({ kind: 'scene', scene: this.scene, id: STAGE_ROOT });
+    this.emit('change');
+  }
+
+  /** プレハブの編集画面を閉じて、シーンに戻る */
+  closePrefab(scene?: string): void {
+    if (!this.prefabStage) return;
+    delete this.state.scenes[`@${this.prefabStage}`];
+    this.prefabStage = null;
+    this.scene = scene && this.state.scenes[scene] ? scene : this.state.config.startScene in this.state.scenes ? this.state.config.startScene : Object.keys(this.state.scenes)[0] ?? '';
+    this.rebuildPreview();
+    this.select(null);
+    this.emit('change');
+  }
+
+  /** プレハブの編集画面の仮のシーンを作り直す（プレハブが消えたら閉じる） */
+  private injectStage(): void {
+    const name = this.prefabStage;
+    if (!name) return;
+    if (!this.state.prefabs[name]) { this.prefabStage = null; this.scene = ''; return; }
+    try { this.state.scenes[`@${name}`] = stageScene(this.state.prefabs, name, this.state.config.view); } catch (e) { toast((e as Error).message, 'bad'); this.prefabStage = null; this.scene = ''; }
+  }
   user = localStorage.getItem('ages.user') || 'human';
   play: PlayState | null = null;
   /** 編集モードで描く用のゲーム（シーンを並べただけで、進めない） */
@@ -173,6 +215,7 @@ export class App {
       this.registry.modelTextures = modelTexturesOf(s.assets);
       this.registry.setLanguages(languagesOf(s.config));
     }
+    this.injectStage();
     if (!this.scene || !s.scenes[this.scene]) this.scene = s.config.startScene in s.scenes ? s.config.startScene : Object.keys(s.scenes)[0] ?? '';
     this.rebuildPreview();
     this.emit('change');
@@ -209,6 +252,24 @@ export class App {
   }
 
   async patch(ops: Op[], win = 'inspector'): Promise<Change[] | null> {
+    // プレハブの編集画面の仮のシーンへの操作（物を足す・消す・見るためのカメラ）は、サーバーに送らない
+    if (this.prefabStage) {
+      const stage = `@${this.prefabStage}`;
+      const bad = ops.find((o) => (o as { scene?: string }).scene === stage || JSON.stringify(o).includes(`"${stage}#`));
+      if (bad) {
+        toast(T('プレハブの編集画面では、子の値を変えるだけです。子の足し引き・部品の足し外しは、AI に頼む（addPrefab の children）'), 'bad', 6000);
+        return null;
+      }
+      if (ops.some((o) => /\.Transform3?D?\.parent$/.test((o as { path?: string }).path ?? ''))) {
+        toast(T('プレハブの中の親子は、プレハブの形で決まります（parent は変えられません）'), 'bad', 5000);
+        return null;
+      }
+      // 親の位置は出すときに決まるので、絵の上で動かすのは子だけ（親を動かすと、子がそろって動いて見えるだけ）
+      if ((win === 'game' || win === 'scene3d') && ops.some((o) => /^@[^/#.]+\.Transform3?D?\.(x|y|z|rot|rx|ry|rz)$/.test((o as { path?: string }).path ?? ''))) {
+        toast(T('親（{0}）の位置は出すときに決まります。絵の上で動かせるのは子だけ', stage), 'bad', 5000);
+        return null;
+      }
+    }
     try {
       const r = await this.api<{ changes: Change[]; warnings?: string[] }>('/api/patch', { body: { ops, win } });
       await this.refresh();
@@ -551,4 +612,33 @@ export class App {
     for (let i = 0; i < frames; i++) t.step();
     return { counts: Object.fromEntries(t.game.counts), frame: t.game.frame, ms: performance.now() - t0 };
   }
+}
+
+/** プレハブの編集画面の親の ID */
+export const STAGE_ROOT = '$root';
+
+/** プレハブの編集画面の仮のシーン: 親（$root）と子・孫（$root/子）。2D は原点が真ん中に見えるカメラを置く */
+export function stageScene(prefabs: Record<string, PrefabDoc>, name: string, view?: { width: number; height: number }): SceneDoc {
+  const map = new Map(Object.entries(prefabs));
+  const root = resolvePrefab(map, name);
+  const comps = structuredClone(root.components);
+  const is3d = !!comps.Transform3D && !comps.Transform;
+  if (!is3d && !comps.Transform) comps.Transform = {};
+  const kids = expandChildren(prefabChildren(map, name), STAGE_ROOT, is3d).map(({ prefab, ...e }) => ({ ...e, name: prefab ? `${e.name} ←@${prefab}` : e.name }));
+  // 2D: 原点が真ん中に来るカメラ。子の広がり（位置と大きさのおおよそ）が画面の半分ほどに見えるよう寄せる
+  let reach = 16;
+  const at = new Map<string, [number, number]>([[STAGE_ROOT, [0, 0]]]);
+  for (const e of kids) {
+    const t = (e.components.Transform ?? {}) as { x?: number; y?: number; parent?: string };
+    const p = at.get(t.parent ?? STAGE_ROOT) ?? [0, 0];
+    const here: [number, number] = [p[0] + (t.x ?? 0), p[1] + (t.y ?? 0)];
+    at.set(e.id, here);
+    const s = (e.components.Shape ?? e.components.Sprite ?? {}) as { w?: number; h?: number };
+    reach = Math.max(reach, Math.abs(here[0]) + (s.w ?? 16) / 2, Math.abs(here[1]) + (s.h ?? 16) / 2);
+  }
+  const rs = (comps.Shape ?? comps.Sprite ?? {}) as { w?: number; h?: number };
+  reach = Math.max(reach, (rs.w ?? 16) / 2, (rs.h ?? 16) / 2);
+  const zoom = view ? Math.min(6, Math.max(1, Math.round(((Math.min(view.width, view.height) * 0.3) / reach) * 4) / 4)) : 1;
+  const cam = is3d ? [] : [{ id: '$camera', name: '（見るためのカメラ）', components: { Transform: {}, Camera: { zoom } } }];
+  return { name: `@${name}`, entities: [{ id: STAGE_ROOT, name: `@${name}`, components: comps }, ...kids, ...cam] } as SceneDoc;
 }
