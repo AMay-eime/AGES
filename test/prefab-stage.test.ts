@@ -137,7 +137,8 @@ export const tables: GameModule['tables'] = [kinds];
     await menuOf('@ship/core');
     await ev(`[...document.querySelectorAll('.menu > div')].find((d) => d.textContent === '上へ（奥に描く）').click()`);
     await waitFor('並べ替え', 10_000, async () => ((await kids()).join() === 'core,gun_l' ? true : undefined));
-    await ev(`ages.select({ kind: 'scene', scene: '@ship', id: '$root/gun_l' })`);
+    await ev(`ages.select({ kind: 'scene', scene: '@ship', id: '$root/gun_l' }), document.activeElement?.blur?.(), document.querySelector('.menu')?.remove()`);
+    await waitFor('選ぶ', 10_000, async () => ((await ev(`ages.selectedIds().join()`)) === '$root/gun_l' ? true : undefined));
     for (const type of ['keyDown', 'keyUp']) await cdp.send('Input.dispatchKeyEvent', { type, key: 'd', code: 'KeyD', windowsVirtualKeyCode: 68, modifiers: 2 }, sessionId);
     await waitFor('複製', 10_000, async () => ((await kids()).join() === 'core,gun_l,gun_l_2' ? true : undefined));
     const dup = JSON.parse(await readFile(join(dir, 'prefabs', 'ship.prefab.json'), 'utf8')).children[2];
@@ -146,6 +147,19 @@ export const tables: GameModule['tables'] = [kinds];
     assert.ok(await ev(`ages.patch([{ op: 'removeEntity', scene: '@ship', id: '$root/gun_r' }]).then((r) => !!r)`));
     assert.deepEqual(await kids(), ['core', 'gun_l']);
     assert.equal(await ev(`ages.patch([{ op: 'removeEntity', scene: '@ship', id: '$root' }])`), null, 'プレハブ本体は消せない');
+    // 階層で子を別の子の行へ運ぶと、親が変わる（画面の位置はそのまま）。本体の行へ運ぶと本体の子に戻る（issue #139）
+    assert.ok(await ev(`ages.patch([{ op: 'addChild', parent: '@ship', child: { name: 'mount', components: { Transform: { x: 10, y: 0 } } } }]).then((r) => !!r)`));
+    const dropRow = (addr: string, id: string) => ev(`(() => { const dt = new DataTransfer(); dt.setData('application/x-ages-entity', '${id}'); document.querySelector('.item[data-ai="${addr}"]').dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt })); return true; })()`);
+    await waitFor('mount の行', 10_000, async () => ((await ev(`!!document.querySelector('.item[data-ai="@ship/mount"]')`)) ? true : undefined));
+    const before = JSON.parse(await readFile(join(dir, 'prefabs', 'ship.prefab.json'), 'utf8')).children.find((c: { name: string }) => c.name === 'core').components.Transform ?? {};
+    await dropRow('@ship/mount', '$root/core');
+    const shipKids = async () => JSON.parse(await readFile(join(dir, 'prefabs', 'ship.prefab.json'), 'utf8')).children;
+    await waitFor('親を変える', 10_000, async () => ((await shipKids()).find((c: { name: string }) => c.name === 'mount')?.children?.[0]?.name === 'core' ? true : undefined));
+    const moved = (await shipKids()).find((c: { name: string }) => c.name === 'mount').children[0].components.Transform;
+    assert.equal(Number(moved.x ?? 0), Number(before.x ?? 0) - 10, '画面の位置はそのまま（親から見た位置を直す）');
+    await waitFor('孫の行', 10_000, async () => ((await ev(`!!document.querySelector('.item[data-ai="@ship/mount/core"]')`)) ? true : undefined));
+    await dropRow('@ship', '$root/mount/core');
+    await waitFor('本体の子に戻す', 10_000, async () => ((await shipKids()).some((c: { name: string }) => c.name === 'core') ? true : undefined));
     // 閉じるとシーンに戻る
     await ev(`ages.closePrefab()`);
     // シーンに置いたインスタンスの子: 階層に出て、インスペクタで直すと置いた物ごとの値に入る

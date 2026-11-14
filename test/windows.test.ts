@@ -362,3 +362,20 @@ test('行・欄の見せ方の許しと edits の @[タグ] は、同じ拡張�
   await assert.rejects(p.apply([{ op: 'removeRow', table: 'talks', id: 't1' }], actor), /宣言（edits）にない値/, '行の見せ方でも、行を消すのは edits で');
   await assert.rejects(p.apply([{ op: 'set', path: '$enemies.basic.speed', value: 2 }], actor), /宣言（edits）にない値/);
 });
+
+test('edits の @[タグ]・@名前 は、そのプレハブの子（孫も）の値・足し引き・名前・並べ替え・親の変更・部品の付け外しも含む（issue #139）', async () => {
+  const { p, actor } = await withExt('parts', "title: '部位', desc: '敵の部位', edits: ['@[enemy]'], panel: { mount() {} }");
+  await p.apply([{ op: 'addChild', parent: '@enemy', child: { name: 'turret', components: { Transform: { y: -4 } } } }, { op: 'addChild', parent: '@enemy/turret', child: { name: 'barrel', components: { Transform: { y: -6 } } } }], actor);
+  await p.apply([{ op: 'set', path: '@enemy/turret/barrel.Transform.y', value: -8 }, { op: 'addComponent', target: '@enemy/turret', component: 'Lifetime' }, { op: 'removeComponent', target: '@enemy/turret', component: 'Lifetime' }], actor);
+  await p.apply([{ op: 'addChild', parent: '@enemy', child: { name: 'base', components: {} } }, { op: 'moveChild', path: '@enemy/turret/barrel', parent: '@enemy/base' }, { op: 'renameChild', path: '@enemy/base/barrel', to: 'gun' }, { op: 'moveChild', path: '@enemy/base', to: 0 }], actor);
+  assert.deepEqual(p.docs.prefabs.get('enemy')!.children!.map((c) => c.name), ['base', 'turret']);
+  await p.apply([{ op: 'removeChild', path: '@enemy/turret' }], actor);
+  // よそのプレハブの子・よそのプレハブへの移しはできない
+  await p.apply([{ op: 'addChild', parent: '@bullet', child: { name: 'trail', components: {} } }], human);
+  await assert.rejects(p.apply([{ op: 'set', path: '@bullet/trail.Transform.x', value: 1 }], actor), /にない値を変えようとしています: @bullet\/trail/);
+  await assert.rejects(p.apply([{ op: 'removeChild', path: '@bullet/trail' }], actor), /にない値/);
+  const one = await withExt('one', "title: '1つ', desc: '1つ', edits: ['@enemy'], panel: { mount() {} }");
+  await one.p.apply([{ op: 'addChild', parent: '@enemy', child: { name: 'eye', components: {} } }, { op: 'set', path: '@enemy/eye.Transform.x', value: 2 }], one.actor);
+  const comp = await withExt('hp2', "title: '体力', desc: '体力', edits: ['@[enemy].Health.*'], panel: { mount() {} }");
+  await assert.rejects(comp.p.apply([{ op: 'addChild', parent: '@enemy', child: { name: 'x', components: {} } }], comp.actor), /にない値/, '部品だけの宣言は子を含まない');
+});
