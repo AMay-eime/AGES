@@ -3,6 +3,7 @@
 import type { Op } from '../core/patch.ts';
 import type { EntityData, PrefabDoc, SceneDoc } from '../core/docs.ts';
 import { resolveEntity } from '../core/variant.ts';
+import { stageDuplicate } from './stage-ops.ts';
 import { deltaTo, poseOf, type Pose } from '../core/transform.ts';
 
 /** ID の後ろに番号を付けて、まだ使われていない ID にする（enemy → enemy_2） */
@@ -15,6 +16,8 @@ export function freshId(base: string, taken: Set<string>): string {
 
 /** 物を複製する（offset だけずらす）。作った物の ID も返す。プレハブのインスタンスは、同じプレハブのインスタンスとして複製する（prefabs で位置を求める） */
 export function duplicateOps(scene: SceneDoc, ids: string[], offset = 16, prefabs?: Map<string, PrefabDoc>): { ops: Op[]; ids: string[] } {
+  // プレハブの編集画面（@名前）: プレハブの子を、中の子ごと複製する
+  if (scene.name.startsWith('@') && prefabs) return stageDuplicate(Object.fromEntries(prefabs), scene.name.slice(1), ids, offset);
   const taken = new Set(scene.entities.map((e) => e.id));
   const ops: Op[] = [];
   const out: string[] = [];

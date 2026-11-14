@@ -2,8 +2,10 @@
 import type { App } from '../app.ts';
 import { h, clear, modal, toast, time, menu } from './dom.ts';
 import type { Layout, Panel } from './layout.ts';
-import { PREFAB_MIME, importFiles } from './assets.ts';
-import { kindOf } from '../../core/assets.ts';
+import { ASSET_MIME, PREFAB_MIME, importFiles } from './assets.ts';
+import { baseOf, extOf, kindOf } from '../../core/assets.ts';
+import { stageNode, stagePath } from '../stage-ops.ts';
+import { duplicateOps, freshId } from '../edit-ops.ts';
 import { menuItemsFor } from '../extensions.ts';
 import type { EntityData } from '../../core/docs.ts';
 import { treeParents, groupNumbered, groupKey, NUMBERED } from '../tree.ts';
@@ -71,7 +73,15 @@ export function hierarchyPanel(app: App): Panel {
       ...(app.scene !== s.config.startScene ? [[T('開始シーンにする'), () => app.patch([{ op: 'setScene', name: app.scene, start: true }], 'hierarchy')] as [string, () => void]] : []),
       [T('消す'), () => { if (confirm(T('シーン {0} を消しますか？', app.scene))) app.patch([{ op: 'removeScene', name: app.scene }], 'hierarchy'); }],
     ]);
-    const addEntity = () => modal((close) => {
+    // プレハブの編集画面: 子を足す（under の子に。名前を聞く）
+    const addChildTo = (under: string) => ask(T('足す子の名前（英数字・_・-）'), '', async (v) => {
+      if (!v || !app.prefabStage) return;
+      if (await app.patch([{ op: 'addChild', parent: stagePath(app.prefabStage, under), child: { name: v, components: {} } }], 'hierarchy')) {
+        open.add(`${app.scene}#${under}`);
+        app.select({ kind: 'scene', scene: app.scene, id: `${under}/${v}` });
+      }
+    }, T('例 mist'));
+    const addEntity = () => app.prefabStage ? addChildTo('$root') : modal((close) => {
       const id = h('input', { type: 'text', placeholder: T('id（英数字・_・-）'), style: 'width:100%' }) as HTMLInputElement;
       const ok = async () => {
         close();
@@ -82,6 +92,35 @@ export function hierarchyPanel(app: App): Panel {
       setTimeout(() => id.focus());
       return h('div', {}, h('h3', {}, T('エンティティを追加')), id, h('div', { class: 'row', style: 'justify-content:flex-end;margin-top:10px' }, h('button', { onclick: close }, T('やめる')), h('button', { class: 'on', onclick: ok }, T('追加'))));
     });
+    // プレハブの編集画面の右クリック: 子を足す・名前・並べ替え・複製・消す。別のプレハブを子にした所は、そのプレハブを開く
+    const stageMenu = (id: string): [string, () => void][] => {
+      const name = app.prefabStage!;
+      const at = stageNode(app.state.prefabs, name, id);
+      if (at.inside) return [[T('@{0} を開いて編集する（この子は @{0} の中。足し引きは @{0} を使っている所すべてに出ます）', at.inside), () => app.openPrefab(at.inside!)]];
+      const path = stagePath(name, id);
+      const items: [string, () => void][] = [];
+      if (at.ref) items.push([T('@{0} を開いて編集する', at.ref), () => app.openPrefab(at.ref!)]);
+      else items.push([T('子を足す'), () => addChildTo(id)]);
+      if (id === '$root' || !at.node) return items;
+      const i = at.list.indexOf(at.node);
+      items.push([T('名前を変える'), () => ask(T('{0} の新しい名前（英数字・_・-）', at.node!.name), at.node!.name, async (v) => {
+        if (v && v !== at.node!.name && await app.patch([{ op: 'renameChild', path, to: v }], 'hierarchy')) app.select({ kind: 'scene', scene: app.scene, id: id.replace(/[^/]+$/, v) });
+      })]);
+      if (i > 0) items.push([T('上へ（奥に描く）'), () => void app.patch([{ op: 'moveChild', path, to: i - 1 }], 'hierarchy')]);
+      if (i < at.list.length - 1) items.push([T('下へ（手前に描く）'), () => void app.patch([{ op: 'moveChild', path, to: i + 1 }], 'hierarchy')]);
+      items.push([T('複製（Ctrl+D）'), () => {
+        const doc = app.state.scenes[app.scene];
+        if (!doc) return;
+        let r: { ops: Op[]; ids: string[] };
+        try { r = duplicateOps(doc, app.selectedIds(), 16, new Map(Object.entries(app.state.prefabs))); } catch (err) { toast((err as Error).message, 'bad'); return; }
+        void app.patch(r.ops, 'hierarchy').then((ok) => { if (ok) app.selectMany(r.ids); });
+      }]);
+      items.push([T('削除（Delete）'), () => {
+        if (!confirm(T('子 {0} を消しますか？（派生・置いた物がこの子に書いた値も消えます。Ctrl+Z で戻せます）', path))) return;
+        void app.patch([{ op: 'removeChild', path }], 'hierarchy').then((ok) => { if (ok) app.select(null); });
+      }]);
+      return items;
+    };
     const remove = () => {
       if (sel?.kind !== 'scene') return;
       if (!confirm(T('{0}#{1} を削除しますか？', sel.scene, sel.id))) return;
@@ -141,11 +180,34 @@ export function hierarchyPanel(app: App): Panel {
         }
         await app.patch(ops, 'hierarchy');
       };
+      // プレハブの編集画面: アセット・プレハブを子として落とす（画像は Sprite・音は Sound・フォントは Text の子、プレハブはそれを子にする）
+      const dropAsChild = async (ev: DragEvent, target: string | null) => {
+        const name = app.prefabStage!;
+        const under = target ?? '$root';
+        const prefab = ev.dataTransfer?.getData(PREFAB_MIME);
+        const path = ev.dataTransfer?.getData(ASSET_MIME);
+        const kind = path ? kindOf(path) : null;
+        if (!prefab && !kind) return;
+        const at = stageNode(app.state.prefabs, name, under);
+        const list = under === '$root' ? app.state.prefabs[name]?.children ?? [] : at.node?.children ?? [];
+        const stem = (prefab || baseOf(path!).slice(0, -extOf(path!).length)).replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '') || 'child';
+        const taken = new Set(list.map((c) => c.name));
+        const n = taken.has(stem) ? freshId(stem, taken) : stem;
+        const components: Record<string, Record<string, unknown>> = prefab ? {} : kind === 'image' ? { Sprite: { image: path } } : kind === 'sound' ? { Sound: { clip: path } } : { Text: { text: T('テキスト'), font: path } };
+        if (await app.patch([{ op: 'addChild', parent: stagePath(name, under), child: { name: n, ...(prefab ? { prefab } : {}), components } }], 'hierarchy')) {
+          open.add(`${app.scene}#${under}`);
+          app.select({ kind: 'scene', scene: app.scene, id: `${under}/${n}` });
+        }
+      };
       const dropOn = (target: string | null) => ({
-        ondragover: (ev: DragEvent) => { if (ev.dataTransfer?.types.includes(ENTITY_MIME)) { ev.preventDefault(); (ev.currentTarget as HTMLElement).classList.add('drop'); } },
+        ondragover: (ev: DragEvent) => {
+          const t = ev.dataTransfer?.types ?? [];
+          if (t.includes(ENTITY_MIME) || (app.prefabStage && (t.includes(PREFAB_MIME) || t.includes(ASSET_MIME)))) { ev.preventDefault(); (ev.currentTarget as HTMLElement).classList.add('drop'); }
+        },
         ondragleave: (ev: DragEvent) => (ev.currentTarget as HTMLElement).classList.remove('drop'),
         ondrop: (ev: DragEvent) => {
           (ev.currentTarget as HTMLElement).classList.remove('drop');
+          if (app.prefabStage && !ev.dataTransfer?.types.includes(ENTITY_MIME)) { ev.preventDefault(); ev.stopPropagation(); void dropAsChild(ev, target); return; }
           const id = ev.dataTransfer?.getData(ENTITY_MIME);
           if (!id) return;
           ev.preventDefault(); ev.stopPropagation();
@@ -176,6 +238,7 @@ export function hierarchyPanel(app: App): Panel {
             ev.preventDefault();
             if (app.play) return;
             if (!app.selectedIds().includes(e.id)) app.select({ kind: 'scene', scene: app.scene, id: e.id });
+            if (app.prefabStage) { menu(ev.clientX, ev.clientY, stageMenu(e.id)); return; }
             const items = menuItemsFor(app, 'entity', app.selectedIds().map((id) => app.addr(id)));
             if (items.length) menu(ev.clientX, ev.clientY, items);
           },

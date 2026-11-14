@@ -63,6 +63,7 @@ export const tables: GameModule['tables'] = [kinds];
     await waitFor('editor page', 20_000, async () => ((await ev(`!!(window.ages?.registry && window.ages.state?.prefabs?.ship)`)) ? true : undefined));
     // 開く: 階層に親と子、ゲームの画面の世界にも子が出る
     await ev(`ages.openPrefab('ship')`);
+    await waitFor('階層', 10_000, async () => ((await ev(`document.body.innerText.includes('gun_l ←@gun')`)) ? true : undefined));
     const opened = await ev(`({ scene: ages.scene, ids: ages.state.scenes['@ship'].entities.map((e) => e.id), world: [...ages.world.entities.keys()], tree: document.body.innerText.includes('gun_l ←@gun') })`);
     assert.equal(opened.scene, '@ship');
     assert.deepEqual(opened.ids, ['$root', '$root/gun_l', '$root/gun_l/muzzle', '$root/core', '$camera']);
@@ -96,7 +97,39 @@ export const tables: GameModule['tables'] = [kinds];
     // 親は絵の上で動かせない・親子のつながり・仮の物への操作は送らない
     assert.equal(await ev(`ages.patch([{ op: 'set', path: '@ship.Transform.x', value: 5 }], 'game')`), null);
     assert.equal(await ev(`ages.patch([{ op: 'set', path: '@ship/core.Transform.parent', value: null }])`), null);
-    assert.equal(await ev(`ages.patch([{ op: 'addEntity', scene: '@ship', entity: { id: 'x', components: {} } }])`), null);
+    assert.equal(await ev(`ages.patch([{ op: 'set', path: '@ship#$camera.Camera.zoom', value: 2 }])`), null);
+    // 子の足し引き（issue #135）: 階層の＋・アセットを落とす（仮のシーンへの物の追加）は子を足す。Ctrl+Z で戻る
+    const kids = async () => (JSON.parse(await readFile(join(dir, 'prefabs', 'ship.prefab.json'), 'utf8')).children ?? []).map((c: { name: string }) => c.name);
+    assert.ok(await ev(`ages.patch([{ op: 'addEntity', scene: '@ship', entity: { id: 'mist', components: { Transform: { x: 4, y: 0 } } } }], 'game').then((r) => !!r)`));
+    assert.deepEqual(await kids(), ['gun_l', 'core', 'mist']);
+    await ctrlZ();
+    await waitFor('足した子を戻す', 10_000, async () => ((await kids()).length === 2 ? true : undefined));
+    await waitFor('エディタにも', 10_000, async () => ((await ev(`ages.state.prefabs.ship.children.length`)) === 2 ? true : undefined));
+    // 右クリック: 子なら 名前・並べ替え・複製・削除、子にしたプレハブなら開く、その中なら開くだけ
+    const menuOf = async (addr: string) => {
+      await ev(`document.querySelector('.item[data-ai="${addr}"]').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 50, clientY: 50 }))`);
+      return ev(`[...document.querySelectorAll('.menu > div')].map((d) => d.textContent)`);
+    };
+    await ev(`ages.select({ kind: 'scene', scene: '@ship', id: '$root/core' })`);
+    await waitFor('階層の行', 10_000, async () => ((await ev(`!!document.querySelector('.item[data-ai="@ship/core"]')`)) ? true : undefined));
+    assert.deepEqual(await menuOf('@ship/core'), ['子を足す', '名前を変える', '上へ（奥に描く）', '複製（Ctrl+D）', '削除（Delete）']);
+    assert.deepEqual((await menuOf('@ship/gun_l')).slice(0, 2), ['@gun を開いて編集する', '名前を変える']);
+    await ev(`ages.select({ kind: 'scene', scene: '@ship', id: '$root/gun_l/muzzle' })`);
+    await waitFor('孫の行', 10_000, async () => ((await ev(`!!document.querySelector('.item[data-ai="@ship/gun_l/muzzle"]')`)) ? true : undefined));
+    assert.match((await menuOf('@ship/gun_l/muzzle')).join('|'), /^@gun を開いて編集する（この子は @gun の中/);
+    // 上へ（並べ替え）・複製（中の子ごと・すぐ後ろ）・名前の変更・削除
+    await menuOf('@ship/core');
+    await ev(`[...document.querySelectorAll('.menu > div')].find((d) => d.textContent === '上へ（奥に描く）').click()`);
+    await waitFor('並べ替え', 10_000, async () => ((await kids()).join() === 'core,gun_l' ? true : undefined));
+    await ev(`ages.select({ kind: 'scene', scene: '@ship', id: '$root/gun_l' })`);
+    for (const type of ['keyDown', 'keyUp']) await cdp.send('Input.dispatchKeyEvent', { type, key: 'd', code: 'KeyD', windowsVirtualKeyCode: 68, modifiers: 2 }, sessionId);
+    await waitFor('複製', 10_000, async () => ((await kids()).join() === 'core,gun_l,gun_l_2' ? true : undefined));
+    const dup = JSON.parse(await readFile(join(dir, 'prefabs', 'ship.prefab.json'), 'utf8')).children[2];
+    assert.deepEqual([dup.prefab, dup.components.Transform, dup.children?.[0]?.name], ['gun', { x: 4, y: 16 }, 'muzzle']);
+    assert.ok(await ev(`ages.patch([{ op: 'rename', target: '@ship/gun_l_2', name: 'gun_r' }]).then((r) => !!r)`));
+    assert.ok(await ev(`ages.patch([{ op: 'removeEntity', scene: '@ship', id: '$root/gun_r' }]).then((r) => !!r)`));
+    assert.deepEqual(await kids(), ['core', 'gun_l']);
+    assert.equal(await ev(`ages.patch([{ op: 'removeEntity', scene: '@ship', id: '$root' }])`), null, 'プレハブ本体は消せない');
     // 閉じるとシーンに戻る
     await ev(`ages.closePrefab()`);
     // シーンに置いたインスタンスの子: 階層に出て、インスペクタで直すと置いた物ごとの値に入る
