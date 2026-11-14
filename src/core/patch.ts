@@ -7,7 +7,7 @@ import type { Registry } from './registry.ts';
 import { baseNameOf, checkSheet, findFrame, sheetPathOf, toExplicit, type FrameDef, type FrameRef, type SheetDef } from './sheet.ts';
 import { frameMapper, remapRef } from './slice.ts';
 import { assetRefs, checkAssetPath, extOf, isUnder, kindOf, leafRefs } from './assets.ts';
-import { baseChain, childPrefabRefs, entityHolders, hasChildren, flatChildren, instanceChildren, prefabChildren, prefabHolders, resolveEntity, resolvePrefab, childAt, CHILD_NAME } from './variant.ts';
+import { overlayLists, overrideValues, rootOf, baseChain, childPrefabRefs, entityHolders, hasChildren, flatChildren, instanceChildren, prefabChildren, prefabHolders, resolveEntity, resolvePrefab, childAt, CHILD_NAME } from './variant.ts';
 import { same } from './revert.ts';
 
 export type Op =
@@ -77,7 +77,15 @@ export type Op =
   /** プレハブの説明・タグ・派生の元（base: null で切り離す。値は今のまま） */
   | { op: 'setPrefab'; name: string; desc?: string; tags?: string[]; base?: string | null; params?: string[] }
   /** 書いた値を消して、派生なら元の値に、そうでなければ既定値に戻す。派生では部品ごと（@x.部品）も */
-  | { op: 'revert'; path: string };
+  | { op: 'revert'; path: string }
+  /** プレハブに子を足す。parent は @プレハブ か @プレハブ/子（孫にする）。index を省くと最後（並びは描く順） */
+  | { op: 'addChild'; parent: string; child: PrefabChild; index?: number }
+  /** プレハブの子を消す。派生・置いた物がその子に書いた値も消える（消えた値は結果に並ぶ） */
+  | { op: 'removeChild'; path: string }
+  /** プレハブの子の名前を変える（派生・置いた物の値・🔒★の住所も付いてくる） */
+  | { op: 'renameChild'; path: string; to: string }
+  /** プレハブの子の並びを変える（to は動かした後の番号。同じ層・順番なら、後のものが手前に描かれる） */
+  | { op: 'moveChild'; path: string; to: number };
 
 /**
  * 操作（op）の書き方の一覧。ages schema <dir> ops で引く（毎回読む MCP の説明には並べない）。
@@ -112,6 +120,10 @@ export const OP_DOCS: Record<Op['op'], string> = {
   removePrefab: '{name} プレハブを消す（使われているもの・派生の元は消せない）',
   renamePrefab: '{name,to} プレハブの名前を変える（prefab 型の値・派生の元・🔒★も直る。コードの中は直さない）',
   setPrefab: '{name,desc?,tags?,base?,params?} 説明・タグ・派生の元を変える（base: null で切り離す。どちらも今の値は変わらない）。params はエディタでプレハブを選んだときに並べる表の値 [$表.行(.列)]（guide:prefab）',
+  addChild: '{parent,child:{name,prefab?,components?,children?},index?} プレハブに子を足す。parent は @プレハブ か @プレハブ/子。並びは描く順（guide:prefab）',
+  removeChild: '{path:"@プレハブ/子"} 子を消す（派生・置いた物がその子に書いた値も消え、結果に並ぶ）',
+  renameChild: '{path:"@プレハブ/子",to} 子の名前を変える（派生・置いた物の値・🔒★も付いてくる）',
+  moveChild: '{path:"@プレハブ/子",to} 子の並び（描く順）を変える。to は動かした後の番号',
   revert: '{path} 書いた値を消して、派生・インスタンスならプレハブ（元）の値に、そうでなければ既定値に戻す（@x.部品・シーン#ID.部品 で部品ごと）',
   dockUI: '{target,edge,margin?} UI を画面（親）の端・角に付ける。edge は topLeft top topRight left center right bottomLeft bottom bottomRight、margin は端からの間(px)。例 {"op":"dockUI","target":"main#hp","edge":"topRight","margin":8}',
   attachUI: '{target,to,side?,gap?,align?} UI を別の UI の隣に接して置く（重ならず、相手と一緒に動く）。side は right left below above、align は start center end。例 {"op":"attachUI","target":"main#lives","to":"hp","side":"below","gap":4}',
@@ -182,14 +194,14 @@ function holderOf(docs: Docs, a: Address): { holder: Holder; key: string } {
   if (a.kind === 'prefab') {
     const p = docs.prefabs.get(a.doc);
     if (!p) throw new Error(`プレハブ ${a.doc} はありません${suggest(a.doc, [...docs.prefabs.keys()])}`);
-    if (a.child?.length) throw new Error(`@${a.doc}/${a.child.join('/')}: 子では値を変えるだけ（set）。部品の足し外し・子の足し引きは、プレハブを addPrefab の children で作り直す`);
+    if (a.child?.length) throw new Error(`@${a.doc}/${a.child.join('/')}: 子は set で値を変える。部品は addComponent・removeComponent、子は addChild・removeChild・renameChild・moveChild で（guide:prefab）`);
     return { holder: p, key: `prefab:${a.doc}` };
   }
   const s = docs.scenes.get(a.doc);
   if (!s) throw new Error(`シーン ${a.doc} はありません${suggest(a.doc, [...docs.scenes.keys()])}`);
   const e = s.entities.find((x) => x.id === a.entity);
   if (!e) throw new Error(`シーン ${a.doc} にエンティティ ${a.entity} はありません${suggest(a.entity!, s.entities.map((x) => x.id))}`);
-  if (a.child?.length) throw new Error(`${a.doc}#${a.entity}/${a.child.join('/')}: 置いた物の子では値を変えるだけ（set）。子の足し引き・部品の足し外しはプレハブで（@${e.prefab ?? '?'}）`);
+  if (a.child?.length) throw new Error(`${a.doc}#${a.entity}/${a.child.join('/')}: 置いた物の子では値を変えるだけ（set）。子の足し引き・部品の足し外しはプレハブで（@${e.prefab ?? '?'}/…）`);
   return { holder: e, key: `scene:${a.doc}` };
 }
 
@@ -447,6 +459,8 @@ export function applyOps(docs: Docs, reg: Registry, ops: Op[]): PatchResult {
       if (op.op === 'moveAsset' || op.op === 'removeAsset') assetOp(work, reg, op, changes, dirty, files);
       else if (op.op === 'addScene' || op.op === 'removeScene' || op.op === 'renameScene' || op.op === 'setScene') sceneOp(work, reg, op, changes, dirty, itrack);
       else if (op.op === 'addPrefab' || op.op === 'removePrefab' || op.op === 'renamePrefab' || op.op === 'setPrefab' || op.op === 'revert') prefabOp(work, reg, op, changes, dirty, track, itrack);
+      else if (op.op === 'addChild' || op.op === 'removeChild' || op.op === 'renameChild' || op.op === 'moveChild') childOp(work, reg, op, changes, dirty);
+      else if ((op.op === 'addComponent' || op.op === 'removeComponent') && parseAddress(op.target).child?.length) childComponent(work, reg, op, changes, dirty);
       else if (op.op === 'linkPrefab') linkPrefab(work, reg, op, changes, dirty, itrack);
       else applyOne(work, reg, op, changes, dirty, itrack);
     } catch (err) {
@@ -1193,6 +1207,152 @@ function linkPrefab(docs: Docs, reg: Registry, op: Extract<Op, { op: 'linkPrefab
   changes.push({ path: `${op.target}.prefab`, from, to: op.prefab });
 }
 
+/** 子の並びの形を確かめる（名前・重なり・子にしたプレハブ・部品の値） */
+function checkChildList(docs: Docs, reg: Registry, where: string, list: unknown): PrefabChild[] {
+  if (!Array.isArray(list)) throw new Error(`${where}: children は [{ name, prefab?, components, children? }] の並びです`);
+  const names = new Set<string>();
+  for (const c of list as PrefabChild[]) {
+    if (!c || typeof c !== 'object' || typeof c.name !== 'string' || !CHILD_NAME.test(c.name)) throw new Error(`${where}: 子の名前 "${(c as PrefabChild)?.name}" には英数字・_・- だけが使えます`);
+    if (names.has(c.name)) throw new Error(`${where}: 子の名前 ${c.name} が重なっています`);
+    names.add(c.name);
+    const at = `${where}/${c.name}`;
+    if (c.prefab !== undefined && (typeof c.prefab !== 'string' || !docs.prefabs.has(c.prefab))) throw new Error(`${at}: プレハブ ${c.prefab} はありません${suggest(String(c.prefab), [...docs.prefabs.keys()])}`);
+    c.components ??= {};
+    if (!c.components || typeof c.components !== 'object') throw new Error(`${at}: components は { 部品: { 値 } } の形です`);
+    if (c.prefab) { for (const [k, v] of Object.entries(c.components)) if (!reg.components.has(k)) reg.build(k, v ?? {}, at); }
+    else for (const [k, v] of Object.entries(c.components)) reg.build(k, v ?? {}, at);
+    if (c.children !== undefined) checkChildList(docs, reg, at, c.children);
+  }
+  return list as PrefabChild[];
+}
+
+/** 子の足し引きをする所: @プレハブ/子… を、子を決めているプレハブの中でたどる（派生・別のプレハブの中は断る） */
+function defTarget(docs: Docs, addr: string, op: string): { p: PrefabDoc; path: string[]; node?: PrefabChild; list: PrefabChild[]; holder: { children?: PrefabChild[] } } {
+  let a: Address;
+  try { a = parseAddress(addr); } catch { throw new Error(`${op}: 住所は @プレハブ/子 の形です（受け取った値: ${addr}）`); }
+  if (a.kind === 'scene' && a.child?.length) throw new Error(`${addr}: 置いた物の子では値を変えるだけ（set）。子の足し引き・部品の足し外しはプレハブで（@プレハブ/…）`);
+  if (a.kind !== 'prefab' || a.component) throw new Error(`${op}: 住所は @プレハブ/子 の形です（受け取った値: ${addr}）`);
+  const p = docs.prefabs.get(a.doc);
+  if (!p) throw new Error(`プレハブ ${a.doc} はありません${suggest(a.doc, [...docs.prefabs.keys()])}`);
+  if (p.base) throw new Error(`@${a.doc} は派生なので、子の足し引きはできません（値を変えるだけ）。子は元 @${rootOf(docs.prefabs, a.doc) ?? p.base} で足し引きします`);
+  const path = a.child ?? [];
+  let holder: { children?: PrefabChild[] } = p, node: PrefabChild | undefined;
+  for (const [i, seg] of path.entries()) {
+    const list: PrefabChild[] = holder.children ?? [];
+    node = list.find((c) => c.name === seg);
+    const here = `@${a.doc}/${path.slice(0, i + 1).join('/')}`;
+    if (!node) throw new Error(`${here}: その子はありません${suggest(seg, list.map((c) => c.name))}`);
+    if (node.prefab && i < path.length - 1) throw new Error(`${here} は @${node.prefab} を子にしているので、その中の子は @${node.prefab} で足し引きします（@${node.prefab} を使っている所すべてに出ます）`);
+    if (i < path.length - 1) holder = node;
+  }
+  return { p, path, node, list: holder.children ?? [], holder };
+}
+
+/** 子を足す・消す・名前を変える・並べ替える。派生・置いた物の変えた値（名前で重なる）も付いてこさせる */
+function childOp(docs: Docs, reg: Registry, op: Extract<Op, { op: 'addChild' | 'removeChild' | 'renameChild' | 'moveChild' }>, changes: Change[], dirty: Set<string>): void {
+  const keyOf = (p: PrefabDoc) => `prefab:${p.name}`;
+  if (op.op === 'addChild') {
+    const t = defTarget(docs, op.parent, 'addChild');
+    const host = t.node ?? t.p;
+    if (t.node?.prefab) throw new Error(`${op.parent} は @${t.node.prefab} を子にしているので、その中の子は @${t.node.prefab} で足し引きします（@${t.node.prefab} を使っている所すべてに出ます）`);
+    if (!op.child || typeof op.child !== 'object') throw new Error('addChild の child は { name, prefab?, components?, children? } です');
+    const child = structuredClone(op.child);
+    const where = t.path.length ? `@${t.p.name}/${t.path.join('/')}` : `@${t.p.name}`;
+    checkChildList(docs, reg, where, [child]);
+    const list = (host.children ??= []);
+    if (list.some((c) => c.name === child.name)) throw new Error(`${where}/${child.name} はすでにあります`);
+    const i = op.index ?? list.length;
+    if (!Number.isInteger(i) || i < 0 || i > list.length) throw new Error(`addChild の index は 0〜${list.length} です`);
+    list.splice(i, 0, child);
+    prefabChildren(docs.prefabs, t.p.name); // 輪・ないプレハブ
+    dirty.add(keyOf(t.p));
+    changes.push({ path: `${where}/${child.name}`, to: 'added' });
+    return;
+  }
+  const t = defTarget(docs, op.path, op.op);
+  if (!t.node) throw new Error(`${op.op} の path は @プレハブ/子 です（受け取った値: ${op.path}）`);
+  const parentAt = t.path.slice(0, -1);
+  const name = t.node.name;
+  const idx = t.list.indexOf(t.node);
+  // 同じ子に重なる、派生・置いた物・別のプレハブの中の入れ物
+  const hits = overlayLists(docs.prefabs, docs.scenes).filter((o) => o.owner === t.p.name && o.at.length === parentAt.length && o.at.every((x, i) => x === parentAt[i])).flatMap((o) => {
+    const n = o.holder.children!.find((c) => c.name === name);
+    return n ? [{ o, n }] : [];
+  });
+  if (op.op === 'removeChild') {
+    t.list.splice(idx, 1);
+    if (!t.list.length) delete t.holder.children;
+    dirty.add(keyOf(t.p));
+    changes.push({ path: op.path, from: t.node, to: 'removed' });
+    for (const { o, n } of hits) {
+      o.holder.children = o.holder.children!.filter((c) => c !== n);
+      if (!o.holder.children.length) delete o.holder.children;
+      dirty.add(o.key);
+      // 消えた値（人の調整かもしれないので、結果に並べる）
+      for (const [path, from] of overrideValues(n, `${o.where}/${name}`)) changes.push({ path, from, to: 'removed', auto: true });
+      if (!overrideValues(n, '').length) changes.push({ path: `${o.where}/${name}`, to: 'removed', auto: true });
+    }
+    return;
+  }
+  if (op.op === 'renameChild') {
+    if (typeof op.to !== 'string' || !CHILD_NAME.test(op.to)) throw new Error(`子の名前 "${op.to}" には英数字・_・- だけが使えます`);
+    if (op.to === name) return;
+    if (t.list.some((c) => c.name === op.to)) throw new Error(`${op.path.replace(/[^/]+$/, op.to)} はすでにあります`);
+    t.node.name = op.to;
+    dirty.add(keyOf(t.p));
+    changes.push({ path: op.path, from: name, to: `renamed:${op.path.replace(/[^/]+$/, op.to)}` });
+    for (const { o, n } of hits) {
+      n.name = op.to;
+      dirty.add(o.key);
+      changes.push({ path: `${o.where}/${name}`, from: name, to: `renamed:${o.where}/${op.to}`, auto: true });
+    }
+    return;
+  }
+  // moveChild
+  const to = op.to;
+  if (!Number.isInteger(to) || to < 0 || to >= t.list.length) throw new Error(`moveChild の to は 0〜${t.list.length - 1} です`);
+  if (to === idx) return;
+  t.list.splice(idx, 1);
+  t.list.splice(to, 0, t.node);
+  dirty.add(keyOf(t.p));
+  changes.push({ path: op.path, from: idx, to });
+}
+
+/** プレハブの子に部品を付ける・外す（子を決めているプレハブで。派生・置いた物の子は値を変えるだけ） */
+function childComponent(docs: Docs, reg: Registry, op: Extract<Op, { op: 'addComponent' | 'removeComponent' }>, changes: Change[], dirty: Set<string>): void {
+  const t = defTarget(docs, op.target, op.op);
+  const node = t.node!;
+  node.components ??= {};
+  // 子にしたプレハブから受け継いでいる部品
+  const inherited = node.prefab ? Object.keys(resolvePrefab(docs.prefabs, node.prefab).components).filter((c) => !node.remove?.includes(c)) : [];
+  const has = (c: string) => !!node.components[c] || inherited.includes(c);
+  if (op.op === 'addComponent') {
+    if (has(op.component)) throw new Error(`${op.target} にはすでに ${op.component} が付いています`);
+    reg.build(op.component, op.values ?? {}, op.target);
+    if (node.remove?.includes(op.component)) { node.remove = node.remove.filter((c) => c !== op.component); if (!node.remove.length) delete node.remove; }
+    node.components[op.component] = structuredClone(op.values ?? {});
+    changes.push({ path: `${op.target}.${op.component}`, to: 'added' });
+  } else {
+    if (!has(op.component)) throw new Error(`${op.target} に ${op.component} は付いていません${suggest(op.component, [...new Set([...Object.keys(node.components), ...inherited])])}`);
+    const from = node.components[op.component];
+    delete node.components[op.component];
+    if (inherited.includes(op.component)) node.remove = [...(node.remove ?? []), op.component];
+    changes.push({ path: `${op.target}.${op.component}`, ...(from ? { from } : {}), to: 'removed' });
+    // 派生・置いた物がその部品に書いた値も消す（残すと、部品がまた付いてしまう）
+    const parentAt = t.path.slice(0, -1);
+    for (const o of overlayLists(docs.prefabs, docs.scenes)) {
+      if (o.owner !== t.p.name || o.at.length !== parentAt.length || !o.at.every((x, i) => x === parentAt[i])) continue;
+      const n = o.holder.children!.find((c) => c.name === node.name);
+      const v = n?.components?.[op.component];
+      if (!n || !v) continue;
+      delete n.components[op.component];
+      dirty.add(o.key);
+      for (const [f, x] of Object.entries(v)) changes.push({ path: `${o.where}/${node.name}.${op.component}.${f}`, from: x, to: 'removed', auto: true });
+    }
+  }
+  dirty.add(`prefab:${t.p.name}`);
+}
+
 /** プレハブを作る・消す・名前を変える・説明と派生の元、書いた値を戻す */
 function prefabOp(docs: Docs, reg: Registry, op: Extract<Op, { op: 'addPrefab' | 'removePrefab' | 'renamePrefab' | 'setPrefab' | 'revert' }>, changes: Change[], dirty: Set<string>, track: VariantTrack, itrack?: InstanceTrack): void {
   const need = (name: string) => {
@@ -1208,23 +1368,7 @@ function prefabOp(docs: Docs, reg: Registry, op: Extract<Op, { op: 'addPrefab' |
     if (!comps || typeof comps !== 'object') throw new Error(`${where}: components は { 部品: { 値 } } の形です`);
     for (const [c, v] of Object.entries(comps)) reg.build(c, v ?? {}, where);
   };
-  /** 子の並びの形を確かめる（名前・重なり・子にしたプレハブ・部品の値） */
-  const checkChildren = (where: string, list: unknown): PrefabChild[] => {
-    if (!Array.isArray(list)) throw new Error(`${where}: children は [{ name, prefab?, components, children? }] の並びです`);
-    const names = new Set<string>();
-    for (const c of list as PrefabChild[]) {
-      if (!c || typeof c !== 'object' || typeof c.name !== 'string' || !CHILD_NAME.test(c.name)) throw new Error(`${where}: 子の名前 "${(c as PrefabChild)?.name}" には英数字・_・- だけが使えます`);
-      if (names.has(c.name)) throw new Error(`${where}: 子の名前 ${c.name} が重なっています`);
-      names.add(c.name);
-      const at = `${where}/${c.name}`;
-      if (c.prefab !== undefined) need(c.prefab);
-      c.components ??= {};
-      if (c.prefab) for (const [k, v] of Object.entries(c.components)) { if (!reg.components.has(k)) reg.build(k, v ?? {}, at); }
-      else checkComps(at, c.components);
-      if (c.children !== undefined) checkChildren(at, c.children);
-    }
-    return list as PrefabChild[];
-  };
+  const checkChildren = (where: string, list: unknown) => checkChildList(docs, reg, where, list);
   // 子にしているプレハブ（@親/子）
   const asChild = (name: string) => [...docs.prefabs.values()].flatMap((p) => childPrefabRefs(p).filter((r) => r.node.prefab === name).map((r) => ({ p, ...r })));
   const derived = (name: string) => [...docs.prefabs.values()].filter((p) => p.base === name).map((p) => p.name);

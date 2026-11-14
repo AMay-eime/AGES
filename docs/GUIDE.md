@@ -23,10 +23,11 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
 - 置いてある物をプレハブにつなぐ・切り離すのは `linkPrefab`（`{"op":"linkPrefab","target":"main#boss","prefab":"enemy"}`・`prefab: null`。どちらも値は変わらない）。地図の `#boss ←@enemy` がインスタンス、`変:` がプレハブから変えた所
 - 数値だけが違う行がたくさん並ぶなら、派生より表（table）が向く
 - **子を持つプレハブ**（Unity の子を持つプレハブ）: 自機に武器・銃口の光のように、いつも一緒に出る物の組は子にする（組み立て用のシーンを作って ID で探さない）。`{"op":"addPrefab","name":"ship","components":{…},"children":[{"name":"gun_l","prefab":"gun","components":{"Transform":{"x":-12}}},{"name":"core","components":{"Transform":{"y":2},"Shape":{…}}}]}`
-  - `prefab` を書いた子は、そのプレハブを子にして `components` は変えた値だけ（`children` もその子の値を変えるだけ）。書かなければ `components` が子の中身そのもの。子の子（孫）も書ける
+  - `prefab` を書いた子は、そのプレハブを子にして `components` は変えた値だけ（`children` もその子の値を変えるだけ）。書かなければ `components` が子の中身そのもの。子の子も書け、深さに上限はない
   - `ctx.spawn('ship')` で親・子・孫がまとめて出る。子の ID は `親のID/名前`、位置（Transform）は親から見た値で、親が消えると子も消える。コードからは `ctx.child(親, 'gun_l')`（孫は `'gun_r/muzzle'`）
   - 子の値は `@ship/gun_l.Transform.x`・`@ship/gun_r/muzzle.Shape.color` で読み書きする（get・set・ロック・`--watch` も同じ住所）。子にしたプレハブを直すと、変えていない子の値も変わる
-  - 派生（base）は子の値を変えるだけ。子の足し引き・子の部品の足し外しは、addPrefab の children で作り直す（今はできない）
+  - 今あるプレハブの子は `addChild`（`{"op":"addChild","parent":"@bg","child":{"name":"mist","components":{…}},"index":1}`。`parent` を `@bg/mist` にすると孫）・`removeChild`・`renameChild`・`moveChild`（並び＝同じ層なら描く順）で足し引きし、子の部品は `addComponent`・`removeComponent`（target `@bg/mist`）。作り直さない。派生・置いた物がその子に書いた値は名前で付いてくる（消すと値も消え、結果に並ぶ）
+  - 足し引きは子を決めているプレハブでだけ。派生・置いた物は子の値を変えるだけ。別のプレハブを子にした所（`@ship/gun_l`）の中は、そのプレハブ（`@gun`）で足し引きする（使っている所すべてに出る）
   - シーンに置いたインスタンスの子は、置いた物ごとに値を変えられる: `main#boss/gun_l.Transform.x`（値はシーンのその物の `children` に、変えた値だけ入る。プレハブを直すと、変えていない値は伝わる）。置いた物ごとの子の足し引き・切り離し（linkPrefab null）はできない
   - 人はエディタでプレハブを開いて（ダブルクリックか「開く」）、親と子がそろった絵で子を選び、インスペクタとドラッグで直せる
 - **まつわる値**（`params`）: エディタでプレハブを選ぶと、そのプレハブにまつわる表の値が並び、その場で直せる（値は表のまま。ロックも同じ）。並べる値は AI が決める: `{"op":"setPrefab","name":"enemy_fast","params":["$enemies.fast","$waves.w3.interval"]}`（`$表.行` は行の列すべて、`$表.行.列` はその値）。書いていなければ、そのプレハブを指す表の行（`prefab` の列）が出る。プレハブを作ったら、人がよく触る表の値を並べておき、使用者に「足りない・要らない」と言われたら足し引きする

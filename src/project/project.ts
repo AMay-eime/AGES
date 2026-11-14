@@ -697,6 +697,8 @@ export class Project {
         : op.op === 'removeRow' || op.op === 'renameRow' ? `$${op.table}.${op.id}`
         : op.op === 'dockUI' || op.op === 'attachUI' ? `${op.target}.UI`
         : op.op === 'removePrefab' ? `@${op.name}`
+        : op.op === 'removeChild' || op.op === 'renameChild' || op.op === 'moveChild' ? op.path
+        : op.op === 'addChild' ? `${op.parent}/${op.child?.name}`
         : op.op === 'revert' ? op.path
         : null;
     // シーン・プレハブを消す・名前を変えると、その中のロック・★の住所も変わる
@@ -710,7 +712,7 @@ export class Project {
     };
     const keeper = isKeeper(actor);
     // 人がエディタで行っても、ロックの住所が付いて動くだけで値の意味は変わらない操作（名前の変更・場所の変更）
-    const STRUCTURAL = new Set(['renameRow', 'renameScene', 'renamePrefab', 'moveAsset']);
+    const STRUCTURAL = new Set(['renameRow', 'renameScene', 'renamePrefab', 'renameChild', 'moveAsset']);
     // 人がエディタで入力中の欄（と、それを含む物・部品）は AI が変えない（作業のぶつかり防止。人が打つのをやめて少したてば変えられる）
     if (actor.kind === 'ai') {
       const editing = editingNow(await readFocus(this.dir));
@@ -906,7 +908,7 @@ export class Project {
         if (c.path.startsWith('file:') || c.path.startsWith('scene:') || c.path.startsWith('config.')) continue;
         const renamed = typeof c.to === 'string' && c.to.startsWith('renamed:') ? c.path.replace(/[^.]+$/, c.to.slice('renamed:'.length)) : null;
         for (const p of Object.keys(locks)) {
-          if (renamed && (p === c.path || p.startsWith(c.path + '.'))) {
+          if (renamed && (p === c.path || isInside(p, c.path))) {
             locks[renamed + p.slice(c.path.length)] = locks[p];
             delete locks[p];
             changed = true;
@@ -953,6 +955,12 @@ export class Project {
     }
     if (result.files.length) await moveTouched(this.dir, result.files);
     for (const op of ops) { const pre = docPrefix(op); if (pre) await movePrefixTouched(this.dir, pre, docPrefix(op, true)); }
+    // 子の名前を変えたら、その子（と派生・置いた物の同じ子）の★も付け替える
+    for (const c of result.changes) {
+      if (typeof c.to !== 'string' || !c.to.startsWith('renamed:') || !c.path.includes('/')) continue;
+      const to = c.to.slice('renamed:'.length);
+      for (const sep of ['.', '/']) await movePrefixTouched(this.dir, c.path + sep, to + sep);
+    }
     if (warnings.length) result.warnings = warnings;
     return result;
   }
@@ -1307,8 +1315,12 @@ export function formatTable(t: TableDoc): string {
 
 /** 2つの住所の片方がもう片方の中にあるか（a が b の中） */
 export function isInside(a: string, b: string): boolean {
-  return a.startsWith(b + '.') || a.startsWith(b + '[');
+  // プレハブ・シーンの物の子（@親/子・シーン#物/子）も中
+  return a.startsWith(b + '.') || a.startsWith(b + '[') || (childy(b) && a.startsWith(b + '/'));
 }
+
+/** 子の住所を持てるもの（プレハブ・シーンの物。ファイルの場所の / とは分ける） */
+const childy = (b: string) => b.startsWith('@') || (b.includes('#') && !b.startsWith('sheet:') && !b.startsWith('file:') && !b.startsWith('$'));
 
 /** 同じ値か、片方がもう片方の中（ロック・★の当たり判定に使う） */
 export function related(a: string, b: string): boolean {
@@ -1412,6 +1424,7 @@ function inverseOp(op: Op): Op {
   if (op.op === 'renameRow') return { op: 'renameRow', table: op.table, id: op.to, to: op.id };
   if (op.op === 'renameScene') return { op: 'renameScene', name: op.to, to: op.name };
   if (op.op === 'renamePrefab') return { op: 'renamePrefab', name: op.to, to: op.name };
+  if (op.op === 'renameChild') return { op: 'renameChild', path: op.path.replace(/[^/]+$/, op.to), to: op.path.slice(op.path.lastIndexOf('/') + 1) };
   if (op.op === 'moveAsset') return { op: 'moveAsset', from: op.to, to: op.from };
   throw new Error(`${op.op} の逆の操作はありません`);
 }

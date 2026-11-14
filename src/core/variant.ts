@@ -256,3 +256,69 @@ export function entityHolders(scene: string, e: { id: string; components: Record
   walk(e.children, `${scene}#${e.id}`);
   return out;
 }
+
+// ---- 子の足し引き（子を決めているプレハブで行い、派生・置いた物の変えた値を付いてこさせる） ----
+
+/** 子を決めているプレハブ（派生なら元をたどった一番元）。元がない・輪なら undefined */
+export function rootOf(prefabs: Map<string, PrefabDoc>, name: string): string | undefined {
+  try { const c = baseChain(prefabs, name); return c[c.length - 1].name; } catch { return undefined; }
+}
+
+/** プレハブが決めている子の並び（at の子の、さらに子）。途中で別のプレハブを子にしていれば undefined */
+function defsAt(prefabs: Map<string, PrefabDoc>, owner: string, at: string[]): PrefabChild[] | undefined {
+  let list = prefabs.get(owner)?.children;
+  for (const seg of at) {
+    const n = list?.find((c) => c.name === seg);
+    if (!n || n.prefab) return undefined;
+    list = n.children;
+  }
+  return list ?? [];
+}
+
+/** 子の値を変えている入れ物の並び。owner の at（子の住所）の下の子に、名前で重なる */
+export interface Overlay {
+  owner: string;
+  at: string[];
+  /** 入れ物を持っている所（children を書き換える） */
+  holder: { children?: PrefabChild[] };
+  /** 住所の頭（@派生 / シーン#ID / @親/子） */
+  where: string;
+  /** 変わる文書（prefab:名前 / scene:名前） */
+  key: string;
+}
+
+/** 子の値を変えている入れ物を、すべて（派生・置いた物・別のプレハブを子にした所。入れ物の中の入れ物も） */
+export function overlayLists(prefabs: Map<string, PrefabDoc>, scenes: Map<string, SceneDoc>): Overlay[] {
+  const out: Overlay[] = [];
+  const over = (holder: { children?: PrefabChild[] }, owner: string, at: string[], where: string, key: string) => {
+    if (!holder.children?.length) return;
+    out.push({ owner, at, holder, where, key });
+    const defs = defsAt(prefabs, owner, at);
+    for (const n of holder.children) {
+      const d = defs?.find((x) => x.name === n.name);
+      if (!d) continue;
+      if (d.prefab) { const r = rootOf(prefabs, d.prefab); if (r) over(n, r, [], `${where}/${n.name}`, key); }
+      else over(n, owner, [...at, n.name], `${where}/${n.name}`, key);
+    }
+  };
+  const defs = (list: PrefabChild[] | undefined, where: string, key: string) => {
+    for (const d of list ?? []) {
+      if (d.prefab) { const r = rootOf(prefabs, d.prefab); if (r) over(d, r, [], `${where}/${d.name}`, key); }
+      else defs(d.children, `${where}/${d.name}`, key);
+    }
+  };
+  for (const p of prefabs.values()) {
+    if (p.base) { const r = rootOf(prefabs, p.name); if (r) over(p, r, [], `@${p.name}`, `prefab:${p.name}`); }
+    else defs(p.children, `@${p.name}`, `prefab:${p.name}`);
+  }
+  for (const sc of scenes.values()) for (const e of sc.entities) if (e.prefab) { const r = rootOf(prefabs, e.prefab); if (r) over(e, r, [], `${sc.name}#${e.id}`, `scene:${sc.name}`); }
+  return out;
+}
+
+/** 入れ物の中の、値を書いた所すべて（住所.部品.欄 と値） */
+export function overrideValues(node: PrefabChild, at: string): [string, unknown][] {
+  const out: [string, unknown][] = [];
+  for (const [c, v] of Object.entries(node.components ?? {})) for (const [f, x] of Object.entries(v)) out.push([`${at}.${c}.${f}`, x]);
+  for (const k of node.children ?? []) out.push(...overrideValues(k, `${at}/${k.name}`));
+  return out;
+}
