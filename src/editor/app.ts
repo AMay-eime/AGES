@@ -16,7 +16,7 @@ import { shaderMap, type ShaderDef } from '../core/shader.ts';
 import { LocalStore } from '../core/save.ts';
 import { languagesOf } from '../core/i18n.ts';
 import type { Origins } from '../core/origin.ts';
-import { expandChildren, prefabChildren, resolveEntity, resolvePrefab } from '../core/variant.ts';
+import { expandChildren, instanceChildren, prefabChildren, resolveEntity, resolvePrefab } from '../core/variant.ts';
 import { T, lang } from './i18n.ts';
 import { AiModel } from './ai.ts';
 import { loadPackages } from '../packages/index.ts';
@@ -234,7 +234,19 @@ export class App {
     let v = m.get(name);
     if (!v) {
       const prefabs = new Map(Object.entries(this.state.prefabs));
-      v = { ...s, entities: s.entities.map((e) => { try { return resolveEntity(prefabs, e); } catch { return e; } }) };
+      // 子を持つプレハブのインスタンスは、子（置いた物ごとの値と重ねたもの）も並べる。ID は 置いた物/子（住所は シーン#置いた物/子）
+      const entities: SceneDoc['entities'] = [];
+      for (const e of s.entities) {
+        let r = e;
+        try { r = resolveEntity(prefabs, e); } catch { /* ないプレハブ: そのまま */ }
+        entities.push(r);
+        if (!e.prefab) continue;
+        try {
+          const is3d = !!r.components.Transform3D && !r.components.Transform;
+          for (const { prefab, ...k } of expandChildren(instanceChildren(prefabs, e), e.id, is3d)) entities.push({ ...k, name: prefab ? `${k.name} ←@${prefab}` : k.name });
+        } catch { /* 子の形の誤り: 検証で知らせる */ }
+      }
+      v = { ...s, entities };
       m.set(name, v);
     }
     return v;
@@ -252,6 +264,11 @@ export class App {
   }
 
   async patch(ops: Op[], win = 'inspector'): Promise<Change[] | null> {
+    // 置いた物の子の親子のつながりは、プレハブの形で決まる（変えると子がばらばらになる）
+    if (ops.some((o) => /#[^.]*\/[^.]*\.Transform3?D?\.parent$/.test((o as { path?: string }).path ?? ''))) {
+      toast(T('プレハブの中の親子は、プレハブの形で決まります（parent は変えられません）'), 'bad', 5000);
+      return null;
+    }
     // プレハブの編集画面の仮のシーンへの操作（物を足す・消す・見るためのカメラ）は、サーバーに送らない
     if (this.prefabStage) {
       const stage = `@${this.prefabStage}`;

@@ -87,6 +87,18 @@ export const tables: GameModule['tables'] = [kinds];
     assert.equal(await ev(`ages.patch([{ op: 'addEntity', scene: '@ship', entity: { id: 'x', components: {} } }])`), null);
     // 閉じるとシーンに戻る
     await ev(`ages.closePrefab()`);
+    // シーンに置いたインスタンスの子: 階層に出て、インスペクタで直すと置いた物ごとの値に入る
+    assert.ok(await ev(`ages.patch([{ op: 'addEntity', scene: 'main', entity: { id: 'boss', name: 'boss', prefab: 'ship', components: {} } }]).then((r) => !!r)`));
+    await waitFor('置いた物の子', 10_000, async () => ((await ev(`(ages.sceneView('main')?.entities ?? []).some((e) => e.id === 'boss/gun_l/muzzle')`)) ? true : undefined));
+    await ev(`ages.select({ kind: 'scene', scene: 'main', id: 'boss/gun_l' })`);
+    await waitFor('置いた物の子のインスペクタ', 10_000, async () => ((await ev(`!!document.querySelector('[data-path="main#boss/gun_l.Transform.x"] input')`)) ? true : undefined));
+    await ev(`(() => { const i = document.querySelector('[data-path="main#boss/gun_l.Transform.x"] input'); i.value = '-40'; i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+    await waitFor('置いた物ごとの値', 10_000, async () => {
+      const sc = JSON.parse(await readFile(join(dir, 'scenes', 'main.scene.json'), 'utf8'));
+      return sc.entities.find((e: { id: string }) => e.id === 'boss')?.children?.[0]?.components?.Transform?.x === -40 ? true : undefined;
+    });
+    assert.equal(await ev(`ages.patch([{ op: 'set', path: 'main#boss/gun_l.Transform.parent', value: null }])`), null);
+
     assert.deepEqual(await ev(`[ages.scene, ages.prefabStage, Object.keys(ages.state.scenes).includes('@ship')]`), ['main', null, false]);
     await cdp.send('Browser.close').catch(() => {});
     cdp.close();

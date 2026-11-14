@@ -91,6 +91,9 @@ export function instanceOverrides(prefabs: Map<string, PrefabDoc>, e: EntityData
   }
   for (const c of e.remove ?? []) out.push('-' + c);
   if (e.tags) out.push('tags');
+  // 置いた物ごとの子の値（/子.部品.欄）
+  const walk = (list: PrefabChild[] | undefined, at: string) => { for (const k of list ?? []) { for (const [c, v] of Object.entries(k.components ?? {})) for (const f of Object.keys(v)) out.push(`${at}/${k.name}.${c}.${f}`); walk(k.children, `${at}/${k.name}`); } };
+  walk(e.children, '');
   return out;
 }
 
@@ -236,4 +239,20 @@ export function flatChildren(prefabs: Map<string, PrefabDoc>, name: string): Pre
   let kids: PrefabChild[] = structuredClone(chain[0].children ?? []);
   for (const d of chain.slice(1)) kids = mergeRaw(kids, d.children);
   return kids;
+}
+
+/** シーンに置いたインスタンスの子（プレハブの子に、置いた物ごとの値を重ねたもの）。プレハブでなければ [] */
+export function instanceChildren(prefabs: Map<string, PrefabDoc>, e: { id: string; prefab?: string; children?: PrefabChild[] }): ResolvedChild[] {
+  if (!e.prefab) return [];
+  return overlayChildren(prefabChildren(prefabs, e.prefab), e.children, e.id);
+}
+
+/** シーンの物と、置いた物ごとの子の値の入れ物の [住所, 部品]（参照を数える・名前を直す所で使う） */
+export function entityHolders(scene: string, e: { id: string; components: Record<string, Record<string, unknown>>; children?: PrefabChild[] }): [string, Record<string, Record<string, unknown>>][] {
+  const out: [string, Record<string, Record<string, unknown>>][] = [[`${scene}#${e.id}`, e.components]];
+  const walk = (list: PrefabChild[] | undefined, at: string) => {
+    for (const c of list ?? []) { const here = `${at}/${c.name}`; out.push([here, (c.components ??= {})]); walk(c.children, here); }
+  };
+  walk(e.children, `${scene}#${e.id}`);
+  return out;
 }

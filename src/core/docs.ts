@@ -8,6 +8,8 @@ export interface EntityData {
    * 使うときにプレハブと重ねる（プレハブを直すと伝わる。core/variant.ts の resolveEntity）
    */
   prefab?: string;
+  /** プレハブの子の値を、置いた物ごとに変える（名前で重ねる。値を変えるだけで、足す・消すはしない） */
+  children?: PrefabChild[];
   tags?: string[];
   /** インスタンスで、プレハブから外した部品 */
   remove?: string[];
@@ -94,7 +96,7 @@ export interface Address {
   field?: string;
   /** フィールドの中の場所（リストの番号・構造体の項目名） */
   sub: (string | number)[];
-  /** プレハブの子（@親/子/孫 の 子・孫） */
+  /** プレハブの子（@親/子/孫・シーン#置いた物/子 の 子・孫） */
   child?: string[];
 }
 
@@ -151,6 +153,14 @@ export function parseAddress(text: string): Address {
     entity = head(s.slice(hash + 1));
     if (!entity) throw new Error(`アドレスにエンティティIDがありません: "${text}"`);
     rest = s.slice(hash + 1 + entity.length);
+    // シーン#置いた物/子.部品.欄（子を持つプレハブのインスタンスの子）
+    if (entity.includes('/')) {
+      const [id, ...child] = entity.split('/');
+      if (!id || child.some((c) => !c)) throw new Error(`アドレスが不正です: "${text}"。子は main#boss/子.部品.欄`);
+      const seg = segments(rest, text);
+      const [component, field, ...sub] = seg as [string?, string?, ...(string | number)[]];
+      return { kind, doc, entity: id, child, component, field, sub };
+    }
   }
   const seg = segments(rest, text);
   if (seg.slice(0, 2).some((x) => typeof x === 'number')) throw new Error(`アドレスが不正です: "${text}"。[番号] はフィールドの後に書きます（例 main#spawner.Spawner.waves[2]）`);
@@ -163,7 +173,7 @@ export function formatSub(sub: (string | number)[]): string {
 }
 
 export function formatAddress(a: Address): string {
-  const head = a.kind === 'prefab' ? `@${a.doc}${a.child?.length ? '/' + a.child.join('/') : ''}` : a.kind === 'table' ? `$${a.doc}` : `${a.doc}#${a.entity}`;
+  const head = a.kind === 'prefab' ? `@${a.doc}${a.child?.length ? '/' + a.child.join('/') : ''}` : a.kind === 'table' ? `$${a.doc}` : `${a.doc}#${a.entity}${a.child?.length ? '/' + a.child.join('/') : ''}`;
   const mid = a.kind === 'table' ? [a.entity, a.field] : [a.component, a.field];
   return [head, ...mid.filter(Boolean)].join('.') + formatSub(a.sub);
 }

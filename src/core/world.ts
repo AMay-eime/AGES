@@ -2,7 +2,8 @@
 import type { Registry } from './registry.ts';
 import type { EntityData } from './docs.ts';
 import { poseOf, relativeTo, type Pose } from './transform.ts';
-import { expandChildren, hasChildren, prefabChildren } from './variant.ts';
+import { expandChildren, hasChildren, instanceChildren, prefabChildren } from './variant.ts';
+import type { PrefabChild } from './docs.ts';
 
 export interface Entity {
   id: string;
@@ -48,9 +49,10 @@ export class World {
   }
 
   /** 子を持つプレハブなら、子（と孫）も出す。ID は 親のID/名前（シーンに置いた物にも使う） */
-  addChildren(e: Entity, prefabName: string): void {
+  addChildren(e: Entity, prefabName: string, over?: PrefabChild[]): void {
     if (!hasChildren(this.registry.prefabs, prefabName)) return;
-    for (const d of expandChildren(prefabChildren(this.registry.prefabs, prefabName), e.id, !!e.c.Transform3D && !e.c.Transform)) this.add(d, d.prefab);
+    const kids = over?.length ? instanceChildren(this.registry.prefabs, { id: e.id, prefab: prefabName, children: over }) : prefabChildren(this.registry.prefabs, prefabName);
+    for (const d of expandChildren(kids, e.id, !!e.c.Transform3D && !e.c.Transform)) this.add(d, d.prefab);
   }
 
   /** 子（ID は 親のID/名前。孫は 'gun_l/muzzle' のように / でつなぐ）。いなければ undefined */

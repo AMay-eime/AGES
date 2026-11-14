@@ -7,7 +7,7 @@ import type { Registry } from './registry.ts';
 import { baseNameOf, checkSheet, findFrame, sheetPathOf, toExplicit, type FrameDef, type FrameRef, type SheetDef } from './sheet.ts';
 import { frameMapper, remapRef } from './slice.ts';
 import { assetRefs, checkAssetPath, extOf, isUnder, kindOf, leafRefs } from './assets.ts';
-import { baseChain, childPrefabRefs, flatChildren, prefabChildren, prefabHolders, resolveEntity, resolvePrefab, childAt, CHILD_NAME } from './variant.ts';
+import { baseChain, childPrefabRefs, entityHolders, hasChildren, flatChildren, instanceChildren, prefabChildren, prefabHolders, resolveEntity, resolvePrefab, childAt, CHILD_NAME } from './variant.ts';
 import { same } from './revert.ts';
 
 export type Op =
@@ -189,6 +189,7 @@ function holderOf(docs: Docs, a: Address): { holder: Holder; key: string } {
   if (!s) throw new Error(`シーン ${a.doc} はありません${suggest(a.doc, [...docs.scenes.keys()])}`);
   const e = s.entities.find((x) => x.id === a.entity);
   if (!e) throw new Error(`シーン ${a.doc} にエンティティ ${a.entity} はありません${suggest(a.entity!, s.entities.map((x) => x.id))}`);
+  if (a.child?.length) throw new Error(`${a.doc}#${a.entity}/${a.child.join('/')}: 置いた物の子では値を変えるだけ（set）。子の足し引き・部品の足し外しはプレハブで（@${e.prefab ?? '?'}）`);
   return { holder: e, key: `scene:${a.doc}` };
 }
 
@@ -261,7 +262,7 @@ function slotOf(docs: Docs, reg: Registry, a: Address, path: string): Slot {
     return { top: rt, topValue, isDefault: !has, sub: a.sub, ...walk(at, rt, topValue, a.sub), at, key: `table:${a.doc}`, parent: row, siblings: def.columns, write: (v) => { row[a.field!] = v; } };
   }
   if (!a.component || !a.field) throw new Error(`フィールドまでのアドレスが必要です（例: main#player.Mover.speed）。受け取った値: ${path}`);
-  if (a.kind === 'prefab' && a.child?.length) return childSlot(docs, reg, a, path);
+  if (a.child?.length) return childSlot(docs, reg, a, path);
   const { holder, key } = holderOf(docs, a);
   const comp = holder.components[a.component];
   if (!comp) throw new Error(`${path}: コンポーネント ${a.component} が付いていません${suggest(a.component, Object.keys(holder.components))}`);
@@ -279,9 +280,26 @@ function slotOf(docs: Docs, reg: Registry, a: Address, path: string): Slot {
  * 子の値（@親/子.部品.欄）。読むのは元・子にしたプレハブと重ねた値、書くのはプレハブのファイルの子（なければ、変えた値の入れ物を作る）
  */
 function childSlot(docs: Docs, reg: Registry, a: Address, path: string): Slot {
-  const where = `@${a.doc}`;
-  if (!docs.prefabs.has(a.doc)) throw new Error(`プレハブ ${a.doc} はありません${suggest(a.doc, [...docs.prefabs.keys()])}`);
-  const resolved = childAt(prefabChildren(docs.prefabs, a.doc), a.child!, where);
+  // 子の値を書く所: プレハブ（@親/子）か、シーンに置いたインスタンス（シーン#置いた物/子。置いた物ごとの値）
+  let top0: { children?: PrefabChild[] }, kids, where: string, key: string;
+  if (a.kind === 'prefab') {
+    where = `@${a.doc}`;
+    if (!docs.prefabs.has(a.doc)) throw new Error(`プレハブ ${a.doc} はありません${suggest(a.doc, [...docs.prefabs.keys()])}`);
+    top0 = docs.prefabs.get(a.doc)!;
+    kids = prefabChildren(docs.prefabs, a.doc);
+    key = `prefab:${a.doc}`;
+  } else {
+    const sc = docs.scenes.get(a.doc);
+    if (!sc) throw new Error(`シーン ${a.doc} はありません${suggest(a.doc, [...docs.scenes.keys()])}`);
+    const e = sc.entities.find((x) => x.id === a.entity);
+    if (!e) throw new Error(`シーン ${a.doc} にエンティティ ${a.entity} はありません${suggest(a.entity!, sc.entities.map((x) => x.id))}`);
+    if (!e.prefab) throw new Error(`${a.doc}#${a.entity} はプレハブのインスタンスではないので、子がありません`);
+    where = `${a.doc}#${a.entity}`;
+    top0 = e;
+    kids = instanceChildren(docs.prefabs, e);
+    key = `scene:${a.doc}`;
+  }
+  const resolved = childAt(kids, a.child!, where);
   // 位置の部品は、書いていなくても出すときに付く（親から見た位置）
   const rc = resolved.components[a.component!] ?? (a.component === 'Transform' || a.component === 'Transform3D' ? {} : undefined);
   if (!rc) throw new Error(`${path}: コンポーネント ${a.component} が付いていません${suggest(a.component!, Object.keys(resolved.components))}`);
@@ -290,7 +308,7 @@ function childSlot(docs: Docs, reg: Registry, a: Address, path: string): Slot {
   if (!top) throw new Error(`${a.component} に ${a.field} はありません${suggest(a.field!, Object.keys(def.fields))}`);
   /** ファイルの中の子（create なら、ない所は変えた値の入れ物を作る） */
   const rawNode = (create: boolean): PrefabChild | undefined => {
-    let list: PrefabChild[] | undefined = docs.prefabs.get(a.doc)!.children, holder: { children?: PrefabChild[] } = docs.prefabs.get(a.doc)!;
+    let list: PrefabChild[] | undefined = top0.children, holder: { children?: PrefabChild[] } = top0;
     let node: PrefabChild | undefined;
     for (const seg of a.child!) {
       node = list?.find((c) => c.name === seg);
@@ -311,7 +329,7 @@ function childSlot(docs: Docs, reg: Registry, a: Address, path: string): Slot {
   const at = `${a.component}.${a.field}`;
   const rt = resolveParams(reg, top, rc, at, a.sub);
   return {
-    top: rt, topValue, isDefault: inherited === undefined && !has, sub: a.sub, ...walk(at, rt, topValue, a.sub), at, key: `prefab:${a.doc}`, parent: rc, siblings: def.fields,
+    top: rt, topValue, isDefault: inherited === undefined && !has, sub: a.sub, ...walk(at, rt, topValue, a.sub), at, key, parent: rc, siblings: def.fields,
     write: (v) => { const n = rawNode(true)!; (n.components[a.component!] ??= {})[a.field!] = v; },
   };
 }
@@ -399,6 +417,7 @@ export function setValue(docs: Docs, reg: Registry, path: string, value: unknown
 /** 住所が派生のプレハブ・プレハブのインスタンスを指すなら、プレハブと重ねたものに差し替えた見え方（読むだけ） */
 function resolvedView(docs: Docs, path: string): Docs {
   const a = parseAddress(path);
+  if (a.child?.length) return docs; // 子は childSlot が重ねて読む
   if (a.kind === 'scene') {
     const sc = docs.scenes.get(a.doc);
     const i = sc?.entities.findIndex((e) => e.id === a.entity) ?? -1;
@@ -813,7 +832,7 @@ function fixLeaves(docs: Docs, reg: Registry, fix: (f: Field, v: unknown) => unk
       }
     }
   };
-  for (const s of docs.scenes.values()) for (const e of s.entities) fixHolder(`${s.name}#${e.id}`, e.components, `scene:${s.name}`);
+  for (const s of docs.scenes.values()) for (const e of s.entities) for (const [at, comps] of entityHolders(s.name, e)) fixHolder(at, comps, `scene:${s.name}`);
   for (const p of docs.prefabs.values()) for (const [at, comps] of prefabHolders(p)) fixHolder(at, comps, `prefab:${p.name}`);
   for (const t of docs.tables.values()) {
     const def = reg.tables.get(t.name);
@@ -1053,7 +1072,7 @@ class InstanceTrack {
     const raw = sc.entities[i];
     let resolved: EntityData;
     try { resolved = resolveEntity(this.docs.prefabs, raw); } catch { return; } // プレハブがない: そのまま（検証で知らせる）
-    const copy: EntityData = { id: raw.id, name: raw.name, prefab: raw.prefab, ...(resolved.tags ? { tags: [...resolved.tags] } : {}), ...(raw.remove ? { remove: [...raw.remove] } : {}), components: structuredClone(resolved.components) };
+    const copy: EntityData = { id: raw.id, name: raw.name, prefab: raw.prefab, ...(resolved.tags ? { tags: [...resolved.tags] } : {}), ...(raw.remove ? { remove: [...raw.remove] } : {}), components: structuredClone(resolved.components), ...(raw.children ? { children: structuredClone(raw.children) } : {}) };
     sc.entities[i] = copy;
     this.items.set(`${scene}#${id}`, { scene, id, before: structuredClone(copy), raw: structuredClone(raw), isNew });
   }
@@ -1115,11 +1134,25 @@ class InstanceTrack {
   }
 }
 
+/** 値のない子の入れ物を除く（孫に値があれば残す） */
+function pruneChildren(list: PrefabChild[] | undefined): PrefabChild[] | undefined {
+  if (!list) return undefined;
+  const out: PrefabChild[] = [];
+  for (const c of list) {
+    const kids = pruneChildren(c.children);
+    const comps = Object.fromEntries(Object.entries(c.components ?? {}).filter(([, v]) => Object.keys(v).length));
+    if (Object.keys(comps).length || kids?.length || c.remove?.length) out.push({ name: c.name, ...(c.prefab ? { prefab: c.prefab } : {}), ...(c.remove?.length ? { remove: c.remove } : {}), components: comps, ...(kids?.length ? { children: kids } : {}) });
+  }
+  return out;
+}
+
 /** プレハブと重ねた写し（after）を、プレハブ（base）との差に戻す（diffBack と同じ決まり） */
 function diffEntity(t: TrackedEntity, after: EntityData, base: PrefabDoc): EntityData {
   const asPrefab = (e: EntityData): PrefabDoc => ({ name: e.id, base: e.prefab, ...(e.tags ? { tags: e.tags } : {}), ...(e.remove ? { remove: e.remove } : {}), components: e.components });
   const d = diffBack({ orig: t.id, before: asPrefab(t.before), raw: asPrefab(t.raw), isNew: t.isNew }, asPrefab(after), base);
-  return { id: after.id, name: after.name, prefab: after.prefab, ...(d.tags ? { tags: d.tags } : {}), ...(d.remove ? { remove: d.remove } : {}), components: d.components };
+  // 置いた物ごとの子の値は、変えた値の形のまま持っている（空の入れ物は残さない）
+  const kids = pruneChildren(after.children);
+  return { id: after.id, name: after.name, prefab: after.prefab, ...(d.tags ? { tags: d.tags } : {}), ...(d.remove ? { remove: d.remove } : {}), components: d.components, ...(kids?.length ? { children: kids } : {}) };
 }
 
 /** シーンの物をプレハブにつなぐ・切り離す。どちらも、今の中身（重ねた値）は変えない */
@@ -1133,6 +1166,8 @@ function linkPrefab(docs: Docs, reg: Registry, op: Extract<Op, { op: 'linkPrefab
   const now = sc.entities[i]; // インスタンスなら、すでにプレハブと重ねた写し
   if ((now.prefab ?? null) === op.prefab) return;
   const from = now.prefab ?? null;
+  // 子を持つプレハブのインスタンスは、切り離す・ほかのプレハブにつなぎ替えると子がなくなる（子はプレハブが出す）ので断る
+  if (from && hasChildren(docs.prefabs, from)) throw new Error(`${op.target} は子を持つプレハブ @${from} のインスタンスなので、切り離せません（子はプレハブから出ている）。置き直すなら、消して別のプレハブを置く`);
   if (op.prefab === null) {
     const e: EntityData = { id: now.id, name: now.name, ...(now.tags ? { tags: [...now.tags] } : {}), components: structuredClone(now.components) };
     sc.entities[i] = e;
@@ -1203,7 +1238,7 @@ function prefabOp(docs: Docs, reg: Registry, op: Extract<Op, { op: 'addPrefab' |
         for (const [k, f] of Object.entries(reg.components.get(c)?.fields ?? {})) if (f.type === 'prefab' && !(k in v) && f.default === name) out.push({ at: `${base}.${c}.${k}`, comp: v, field: k, key });
       }
     };
-    for (const sc of docs.scenes.values()) for (const e of sc.entities) scan(`${sc.name}#${e.id}`, e.components, `scene:${sc.name}`);
+    for (const sc of docs.scenes.values()) for (const e of sc.entities) for (const [at, comps] of entityHolders(sc.name, e)) scan(at, comps, `scene:${sc.name}`);
     for (const p of docs.prefabs.values()) for (const [at, comps] of prefabHolders(p)) scan(at, comps, `prefab:${p.name}`);
     return out;
   };
@@ -1460,7 +1495,7 @@ function remapSprites(docs: Docs, image: string, map: (i: number) => number, aft
     sp.frame = n;
     dirty.add(dirtyKey);
   };
-  for (const s of docs.scenes.values()) for (const e of s.entities) fix(`${s.name}#${e.id}`, e.components, `scene:${s.name}`);
+  for (const s of docs.scenes.values()) for (const e of s.entities) for (const [at, comps] of entityHolders(s.name, e)) fix(at, comps, `scene:${s.name}`);
   for (const p of docs.prefabs.values()) for (const [at, comps] of prefabHolders(p)) fix(at, comps, `prefab:${p.name}`);
 }
 
@@ -1482,7 +1517,7 @@ function renameRefs(docs: Docs, image: string, from: string, to: string, changes
       dirty.add(dirtyKey);
     }
   };
-  for (const s of docs.scenes.values()) for (const e of s.entities) fix(`${s.name}#${e.id}`, e.components, `scene:${s.name}`);
+  for (const s of docs.scenes.values()) for (const e of s.entities) for (const [at, comps] of entityHolders(s.name, e)) fix(at, comps, `scene:${s.name}`);
   for (const p of docs.prefabs.values()) for (const [at, comps] of prefabHolders(p)) fix(at, comps, `prefab:${p.name}`);
 }
 
