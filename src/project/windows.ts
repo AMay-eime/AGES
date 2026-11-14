@@ -180,6 +180,8 @@ export function windowTargets(op: Op, targetOf: (op: Op) => string | null): stri
   switch (op.op) {
     case 'addPrefab': case 'setPrefab': return [`@${op.name}`];
     case 'renamePrefab': return [`@${op.name}`, `@${op.to}`];
+    case 'addChild': return [`${op.parent}/${op.child?.name}`];
+    case 'renameChild': return [op.path, op.path.replace(/[^/]+$/, op.to)];
     case 'renameRow': return [`$${op.table}.${op.id}`, `$${op.table}.${op.to}`];
     case 'addComponent': return [`${op.target}.${op.component}`];
     case 'addEntity': return [`${op.scene}#${op.entity.id}`];

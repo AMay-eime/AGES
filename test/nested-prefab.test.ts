@@ -69,7 +69,7 @@ test('子の住所: 読むのは重ねた値、書くのはファイルの子（
   assert.equal((await cmdGet(dir, ['@ship/gun_l/muzzle.Shape.w'])).trim(), '@ship/gun_l/muzzle.Shape.w = 9');
   await assert.rejects(cmdPatch(dir, [{ op: 'set', path: '@ship/gun_x.Transform.x', value: 1 }], false), /@ship\/gun_x: その子はありません.*gun_l/);
   await assert.rejects(cmdPatch(dir, [{ op: 'set', path: '@ship/core.Sprite.alpha', value: 1 }], false), /コンポーネント Sprite が付いていません/);
-  await assert.rejects(cmdPatch(dir, [{ op: 'addComponent', target: '@ship/core', component: 'Sprite' } as any], false), /子では値を変えるだけ/);
+  await assert.rejects(cmdPatch(dir, [{ op: 'addComponent', target: '@ship/gun_l/muzzle', component: 'Sprite' } as any], false), /@ship\/gun_l は @gun を子にしているので、その中の子は @gun で/);
 });
 
 test('派生は子の値を変えるだけ。名前の変更は子にした所も直る。子にしているプレハブは消せない。輪・ない子は断る', async () => {

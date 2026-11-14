@@ -98,10 +98,11 @@ export async function markTouched(root: string, actor: Actor, changes: Change[])
     if (typeof raw.to === 'string' && raw.to.startsWith('renamed:')) {
       // 行の ID を変えた: 印も付け替え、行に印を付ける
       const to = raw.path.replace(/[^.]+$/, raw.to.slice('renamed:'.length));
-      for (const k of Object.keys(touched)) if (k === raw.path || k.startsWith(raw.path + '.')) { touched[to + k.slice(raw.path.length)] = touched[k]; delete touched[k]; }
-      touched[to] = { who: actor.who, t };
+      for (const k of Object.keys(touched)) if (k === raw.path || k.startsWith(raw.path + '.') || k.startsWith(raw.path + '/')) { touched[to + k.slice(raw.path.length)] = touched[k]; delete touched[k]; }
+      // 子の名前の変更（@親/子）は値の調整ではないので、印は付け替えるだけ
+      if (!raw.path.includes('/')) touched[to] = { who: actor.who, t };
     } else if (c.to === 'removed') {
-      for (const k of Object.keys(touched)) if (k === c.path || k.startsWith(c.path + '.')) delete touched[k];
+      for (const k of Object.keys(touched)) if (k === c.path || k.startsWith(c.path + '.') || (/^@|#/.test(c.path) && k.startsWith(c.path + '/'))) delete touched[k];
     } else {
       touched[c.path] = { who: actor.who, t };
     }
@@ -273,6 +274,8 @@ export async function writeLocks(root: string, actor: Actor, locks: Record<strin
 /** パスがロック対象か（ロックされたパスそのもの、またはその親を消す操作） */
 /** target を変えると影響するロック（同じ値・target の中のロック・target を含むロック） */
 export function lockedHits(locks: Record<string, LockMark>, target: string): string[] {
-  const inside = (a: string, b: string) => a.startsWith(b + '.') || a.startsWith(b + '[');
+  // プレハブ・シーンの物の子（@親/子）も中（ファイルの場所の / とは分ける）
+  const childy = (b: string) => b.startsWith('@') || (b.includes('#') && !b.startsWith('sheet:') && !b.startsWith('file:') && !b.startsWith('$'));
+  const inside = (a: string, b: string) => a.startsWith(b + '.') || a.startsWith(b + '[') || (childy(b) && a.startsWith(b + '/'));
   return Object.keys(locks).filter((p) => p === target || inside(p, target) || inside(target, p));
 }
