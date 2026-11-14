@@ -5,7 +5,7 @@ import { asExtension, fieldKey, matchField, matchRank, type ComponentDrawer, typ
 import type { Change, Op } from '../core/patch.ts';
 import { defaultOf, defaultsOf, type Field } from '../core/schema.ts';
 import { parseAddress, type PrefabDoc } from '../core/docs.ts';
-import { resolvePrefab } from '../core/variant.ts';
+import { childAt, instanceChildren, prefabChildren, resolvePrefab } from '../core/variant.ts';
 import { h, modal, toast } from './ui/dom.ts';
 import { BUILTIN_EXTENSIONS } from './builtin/index.ts';
 import { createStage } from './stage.ts';
@@ -47,8 +47,18 @@ export function makeApi(app: App, win: string): EditorApi {
         return v;
       }
       let holder: { components: Record<string, Record<string, unknown>> } | undefined;
-      if (a.kind === 'prefab') {
-        try { holder = resolvePrefab(new Map(Object.entries(app.state.prefabs)), a.doc); } catch { holder = undefined; }
+      const prefabs = new Map(Object.entries(app.state.prefabs));
+      if (a.child?.length) {
+        // 子（@プレハブ/子・シーン#置いた物/子）: 元・子にしたプレハブ・置いた物ごとの値を重ねた子
+        try {
+          const raw = a.kind === 'scene' ? app.state.scenes[a.doc]?.entities.find((e) => e.id === a.entity) : undefined;
+          const kids = a.kind === 'prefab' ? prefabChildren(prefabs, a.doc) : raw ? instanceChildren(prefabs, raw) : [];
+          holder = childAt(kids, a.child, a.kind === 'prefab' ? `@${a.doc}` : `${a.doc}#${a.entity}`);
+          // 位置の部品は、書いていなくても出すときに付く（親から見た位置）
+          if (a.component && !holder.components[a.component] && (a.component === 'Transform' || a.component === 'Transform3D')) holder = { components: { ...holder.components, [a.component]: {} } };
+        } catch { return undefined; } // ない子
+      } else if (a.kind === 'prefab') {
+        try { holder = resolvePrefab(prefabs, a.doc); } catch { holder = undefined; }
       } else holder = app.sceneView(a.doc)?.entities.find((e) => e.id === a.entity);
       const comp = a.component ? holder?.components[a.component] : undefined;
       // 部品まるごとは、書いていないフィールドを既定値で埋めて返す
