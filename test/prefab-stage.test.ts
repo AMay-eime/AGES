@@ -37,6 +37,8 @@ export const tables: GameModule['tables'] = [kinds];
   await cmdPatch(dir, [
     { op: 'addPrefab', ...SHIP.gun }, { op: 'addPrefab', ...SHIP.ship },
     { op: 'addRow', table: 'kinds', row: { id: 'fast', body: 'ship', speed: 5 } },
+    // アセットの画面のまとめ（issue #141）: 名前の頭 se_ が5つ・タグ sound
+    ...[1, 2, 3, 4, 5].map((i) => ({ op: 'addPrefab', name: `se_${i}`, tags: ['sound'], components: {} })),
   ] as any, false);
   const port = await freePort(), lock = await freePort();
   const ed = spawn(process.execPath, [new URL('../src/editor/server.ts', import.meta.url).pathname, dir, '--port', String(port), '--lock-port', String(lock), '--no-open'], { stdio: ['ignore', 'ignore', 'pipe'] });
@@ -62,6 +64,20 @@ export const tables: GameModule['tables'] = [kinds];
     };
     await waitFor('editor page', 20_000, async () => ((await ev(`!!(window.ages?.registry && window.ages.state?.prefabs?.ship)`)) ? true : undefined));
     // 開く: 階層に親と子、ゲームの画面の世界にも子が出る
+    // プレハブと表は階層ではなくアセットの画面に並ぶ（タグごと・名前の頭が5つそろえばまとめる）。ダブルクリックで開く
+    assert.equal(await ev(`!!document.querySelector('.list .item[data-ai="@gun"]')`), false, '階層にプレハブを並べない');
+    const tiles = () => ev(`[...document.querySelectorAll('.asset-grid .tile .tile-name')].map((x) => x.textContent)`);
+    await ev(`[...document.querySelectorAll('.asset-tree .tree-item')].find((x) => x.textContent.includes('🧩')).click()`);
+    assert.deepEqual(await tiles(), ['@gun', 'se_…', '@ship']);
+    assert.ok((await ev(`[...document.querySelectorAll('.asset-tree .tree-item')].map((x) => x.textContent)`)).some((t: string) => t.includes('🏷 sound')));
+    await ev(`[...document.querySelectorAll('.asset-grid .tile')].find((x) => x.textContent.includes('se_…')).click()`);
+    assert.deepEqual(await tiles(), ['@se_1', '@se_2', '@se_3', '@se_4', '@se_5']);
+    await ev(`[...document.querySelectorAll('.asset-tree .tree-item')].find((x) => x.textContent.includes('📋')).click()`);
+    assert.ok((await tiles()).includes('$kinds'), '表も並ぶ');
+    await ev(`[...document.querySelectorAll('.asset-tree .tree-item')].find((x) => x.textContent.includes('🧩')).click()`);
+    await ev(`document.querySelector('.tile[data-ai="@gun"]').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
+    assert.equal(await ev(`ages.prefabStage`), 'gun');
+    await ev(`ages.closePrefab()`);
     await ev(`ages.openPrefab('ship')`);
     await waitFor('階層', 10_000, async () => ((await ev(`document.body.innerText.includes('gun_l ←@gun')`)) ? true : undefined));
     const opened = await ev(`({ scene: ages.scene, ids: ages.state.scenes['@ship'].entities.map((e) => e.id), world: [...ages.world.entities.keys()], tree: document.body.innerText.includes('gun_l ←@gun') })`);

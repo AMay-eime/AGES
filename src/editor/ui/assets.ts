@@ -1,4 +1,4 @@
-// アセットの画面。画像・音・フォントをフォルダごとに見て、取り込み・名前の変更・移動・削除をする。
+// アセットの画面。画像・音・フォントをフォルダごとに見て、取り込み・名前の変更・移動・削除をする。プレハブ（タグ・名前の頭で分ける）と表もここに並べる。
 // 場所を変えると、使っている値（シーン・プレハブ・表）と画像の切り方も一緒に直る（moveAsset）。使われているものは消せない。
 import type { App } from '../app.ts';
 import type { Panel } from './layout.ts';
@@ -7,6 +7,9 @@ import { assetRefs, baseOf, checkAssetPath, dirOf, extOf, isUnder, kindOf, RESER
 import { ASSET_LABEL, brief, type AssetKind } from '../../core/schema.ts';
 import { T } from '../i18n.ts';
 import { ORIGIN_BY, originOf, type OriginBy, type OriginInput } from '../../core/origin.ts';
+import { resolvePrefab } from '../../core/variant.ts';
+import { menuItemsFor } from '../extensions.ts';
+import { TD } from '../i18n.ts';
 
 /** 出どころの名前（エディタの言語で） */
 const ORIGIN_LABEL = (by: OriginBy): string => ({ own: T('自作'), ai: T('AI 生成'), stock: T('配布・購入の素材'), commission: T('人に頼んだ') })[by];
@@ -81,6 +84,17 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
   let kind: '' | AssetKind = '';
   let unusedOnly = false;
   const closed = new Set<string>();
+  // プレハブ・表も、ファイルと並べてここに出す（Unity の Project ウインドウのように）。
+  // プレハブはタグごとに分け（ptag: null はすべて・'' はタグなし）、名前の頭（se_ など）が5つ以上そろえば1つにまとめる（ppre）
+  let view: 'files' | 'prefabs' | 'tables' = 'files';
+  let ptag: string | null = null;
+  let ppre: string | null = null;
+  const prefabMap = () => new Map(Object.entries(app.state.prefabs));
+  const tagsOf = (n: string): string[] => { try { return resolvePrefab(prefabMap(), n).tags ?? []; } catch { return app.state.prefabs[n]?.tags ?? []; } };
+  const prefixOf = (n: string) => /^([A-Za-z0-9]+_)./.exec(n)?.[1];
+  const firstSentence = (s?: string) => (s ?? '').split(/。|\. /)[0];
+  const lockN = (pre: string) => Object.keys(app.state.locks).filter((k) => k.startsWith(pre + '.') || k.startsWith(pre + '/')).length;
+  const GROUP_MIN = 5;
 
   // ---------- 情報 ----------
   const refsOf = (): Map<string, string[]> => {
@@ -200,6 +214,7 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
   /** el をフォルダ dest への落とし先にする（アセットなら移動、外のファイルなら取り込み） */
   const dropTarget = (target: HTMLElement, destOf: string | (() => string)) => {
     target.addEventListener('dragover', (e) => {
+      if (view !== 'files' && target === grid) return;
       const types = e.dataTransfer?.types ?? [];
       if (!types.includes(ASSET_MIME) && !types.includes('Files')) return;
       e.preventDefault();
@@ -251,14 +266,21 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
     if (done.length) { selected = done[done.length - 1]; render(); }
   });
   const crumbs = h('span', { class: 'crumbs' });
+  const pickBtn = h('button', { title: T('ファイルを選んで、このフォルダに取り込む（ドロップでも可）'), onclick: () => picker.click() }, T('＋ 取り込む'));
+  const folderBtn = h('button', { class: 'icon', title: T('このフォルダの中に新しいフォルダ'), onclick: newFolder }, '📁+');
   const bar = h('div', { class: 'toolbar' }, crumbs, h('span', { class: 'spacer' }), searchBox, kindSel,
     h('label', { class: 'row', title: T('どこからも使われていないものだけ') }, unusedBox, T('未使用')),
-    h('button', { title: T('ファイルを選んで、このフォルダに取り込む（ドロップでも可）'), onclick: () => picker.click() }, T('＋ 取り込む')),
-    h('button', { class: 'icon', title: T('このフォルダの中に新しいフォルダ'), onclick: newFolder }, '📁+'), picker);
+    pickBtn, folderBtn, picker);
   el.append(bar, h('div', { class: 'asset-body' }, tree, grid, side));
   dropTarget(grid, () => folder);
 
   const renderCrumbs = () => {
+    const files = view === 'files';
+    for (const x of [kindSel, unusedBox.parentElement!, pickBtn, folderBtn]) x.style.display = files ? '' : 'none';
+    if (view === 'tables') return clear(crumbs, T('📋 表'));
+    if (view === 'prefabs') return clear(crumbs, h('a', { onclick: () => { ptag = null; ppre = null; render(); } }, T('🧩 プレハブ')),
+      ptag !== null ? [h('span', { class: 'muted' }, ' / '), h('a', { onclick: () => { ppre = null; render(); } }, ptag === '' ? T('（タグなし）') : T('🏷 {0}', ptag))] : null,
+      ppre ? [h('span', { class: 'muted' }, ' / '), `${ppre}…`] : null);
     const parts = folder ? folder.split('/') : [];
     clear(crumbs, h('a', { onclick: () => { folder = ''; render(); } }, '📁'),
       parts.map((p, i) => [h('span', { class: 'muted' }, ' / '), h('a', { onclick: () => { folder = parts.slice(0, i + 1).join('/'); render(); } }, p)]));
@@ -271,8 +293,8 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
     const node = (d: string, depth: number): HTMLElement[] => {
       const kids = all.filter((x) => dirOf(x) === d);
       const shut = closed.has(d);
-      const row = h('div', { class: `tree-item${d === folder ? ' on' : ''}`, style: `padding-left:${4 + depth * 12}px`, title: d || T('プロジェクトの直下'),
-        onclick: () => { folder = d; render(); } },
+      const row = h('div', { class: `tree-item${view === 'files' && d === folder ? ' on' : ''}`, style: `padding-left:${4 + depth * 12}px`, title: d || T('プロジェクトの直下'),
+        onclick: () => { view = 'files'; folder = d; render(); } },
         h('span', { class: 'twisty', onclick: (e: Event) => { e.stopPropagation(); if (shut) closed.delete(d); else closed.add(d); renderTree(); } }, kids.length ? (shut ? '▸' : '▾') : ' '),
         T('📁 {0}', d ? baseOf(d) : T('（直下）')), counts.get(d) ? h('span', { class: 'muted' }, ` ${counts.get(d)}`) : null);
       if (d) row.addEventListener('contextmenu', (e) => folderMenu(e, d));
@@ -282,7 +304,87 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
     };
     const roots = all.filter((d) => !dirOf(d));
     const rootFiles = app.state.assets.some((a) => !dirOf(a.path));
-    clear(tree, rootFiles ? node('', 0).slice(0, 1) : null, roots.flatMap((r) => node(r, 0)));
+    // プレハブ（タグごと）と表
+    const names = Object.keys(app.state.prefabs);
+    const tags = new Map<string, number>();
+    let untagged = 0;
+    for (const n of names) { const t = tagsOf(n); if (!t.length) untagged++; for (const x of t) tags.set(x, (tags.get(x) ?? 0) + 1); }
+    const pick = (tag: string | null) => () => { view = 'prefabs'; ptag = tag; ppre = null; render(); };
+    const shutP = closed.has('@prefabs');
+    const prow = (label: string, n: number, on: boolean, depth: number, go: () => void, twisty = ' ') => h('div', { class: `tree-item${on ? ' on' : ''}`, style: `padding-left:${4 + depth * 12}px`, onclick: go },
+      h('span', { class: 'twisty', onclick: (e: Event) => { if (twisty === ' ') return; e.stopPropagation(); if (shutP) closed.delete('@prefabs'); else closed.add('@prefabs'); renderTree(); } }, twisty), label, h('span', { class: 'muted' }, ` ${n}`));
+    const prefabRows = names.length ? [
+      prow(T('🧩 プレハブ'), names.length, view === 'prefabs' && ptag === null, 0, pick(null), tags.size || untagged ? (shutP ? '▸' : '▾') : ' '),
+      ...(shutP ? [] : [...[...tags].sort(([a], [b]) => a.localeCompare(b)).map(([t, n]) => prow(T('🏷 {0}', t), n, view === 'prefabs' && ptag === t, 1, pick(t))),
+        ...(untagged && tags.size ? [prow(T('（タグなし）'), untagged, view === 'prefabs' && ptag === '', 1, pick(''))] : [])]),
+    ] : [];
+    const tableRows = app.registry?.tables.size ? [prow(T('📋 表'), app.registry.tables.size, view === 'tables', 0, () => { view = 'tables'; render(); })] : [];
+    clear(tree, rootFiles ? node('', 0).slice(0, 1) : null, roots.flatMap((r) => node(r, 0)), prefabRows, tableRows);
+  };
+
+  /** プレハブの見本（絵があれば絵、なければ名前）。クリックで選ぶ・ダブルクリックで開く・運ぶとインスタンス・右クリックでメニュー */
+  const prefabTile = (n: string) => {
+    const raw = app.state.prefabs[n];
+    let comps = raw.components;
+    try { comps = resolvePrefab(prefabMap(), n).components; } catch { /* 元がない派生: 書いてある値で */ }
+    const img = comps.Sprite?.image as string | undefined;
+    const pixel = app.state.config.view.filter === 'nearest';
+    const desc = raw.desc ? TD(raw.desc) : '';
+    const locks = lockN(`@${n}`);
+    const on = app.sel?.kind === 'prefab' && app.sel.name === n;
+    const t = h('div', {
+      class: `tile prefab${on ? ' on' : ''}`, 'data-ai': `@${n}`, draggable: true,
+      title: T('@{0}{1}{2}{3}\nダブルクリックで開く。ゲームの画面・階層へ運ぶと置く。右クリックで写す・名前を変える・削除', n, raw.base ? ` ← @${raw.base}` : '', desc ? '\n' + desc : '', tagsOf(n).length ? '\n🏷 ' + tagsOf(n).join(', ') : ''),
+      onclick: () => app.select({ kind: 'prefab', name: n }),
+      ondblclick: () => app.openPrefab(n),
+      ondragstart: (e: DragEvent) => { e.dataTransfer!.setData(PREFAB_MIME, n); e.dataTransfer!.effectAllowed = 'copy'; },
+      oncontextmenu: (e: MouseEvent) => {
+        e.preventDefault();
+        if (app.play) return;
+        app.select({ kind: 'prefab', name: n });
+        const items = menuItemsFor(app, 'prefab', [`@${n}`]);
+        if (items.length) menu(e.clientX, e.clientY, items);
+      },
+    },
+    h('div', { class: 'tile-pic' }, img ? h('img', { src: app.assetUrl(img), loading: 'lazy', alt: '', style: pixel ? 'image-rendering:pixelated' : '' }) : h('div', { class: 'tile-icon' }, '🧩')),
+    h('div', { class: 'tile-name' }, locks ? h('span', { style: 'color:var(--lock)' }, `🔒${locks} `) : '', '@' + n),
+    h('div', { class: 'tile-meta muted' }, raw.base ? `← @${raw.base}` : firstSentence(desc)));
+    return t;
+  };
+
+  const renderPrefabGrid = () => {
+    let names = Object.keys(app.state.prefabs).sort();
+    if (search) { clear(grid, ...(names = names.filter((n) => n.toLowerCase().includes(search))).map(prefabTile)); if (!names.length) clear(grid, h('div', { class: 'muted empty' }, T('見つかりません'))); return; }
+    if (ptag !== null) names = names.filter((n) => (ptag === '' ? !tagsOf(n).length : tagsOf(n).includes(ptag!)));
+    if (ppre) { clear(grid, names.filter((n) => prefixOf(n) === ppre).map(prefabTile)); return; }
+    const count = new Map<string, number>();
+    for (const n of names) { const p = prefixOf(n); if (p) count.set(p, (count.get(p) ?? 0) + 1); }
+    const done = new Set<string>();
+    const items: HTMLElement[] = [];
+    for (const n of names) {
+      const p = prefixOf(n);
+      if (p && (count.get(p) ?? 0) >= GROUP_MIN) {
+        if (done.has(p)) continue;
+        done.add(p);
+        items.push(h('div', { class: 'tile folder', title: T('名前が {0} で始まるプレハブ {1}個', p, count.get(p)), onclick: () => { ppre = p; render(); } },
+          h('div', { class: 'tile-pic' }, h('div', { class: 'tile-icon' }, '🧩')), h('div', { class: 'tile-name' }, `${p}…`), h('div', { class: 'tile-meta muted' }, `×${count.get(p)}`)));
+        continue;
+      }
+      items.push(prefabTile(n));
+    }
+    clear(grid, items.length ? items : h('div', { class: 'muted empty' }, T('プレハブはまだありません')));
+  };
+
+  const renderTableGrid = () => {
+    const list = [...(app.registry?.tables.values() ?? [])].filter((t) => !search || t.name.toLowerCase().includes(search));
+    clear(grid, list.map((t) => {
+      const rows = app.state.tables?.[t.name]?.rows.length ?? 0;
+      const locks = lockN(`$${t.name}`);
+      return h('div', { class: 'tile', 'data-ai': `$${t.name}`, title: T('{0}\n表のエディタで開く', TD(t.desc ?? '')), onclick: () => app.emit('openTable', { name: t.name }) },
+        h('div', { class: 'tile-pic' }, h('div', { class: 'tile-icon' }, '📋')),
+        h('div', { class: 'tile-name' }, locks ? h('span', { style: 'color:var(--lock)' }, `🔒${locks} `) : '', '$' + t.name),
+        h('div', { class: 'tile-meta muted' }, T('{0}行 {1}', rows, firstSentence(TD(t.desc ?? '')))));
+    }));
   };
 
   const tile = (a: Asset, refs: Map<string, string[]>, showDir: boolean) => {
@@ -307,6 +409,8 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
   };
 
   const renderGrid = () => {
+    if (view === 'prefabs') return renderPrefabGrid();
+    if (view === 'tables') return renderTableGrid();
     const refs = refsOf();
     const match = (a: Asset) => (!kind || a.kind === kind) && (!unusedOnly || !refs.get(a.path)?.length);
     let items: HTMLElement[];
@@ -326,6 +430,16 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
   };
 
   const renderSide = () => {
+    if (view !== 'files') {
+      const n = app.sel?.kind === 'prefab' ? app.sel.name : '';
+      const p = view === 'prefabs' ? app.state.prefabs[n] : undefined;
+      if (!p) return clear(side, h('div', { class: 'muted' }, view === 'prefabs' ? T('プレハブを選ぶと、インスペクタに出ます。ダブルクリックで開き、ゲームの画面・階層へ運ぶと置けます') : T('表をクリックすると、表のエディタで開きます')));
+      return clear(side,
+        h('div', { class: 'side-path' }, `@${n}`, p.base ? h('span', { class: 'muted' }, ` ← @${p.base}`) : null),
+        p.desc ? h('div', {}, TD(p.desc)) : null,
+        tagsOf(n).length ? h('div', { class: 'muted' }, '🏷 ' + tagsOf(n).join(', ')) : null,
+        h('div', { class: 'row', style: 'gap:4px;margin:6px 0' }, h('button', { onclick: () => app.openPrefab(n) }, T('開く'))));
+    }
     const a = app.state.assets.find((x) => x.path === selected);
     if (!a) return clear(side, h('div', { class: 'muted' }, T('アセットを選ぶと、ここに詳しく出ます。ゲームの画面へドラッグすると置けます')));
     const refs = refsOf().get(a.path) ?? [];
@@ -417,9 +531,11 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
     if (e.key === 'Enter') open(a);
   });
   app.on('change', render);
+  app.on('select', () => { if (view === 'prefabs') { renderGrid(); renderSide(); } });
   return {
     id: 'assets', title: T('アセット'), el, fill: true, area: 'bottom', render,
     reveal(path: string) {
+      view = 'files';
       folder = kindOf(path) ? dirOf(path) : path;
       selected = path;
       search = '';

@@ -51,7 +51,10 @@ test('AI とのやり取り: 作業・印・確かめる・戻す・質問・付
     await until('unseen', `ages.ai.unseen().length === 1`);
     await ev(`ages.select({ kind: 'prefab', name: 'enemy' })`);
     await until('inspector mark', `document.querySelector('[data-ai="@enemy.Health.hp"]')?.classList.contains('ai-unseen')`);
-    assert.equal(await ev(`(() => { const c = document.querySelector('[data-ai="@enemy"]').classList; return c.contains('ai-unseen') && c.contains('ai-touch'); })()`), true, '階層のプレハブにも（中の変更・触る予定）');
+    // プレハブはアセットの画面に並ぶ（issue #141）
+    await ev(`[...document.querySelectorAll('.asset-tree .tree-item')].find((x) => x.textContent.includes('🧩')).click()`);
+    await until('prefab tile', `!!document.querySelector('.tile[data-ai="@enemy"]')`);
+    assert.equal(await ev(`(() => { const c = document.querySelector('.tile[data-ai="@enemy"]').classList; return c.contains('ai-unseen') && c.contains('ai-touch'); })()`), true, 'アセットの画面のプレハブにも（中の変更・触る予定）');
     assert.match(await ev(`document.querySelector('.ai-panel').innerText`), /AI の変更（確かめていない 1）[\s\S]*敵の体力を調整[\s\S]*@enemy\.Health\.hp/);
     // ✓ 見た → 印が消える（確かめたかは端末ごとに覚える）
     await ev(`[...document.querySelectorAll('.ai-panel button')].find((x) => x.textContent === '✓ 見た').click()`);
@@ -75,11 +78,11 @@ test('AI とのやり取り: 作業・印・確かめる・戻す・質問・付
     // 5. 人の付箋（選んでいる物に貼る）→ 階層に印 → AI が読み、返事をすると済む
     await ev(`(() => { const t = document.querySelector('.ai-compose textarea'); t.value = '敵が硬すぎる'; [...document.querySelectorAll('.ai-compose button')].find((x) => x.textContent.includes('貼る')).click(); })()`);
     await waitFor('note', 5000, async () => (foldTalk(await readTalk(dir)).notes[0]?.about === '@enemy' ? true : undefined));
-    await until('note mark', `document.querySelector('[data-ai="@enemy"]').classList.contains('ai-note')`);
+    await until('note mark', `document.querySelector('.tile[data-ai="@enemy"]').classList.contains('ai-note')`);
     const note = foldTalk(await readTalk(dir)).notes[0];
     assert.match(await cmdTalk(dir, {}), new RegExp(`${note.id} \\[@enemy\\] 敵が硬すぎる`));
     await cmdTalk(dir, { reply: note.id, text: '体力を 3 にしました' });
-    await until('note done', `!document.querySelector('[data-ai="@enemy"]').classList.contains('ai-note') && ages.ai.openNotes().length === 0`);
+    await until('note done', `!document.querySelector('.tile[data-ai="@enemy"]').classList.contains('ai-note') && ages.ai.openNotes().length === 0`);
 
     // 6. エディタの外で変わったファイル（計画書など）→ 差分を見る
     await writeFile(join(dir, 'NOTES.md'), '# メモ\n- 敵の体力を 3 に\n');
