@@ -23,7 +23,7 @@ export function hierarchyPanel(app: App): Panel {
   const revealSelected = () => {
     const sel = app.sel;
     if (!app.state || app.state.error || sel?.kind !== 'scene') return;
-    const { parent } = treeParents(app.state.scenes[sel.scene]?.entities ?? [], app.state.prefabs);
+    const { parent } = treeParents(app.sceneView(sel.scene)?.entities ?? app.state.scenes[sel.scene]?.entities ?? [], app.state.prefabs);
     // 連番のまとめも開く（まとめになっていなければ使われない鍵）
     for (let id: string | undefined = sel.id, n = 0; id && n < 64; id = parent.get(id), n++) {
       const m = NUMBERED.exec(id);
@@ -90,7 +90,8 @@ export function hierarchyPanel(app: App): Panel {
     };
     // シーンの物を UI の親子（UI.parent）で木に並べる。兄弟はシーンの順。UI でない物と親のない UI は一番上
     const entityRows = () => {
-      const ents = scene?.entities ?? [];
+      // 子を持つプレハブのインスタンスの子も並べる（sceneView。置いた物/子）
+      const ents = app.sceneView(app.scene)?.entities ?? scene?.entities ?? [];
       const { parent, kind } = treeParents(ents, s.prefabs);
       const kids = new Map<string, EntityData[]>();
       const roots: EntityData[] = [];

@@ -97,3 +97,36 @@ test('派生は子の値を変えるだけ。名前の変更は子にした所�
   assert.match(map, /^@ship \[Transform Shape\] 子:gun_l←@cannon\(1\),gun_r←@cannon\(1\),core/m, map);
   assert.match(map, /^@ship_red ← @ship \[Transform Shape\] 子:.* 変:Shape\.color,Shape\.w,\/gun_r\/muzzle\.Shape\.w/m);
 });
+
+test('置いた物ごとの子の値（段3）: シーン#置いた物/子.部品.欄 で読み書き・出すとその値・プレハブを直すと変えていない値は伝わる・切り離しは断る', async () => {
+  const dir = await project(`
+  if (ctx.frame === 1) {
+    const g = ctx.child('boss', 'gun_r/muzzle')!;
+    ctx.emit('probe', { color: g.c.Shape.color, w: g.c.Shape.w, x: ctx.child('boss', 'gun_l')!.c.Transform.x, other: ctx.child('boss2', 'gun_l')!.c.Transform.x });
+  }`);
+  await cmdPatch(dir, [
+    { op: 'addEntity', scene: 'main', entity: { id: 'boss', name: 'boss', prefab: 'ship', components: { Transform: { x: 50 } } } },
+    { op: 'addEntity', scene: 'main', entity: { id: 'boss2', name: 'boss2', prefab: 'ship', components: {} } },
+    { op: 'set', path: 'main#boss/gun_r/muzzle.Shape.color', value: '#00ff00' },
+    { op: 'set', path: 'main#boss/gun_l.Transform.x', value: -30 },
+  ] as any, false);
+  const scene = JSON.parse(await readFile(join(dir, 'scenes', 'main.scene.json'), 'utf8'));
+  const boss = scene.entities.find((e: { id: string }) => e.id === 'boss');
+  assert.deepEqual(boss.children, [{ name: 'gun_r', components: {}, children: [{ name: 'muzzle', components: { Shape: { color: '#00ff00' } } }] }, { name: 'gun_l', components: { Transform: { x: -30 } } }]);
+  assert.ok(!scene.entities.find((e: { id: string }) => e.id === 'boss2').children, 'もう1つには入らない');
+  assert.equal((await cmdGet(dir, ['main#boss/gun_r/muzzle.Shape.color'])).trim(), 'main#boss/gun_r/muzzle.Shape.color = #00ff00');
+  // プレハブを直すと、置いた物の変えていない値は伝わる
+  await cmdPatch(dir, [{ op: 'set', path: '@gun/muzzle.Shape.w', value: 11 }], false);
+  let out = await cmdRun(dir, { frames: '2', log: 'probe' });
+  assert.match(out, /^f1 probe \{"color":"#00ff00","w":11,"x":-30,"other":-12\}$/m, out);
+  // インスタンスのほかの値を変えても、子の値は残る
+  await cmdPatch(dir, [{ op: 'set', path: 'main#boss.Transform.y', value: 9 }], false);
+  out = await cmdRun(dir, { frames: '2', log: 'probe' });
+  assert.match(out, /"color":"#00ff00"/);
+  // 地図に置いた物ごとの子の値
+  assert.match(await cmdMap(dir), /boss .*\/gun_r\/muzzle\.Shape\.color/);
+  await assert.rejects(cmdPatch(dir, [{ op: 'linkPrefab', target: 'main#boss', prefab: null }] as any, false), /子を持つプレハブ @ship のインスタンスなので、切り離せません/);
+  await assert.rejects(cmdPatch(dir, [{ op: 'set', path: 'main#boss/nope.Transform.x', value: 1 }], false), /main#boss\/nope: その子はありません/);
+  await assert.rejects(cmdPatch(dir, [{ op: 'addComponent', target: 'main#boss/core', component: 'Sprite' } as any], false), /置いた物の子では値を変えるだけ/);
+  assert.match(await cmdCheck(dir), /^ok/);
+});

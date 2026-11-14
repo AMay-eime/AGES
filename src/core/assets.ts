@@ -3,7 +3,7 @@
 import { ASSET_EXT, visit, type AssetKind, type Field } from './schema.ts';
 import type { Registry } from './registry.ts';
 import type { SceneDoc, PrefabDoc } from './docs.ts';
-import { prefabHolders } from './variant.ts';
+import { entityHolders, prefabHolders } from './variant.ts';
 import type { TableDoc } from './table.ts';
 
 /** アセットを置けないフォルダ（プロジェクトの決まった置き場所） */
@@ -79,7 +79,7 @@ export function leafRefs(docs: AssetDocs, reg: Registry, pick: (f: Field) => boo
       for (const [k, f] of Object.entries(def.fields)) if (k in values) visit(f, values[k], `${base}.${cname}.${k}`, leaf);
     }
   };
-  for (const s of docs.scenes.values()) for (const e of s.entities) holder(`${s.name}#${e.id}`, e.components);
+  for (const s of docs.scenes.values()) for (const e of s.entities) for (const [at, comps] of entityHolders(s.name, e)) holder(at, comps);
   for (const p of docs.prefabs.values()) for (const [at, comps] of prefabHolders(p)) holder(at, comps);
   for (const t of docs.tables.values()) {
     const def = reg.tables.get(t.name);

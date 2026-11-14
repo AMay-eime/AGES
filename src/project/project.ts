@@ -19,7 +19,7 @@ import { appendLog, localTime, lockedHits, markTouched, movePrefixTouched, moveT
 import { agesHome, lockDiff, verifyLocks, type LockIntegrity } from './seal.ts';
 import { scanAssets, type AssetInfo } from './assets.ts';
 import { assetRefs, codePrefabRefs, codeRefs, codeSceneRefs, isUnder, modelsOf, modelTexturesOf } from '../core/assets.ts';
-import { CHILD_NAME, hasChildren, prefabChildren, resolveEntity, resolvePrefab, type ResolvedChild } from '../core/variant.ts';
+import { CHILD_NAME, hasChildren, instanceChildren, prefabChildren, resolveEntity, resolvePrefab, type ResolvedChild } from '../core/variant.ts';
 import { allowedByDrawers, checkKept, checkWindows, loadWindows, prefabTags, tagCounts, tagEdit, unlistedWindows, windowAllows, windowTargets, type WindowInfo } from './windows.ts';
 import { Journal, inverseFiles, type DocState, type FileMove, type TxRecord } from './journal.ts';
 import { revert as revertValue, same } from '../core/revert.ts';
@@ -596,6 +596,16 @@ export class Project {
       const base = this.registry.findPrefab(p.base);
       for (const c of p.remove ?? []) if (!base?.components[c]) errs.push(`@${p.name}.remove: 元 @${p.base} に部品 ${c} はありません${suggest(c, Object.keys(base?.components ?? {}))}`);
       check(`@${p.name}`, Object.fromEntries(Object.keys(p.components ?? {}).map((c) => [c, r.components[c] ?? p.components[c]])));
+    }
+    // 置いた物ごとの子の値: 元の子に重なるか・値（重ねた形で）
+    for (const sc of this.docs.scenes.values()) for (const e of sc.entities) {
+      if (!e.children?.length) continue;
+      const at = `${sc.name}#${e.id}`;
+      if (!e.prefab) { errs.push(`${at}: プレハブのインスタンスでないのに、子の値（children）があります`); continue; }
+      let kids: ResolvedChild[];
+      try { kids = instanceChildren(this.docs.prefabs, e); } catch (x) { errs.push((x as Error).message); continue; }
+      const walk = (list: ResolvedChild[], here: string) => { for (const k of list) { check(`${here}/${k.name}`, k.components); walk(k.children, `${here}/${k.name}`); } };
+      walk(kids, at);
     }
     // 子を持つプレハブ: 名前・重なり・子にしたプレハブ（輪・ない）・元の子との重ね方、子の値（重ねた形で）
     for (const p of this.docs.prefabs.values()) {

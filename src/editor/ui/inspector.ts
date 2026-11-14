@@ -44,6 +44,8 @@ export function inspectorPanel(app: App): Panel {
       holder = e ? { name: e.name, tags: e.tags, components: e.c } : undefined;
     } else if (sel.kind === 'scene') {
       holder = app.state.scenes[sel.scene]?.entities.find((e) => e.id === sel.id);
+      // 置いた物の子（置いた物/子）: プレハブと置いた物ごとの値を重ねた値を見せる。書くのは シーン#置いた物/子
+      if (!holder && sel.id.includes('/')) holder = app.sceneView(sel.scene)?.entities.find((e) => e.id === sel.id);
       // プレハブのインスタンス: プレハブと重ねた値を見せ、プレハブから変えた所に印と「戻す」を付ける（派生と同じ）
       if (holder && (holder as EntityData).prefab) {
         try { holder = resolveEntity(new Map(Object.entries(app.state.prefabs)), holder as EntityData); } catch (e) { return clear(el, h('div', { class: 'pad', style: 'color:var(--bad)' }, (e as Error).message)); }
@@ -63,10 +65,10 @@ export function inspectorPanel(app: App): Panel {
     const what = instance ? T('インスタンス') : T('派生');
     const own = (c: string, f?: string) => !!raw?.components[c] && (f === undefined || f in raw.components[c]);
     if (!holder) return clear(el, h('div', { class: 'pad muted' }, playing ? T('{0} はもう存在しません', sel.kind === 'scene' ? sel.id : '') : T('見つかりません')));
-    const savable = sel.kind === 'prefab' || !!app.state.scenes[sel.scene]?.entities.some((e) => e.id === sel.id);
+    const savable = sel.kind === 'prefab' || !!app.state.scenes[sel.scene]?.entities.some((e) => e.id === sel.id) || (sel.kind === 'scene' && sel.id.includes('/') && !!holder);
 
     const nameInput = h('input', {
-      type: 'text', value: holder.name ?? '', style: 'flex:1;font-weight:600', disabled: playing || (sel.kind === 'scene' && sel.scene.startsWith('@')),
+      type: 'text', value: holder.name ?? '', style: 'flex:1;font-weight:600', disabled: playing || (sel.kind === 'scene' && (sel.scene.startsWith('@') || sel.id.includes('/'))),
       // プレハブの名前はファイルの名前（指している所も直す renamePrefab）。シーンの物の名前は見せる名前（rename）
       onchange: () => {
         if (sel.kind === 'scene') { app.patch([{ op: 'rename', target: base, name: nameInput.value }]); return; }
