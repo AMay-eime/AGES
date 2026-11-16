@@ -142,3 +142,38 @@ test('🔒 ロックされた値を持つ子は、AI からは消せない・名
   await p.undo(human);
   assert.equal(await get(dir, 'main#bg1/near.Shape.alpha'), '0.7');
 });
+
+test('子の親を変える（moveChild の parent）: 値・孫・派生と置いた物の値・🔒★が付いてくる。自分の下・別のプレハブの中へは動かせない。Ctrl+Z で戻る', async () => {
+  const dir = await project();
+  const p = await Project.load(dir);
+  await p.apply([
+    { op: 'addChild', parent: '@bg', child: { name: 'group', components: { Transform: { x: 100 } } } },
+    { op: 'addChild', parent: '@bg/far', child: { name: 'spark', components: { Transform: { y: 3 } } } },
+    { op: 'addPrefab', name: 'scene_set', components: { Transform: {} }, children: [{ name: 'sky', prefab: 'bg', components: {}, children: [{ name: 'far', components: { Shape: { alpha: 0.2 } } }] }] },
+    { op: 'set', path: 'main#bg1/near.Shape.alpha', value: 0.7 },
+  ], human);
+  await p.lock(['@bg/far.Shape.alpha'], keeper);
+  await assert.rejects(p.apply([{ op: 'moveChild', path: '@bg/far', parent: '@bg/group' }], ai, { force: true }), /🔒/);
+  await p.apply([{ op: 'moveChild', path: '@bg/far', parent: '@bg/group' }, { op: 'moveChild', path: '@bg/near', parent: '@bg/group', to: 0 }], human);
+  assert.deepEqual(p.docs.prefabs.get('bg')!.children!.map((c) => c.name), ['group']);
+  assert.deepEqual(p.docs.prefabs.get('bg')!.children![0].children!.map((c) => c.name), ['near', 'far']);
+  assert.equal(await get(dir, 'main#bg1/group/far.Shape.alpha'), '0.3', '置いた物の値が付いてくる');
+  assert.equal(await get(dir, 'main#bg1/group/near.Shape.alpha'), '0.7');
+  assert.equal(await get(dir, '@bg_night/group/near.Shape.alpha'), '0.5', '派生の値');
+  assert.equal(await get(dir, '@scene_set/sky/group/far.Shape.alpha'), '0.2', '別のプレハブの中の値');
+  assert.equal(await get(dir, '@bg/group/far/spark.Transform.y'), '3', '孫も');
+  assert.ok((await readLocks(dir))['@bg/group/far.Shape.alpha'], 'ロックが付いてくる');
+  assert.ok((await readTouched(dir))['main#bg1/group/near.Shape.alpha'], '★が付いてくる');
+  assert.match(await cmdCheck(dir), /^ok/);
+  await assert.rejects(p.apply([{ op: 'moveChild', path: '@bg/group', parent: '@bg/group/far' }], human), /自分や自分の子の下/);
+  await assert.rejects(p.apply([{ op: 'moveChild', path: '@bg/group/far', parent: '@scene_set' }], human), /同じプレハブ/);
+  await p.apply([{ op: 'addChild', parent: '@scene_set', child: { name: 'x', components: {} } }], human);
+  await assert.rejects(p.apply([{ op: 'moveChild', path: '@scene_set/x', parent: '@scene_set/sky' }], human), /@bg を子にしているので、その中へは動かせません/);
+  await p.undo(human);
+  // Ctrl+Z で前の親・並びに戻る（ロックも）
+  await p.undo(human);
+  assert.deepEqual(p.docs.prefabs.get('bg')!.children!.map((c) => c.name), ['far', 'near', 'group']);
+  assert.equal(await get(dir, 'main#bg1/near.Shape.alpha'), '0.7');
+  assert.equal(await get(dir, 'main#bg1/far.Shape.alpha'), '0.3');
+  assert.ok((await readLocks(dir))['@bg/far.Shape.alpha'], '戻すとロックも戻る');
+});

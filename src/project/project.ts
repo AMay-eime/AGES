@@ -712,7 +712,7 @@ export class Project {
     };
     const keeper = isKeeper(actor);
     // 人がエディタで行っても、ロックの住所が付いて動くだけで値の意味は変わらない操作（名前の変更・場所の変更）
-    const STRUCTURAL = new Set(['renameRow', 'renameScene', 'renamePrefab', 'renameChild', 'moveAsset']);
+    const STRUCTURAL = new Set(['renameRow', 'renameScene', 'renamePrefab', 'renameChild', 'moveChild', 'moveAsset']);
     // 人がエディタで入力中の欄（と、それを含む物・部品）は AI が変えない（作業のぶつかり防止。人が打つのをやめて少したてば変えられる）
     if (actor.kind === 'ai') {
       const editing = editingNow(await readFocus(this.dir));
@@ -894,7 +894,7 @@ export class Project {
       await this.journal.append({
         id: tx, t: new Date().toISOString(), who: actor.who, kind: actor.kind, win: actor.win, label: describeTx(result.changes),
         docs, files: fileMoves.length ? fileMoves : undefined,
-        ...(structural ? { ops, inverse: [...ops].reverse().map(inverseOp) } : {}),
+        ...(structural ? { ops, inverse: [...ops].reverse().map((o) => inverseOp(o, result.changes)) } : {}),
         ...opts.tx,
       });
     }
@@ -1420,7 +1420,15 @@ function docPrefix(op: Op, after = false): string | null {
 }
 
 /** 名前の変更・場所の変更の、逆の操作 */
-function inverseOp(op: Op): Op {
+function inverseOp(op: Op, changes: Change[] = []): Op {
+  if (op.op === 'moveChild') {
+    // 前の親と並びは、変えたときの記録から
+    const c = changes.find((x) => x.path === op.path && !x.auto);
+    if (!c) return { op: 'moveChild', path: op.path, to: op.to ?? 0 };
+    if (typeof c.from === 'number') return { op: 'moveChild', path: op.path, to: c.from };
+    const f = c.from as { parent: string; index: number };
+    return { op: 'moveChild', path: String(c.to).slice('renamed:'.length), parent: f.parent, to: f.index };
+  }
   if (op.op === 'renameRow') return { op: 'renameRow', table: op.table, id: op.to, to: op.id };
   if (op.op === 'renameScene') return { op: 'renameScene', name: op.to, to: op.name };
   if (op.op === 'renamePrefab') return { op: 'renamePrefab', name: op.to, to: op.name };

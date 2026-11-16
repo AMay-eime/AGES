@@ -26,7 +26,7 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
   - `prefab` を書いた子は、そのプレハブを子にして `components` は変えた値だけ（`children` もその子の値を変えるだけ）。書かなければ `components` が子の中身そのもの。子の子も書け、深さに上限はない
   - `ctx.spawn('ship')` で親・子・孫がまとめて出る。子の ID は `親のID/名前`、位置（Transform）は親から見た値で、親が消えると子も消える。コードからは `ctx.child(親, 'gun_l')`（孫は `'gun_r/muzzle'`）
   - 子の値は `@ship/gun_l.Transform.x`・`@ship/gun_r/muzzle.Shape.color` で読み書きする（get・set・ロック・`--watch` も同じ住所）。子にしたプレハブを直すと、変えていない子の値も変わる
-  - 今あるプレハブの子は `addChild`（`{"op":"addChild","parent":"@bg","child":{"name":"mist","components":{…}},"index":1}`。`parent` を `@bg/mist` にすると孫）・`removeChild`・`renameChild`・`moveChild`（並び＝同じ層なら描く順）で足し引きし、子の部品は `addComponent`・`removeComponent`（target `@bg/mist`）。作り直さない。派生・置いた物がその子に書いた値は名前で付いてくる（消すと値も消え、結果に並ぶ）
+  - 今あるプレハブの子は `addChild`（`{"op":"addChild","parent":"@bg","child":{"name":"mist","components":{…}},"index":1}`。`parent` を `@bg/mist` にすると孫）・`removeChild`・`renameChild`・`moveChild`（並び＝同じ層なら描く順。`parent` で親も変える、値はそのまま）で足し引きし、子の部品は `addComponent`・`removeComponent`（target `@bg/mist`）。作り直さない。派生・置いた物がその子に書いた値は名前で付いてくる（消すと値も消え、結果に並ぶ）
   - 足し引きは子を決めているプレハブでだけ。派生・置いた物は子の値を変えるだけ。別のプレハブを子にした所（`@ship/gun_l`）の中は、そのプレハブ（`@gun`）で足し引きする（使っている所すべてに出る）
   - シーンに置いたインスタンスの子は、置いた物ごとに値を変えられる: `main#boss/gun_l.Transform.x`（値はシーンのその物の `children` に、変えた値だけ入る。プレハブを直すと、変えていない値は伝わる）。置いた物ごとの子の足し引き・切り離し（linkPrefab null）はできない
   - 人はエディタのアセットの画面の「🧩 プレハブ」（タグごと・名前の頭でまとめる）から、プレハブを開いて（ダブルクリックか「開く」）、親と子がそろった絵で子を選び、インスペクタとドラッグで直せる。子の足し引き・名前・並べ替え・複製は階層の右クリックと＋、アセットやプレハブを階層へ運ぶと子になる
@@ -164,7 +164,7 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
   - `rows: [{ table, hide?, mount(el, row, api) }]` 表のエディタで行を選んだときの右の欄の上に中身を足す（部品の見せ方の表版。`row.values` は既定値で埋めた行、`row.set(列, 値)`・`row.locked(列)`）。表の一覧は標準のまま、行の中身だけを作る
   - `menus: [{ label, where: 'entity', when?(targets, api), run(targets, api) }]` シーンの物の右クリックのメニュー。targets は選んでいる物の住所（例 AGES 本体の `src/editor/builtin/entity-menu.ts`）。`where: 'prefab'` はアセットの画面のプレハブの右クリック（targets は `['@名前']`。例 `prefab-menu.ts`）
 - `desc`（何のためか、1行）を必ず書く。パネルがあるなら `title` と `edits`（パネルが変える値の住所。`main#spawner.Spawner.*` のようにまとめても書ける）も。地図にはこの宣言が1行で出る
-- プレハブを作る・写す・名前を変える・消す拡張は `edits: ['@[enemy]']`（タグ enemy のプレハブすべて。派生が受け継いだタグも数える）。addPrefab（copy・base も）・renamePrefab・setPrefab・removePrefab・部品の付け外し・revert と中の値を変えられる。対象は変える前からそのタグを持つプレハブと新しく作るプレハブで、変えた後もタグを持つこと（作るときは tags を書くか、タグを持つものを copy・base に）。値だけなら `@[enemy].Enemy.*`。表の行の追加・削除・名前・並びは `$表.*`
+- プレハブを作る・写す・名前を変える・消す拡張は `edits: ['@[enemy]']`（タグ enemy のプレハブすべて。派生が受け継いだタグも数える）。addPrefab（copy・base も）・renamePrefab・setPrefab・removePrefab・部品の付け外し・revert と中の値、子（孫も）の値・足し引き・名前・並べ替え・親の変更を変えられる（`@名前` も同じ）。対象は変える前からそのタグを持つプレハブと新しく作るプレハブで、変えた後もタグを持つこと（作るときは tags を書くか、タグを持つものを copy・base に）。値だけなら `@[enemy].Enemy.*`。表の行の追加・削除・名前・並びは `$表.*`
 - 拡張から変えられるのは、`edits` に書いた値と、見せている欄（その中も）・部品・行の値だけ。🔒ロックされた値は拡張からは変えられない。ロックの操作を拡張に作らない（作っても、サーバーが受け付けない）
 - 値を変えるのは `api.patch`・`field.set`・`comp.set`・`row.set` だけ（エディタのサーバーを直接呼ばない）。読むのは `api.get`（派生は元と重ねた値）、知らせるのは `api.notify(文, 'warn')`、画像の切り方は `api.sheet(画像)`、選んでいる物は `api.selection`（すべては `api.selected`。`api.select(住所, true)` で足す。表のエディタで選んだ行は `$表.行`、`api.select('$表.行')` で表をその行で開く。変わると `api.on('select')`）、1行を尋ねるのは `await api.ask(題, 既定)`
 - `api.patch` は拡張ごとに1つずつ順に送る。前の変更の後の値から次の変更を作るとき（続けてのクリック・ドラッグ）は、関数で渡す: `api.patch(() => [{ op: 'set', path, value: 今の値から }])`（前の変更が終わってから、その時の `api.get`・`api.table` で作る）。既定値は `defaultOf(型)`、op の型は `Op`（どちらも `ages` から）

@@ -143,14 +143,21 @@ export function hierarchyPanel(app: App): Panel {
       const out: HTMLElement[] = [];
       const ancestorsOf = (id: string) => { const a = new Set<string>(); for (let p = parent.get(id); p && !a.has(p); p = parent.get(p)) a.add(p); return a; };
       const reparent = async (child: string, to: string | null) => {
+        // プレハブの編集画面: 子の親を変える（moveChild の parent。シーン名の行へ運ぶと本体の子に）
+        const stage = app.prefabStage;
+        if (stage) {
+          if (child === '$root') return;
+          to ??= '$root';
+        }
         if (child === to) return;
         const k = kind.get(child);
         if (!k || (to && kind.get(to) !== k)) { toast(T('親子にできるのは UI の物どうし（UI.parent）か、位置のある物どうし（Transform.parent）'), 'warn'); return; }
         if (to && ancestorsOf(to).has(child)) { toast(T('{0} は {1} の中にあるので、親にできない', to, child), 'warn'); return; }
         if ((parent.get(child) ?? null) === to) return;
         if (to) open.add(`${app.scene}#${to}`);
-        const base = `${app.addr(child)}.${k}`;
-        const ops: Op[] = [{ op: 'set', path: `${base}.parent`, value: to }];
+        const moved = stage && to ? `${to}/${child.slice(child.lastIndexOf('/') + 1)}` : '';
+        const base = stage && to ? `${stagePath(stage, moved)}.${k}` : `${app.addr(child)}.${k}`;
+        const ops: Op[] = stage && to ? [{ op: 'moveChild', path: stagePath(stage, child), parent: stagePath(stage, to) }] : [{ op: 'set', path: `${base}.parent`, value: to }];
         // 位置の親は、画面の位置・向き・大きさを変えない（親から見た値に直す）
         const view = app.sceneView(app.scene);
         const w = k === 'Transform' && view ? docPose(view, child) : null;
@@ -178,7 +185,8 @@ export function hierarchyPanel(app: App): Panel {
             if (v !== Number(cur[f] ?? def)) ops.push({ op: 'set', path: `${base}.${f}`, value: v });
           }
         }
-        await app.patch(ops, 'hierarchy');
+        const ok = await app.patch(ops, 'hierarchy');
+        if (ok && moved) app.select({ kind: 'scene', scene: app.scene, id: moved });
       };
       // プレハブの編集画面: アセット・プレハブを子として落とす（画像は Sprite・音は Sound・フォントは Text の子、プレハブはそれを子にする）
       const dropAsChild = async (ev: DragEvent, target: string | null) => {
