@@ -4,8 +4,13 @@
 import { T } from './i18n.ts';
 
 type Lock = { who: string; t: string; value: unknown; note?: string };
-type Item = { path: string; kind: 'value' | 'sheet' | 'file'; value?: unknown; type?: string; problem?: string; lock?: Lock; asset?: { path: string; kind: string; bytes: number; w?: number; h?: number; sec?: number } };
-type State = { items: Item[]; integrity: { ok: boolean; reason?: string; diff: { added: string[]; removed: string[]; changed: string[] }; hasBackup: boolean }; lockReport: string[]; project: string; version: number };
+type Item = { path: string; kind: 'value' | 'sheet' | 'file' | 'code' | 'behave'; value?: unknown; type?: string; problem?: string; lock?: Lock; tampered?: boolean; asset?: { path: string; kind: string; bytes: number; w?: number; h?: number; sec?: number } };
+type State = { items: Item[]; integrity: { ok: boolean; reason?: string; diff: { added: string[]; removed: string[]; changed: string[] }; hasBackup: boolean }; lockReport: string[]; project: string; version: number; behaves: string[] };
+type BehaveResult = { watch: Record<string, unknown>; log: string[]; error?: string };
+/** ふるまいの結果を短く（見る値と、出来事の数） */
+const brief = (r: BehaveResult) => [...Object.entries(r.watch).map(([k, v]) => `${k}=${JSON.stringify(v)}`), r.log.length ? T('出来事 {0}件', r.log.length) : '', r.error ? T('エラー: {0}', r.error) : ''].filter(Boolean).join('  ');
+/** ふるまいを再生して答えを撮り、ロックする */
+const lockBehave = (name: string, note?: string, again = false) => act(() => api('/api/behave-lock', { body: { name, note } }), again ? T('🔒 撮り直しました: {0}', name) : T('🔒 撮ってロックしました: {0}', name));
 
 // 画面の固定の文（locks.html）も、選んだ言語に
 document.title = T('🔒 ロックマネージャー — AGES');
@@ -55,7 +60,7 @@ const act = async (fn: () => Promise<unknown>, ok: string) => {
 
 const time = (iso: string) => { const d = new Date(iso); const p = (n: number) => String(n).padStart(2, '0'); return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
 const show = (v: unknown) => (typeof v === 'string' ? JSON.stringify(v) : JSON.stringify(v));
-const groupOf = (p: string) => (p.startsWith('file:') ? T('ファイル') : p.startsWith('sheet:') ? T('画像の切り方') : p.startsWith('$') ? T('表') : p.startsWith('@') ? T('プレハブ') : T('シーン'));
+const groupOf = (it: { path: string; kind?: string }) => { const p = it.path; return it.kind === 'code' ? T('コード') : p.startsWith('behave:') ? T('ふるまい') : (p.startsWith('file:') ? T('ファイル') : p.startsWith('sheet:') ? T('画像の切り方') : p.startsWith('$') ? T('表') : p.startsWith('@') ? T('プレハブ') : T('シーン')); };
 
 let state: State | null = null;
 let filter = '';
@@ -63,6 +68,32 @@ const main = document.getElementById('main')!;
 
 /** 値を変える欄（数・文字・真偽はその場で、ほかは JSON で） */
 function editor(it: Item): HTMLElement {
+  if (it.kind === 'code') {
+    const rel = it.path.slice(5);
+    if (!it.tampered) return h('div', { class: 'muted' }, T('コード。書き換えられると、ages check・run・export を止めます'));
+    return h('div', {},
+      h('div', { class: 'problem' }, T('書き換えられています。中身を確かめて選んでください')),
+      h('div', { class: 'row' },
+        h('button', { onclick: () => { if (confirm(T('{0} の今の中身を受け入れて、ロックを付け直しますか？', rel))) act(() => api('/api/code-accept', { body: { path: rel } }), T('受け入れました: {0}', rel)); } }, T('受け入れる')),
+        h('button', { onclick: () => act(() => api('/api/code-restore', { body: { path: rel } }), T('ロックしたときの中身に戻しました: {0}', rel)) }, T('戻す'))));
+  }
+  if (it.kind === 'behave') {
+    const name = it.path.slice(7);
+    const want = (it.lock?.value as { result?: BehaveResult } | undefined)?.result;
+    const out = h('div', { class: 'muted mono', style: 'white-space:pre-wrap' });
+    return h('div', {},
+      h('div', {}, String(it.value ?? '')),
+      want ? h('div', { class: 'meta mono' }, T('答え: {0}', brief(want))) : null,
+      h('div', { class: 'row' },
+        h('button', { onclick: async () => {
+          try {
+            const r = await api<{ result: BehaveResult; diff: string[] | null }>(`/api/behave-check?name=${encodeURIComponent(name)}`);
+            out.textContent = r.diff?.length ? T('✗ 答えと違う: {0}', r.diff.join(' / ')) : T('✓ 答えと同じ: {0}', brief(r.result));
+          } catch (e) { out.textContent = `⚠ ${(e as Error).message}`; }
+        } }, T('確かめる')),
+        h('button', { title: T('今の動きを正しい答えとして撮り直す（仕様を変えたとき）'), onclick: () => { if (confirm(T('ふるまい {0} の答えを、今の動きで撮り直しますか？', name))) void lockBehave(name, it.lock?.note, true); } }, T('撮り直す'))),
+      out);
+  }
   if (it.kind === 'file') {
     const a = it.asset;
     const pick = h('input', { type: 'file', style: 'display:none' }) as HTMLInputElement;
@@ -111,7 +142,7 @@ function render(): void {
       h('button', { class: 'primary', onclick: () => act(() => api('/api/approve', { body: {} }), T('今の記録を承認しました')) }, T('この内容で承認する'))));
   const report = s.lockReport.filter((l) => !l.startsWith('⚠'));
   // 付ける
-  const pathBox = h('input', { type: 'text', placeholder: T('住所（例 main#player.Player.speed / $enemies.basic.hp / sheet:assets/x.png / file:assets/x.png）'), style: 'flex:1', list: 'cands' }) as HTMLInputElement;
+  const pathBox = h('input', { type: 'text', placeholder: T('住所（例 main#player.Player.speed / $enemies.basic.hp / sheet:assets/x.png / file:assets/x.png / file:game/shop.ts / behave:shop-buy）'), style: 'flex:1', list: 'cands' }) as HTMLInputElement;
   const note = h('input', { type: 'text', placeholder: T('理由（任意。AI にも見えます）'), style: 'width:220px' }) as HTMLInputElement;
   const cands = h('datalist', { id: 'cands' });
   const preview = h('div', { class: 'muted mono', style: 'margin-top:6px;min-height:1.4em' });
@@ -128,13 +159,14 @@ function render(): void {
       // 値でなく、物・行などのまとまりなら、中の値をまとめてロックできる
       const inside = list.filter((c) => c.startsWith(q + '.') && !s.items.some((i) => i.path === c));
       bulk.replaceChildren(d?.problem && inside.length ? h('button', { onclick: () => act(() => api('/api/lock', { body: { paths: inside, note: note.value.trim() || undefined } }), T('🔒 {0}件ロックしました', inside.length)) }, T('この中の値をまとめてロック（{0}件: {1}{2}）', inside.length, inside.slice(0, 3).map((c) => c.slice(q.length + 1)).join(', '), inside.length > 3 ? ' …' : '')) : '');
-      preview.textContent = !d ? '' : d.problem ? (inside.length ? '' : `⚠ ${d.problem}`) : d.lock ? T('🔒 すでにロックされています（下の一覧）') : d.kind === 'file' ? T('ファイル {0} bytes（中身の控えをこの端末に取ります）', d.asset?.bytes ?? 0) : T('今の値: {0}{1}', show(d.value), d.type ? T('  （{0}）', d.type) : '');
+      preview.textContent = !d ? '' : d.problem ? (inside.length ? '' : `⚠ ${d.problem}`) : d.lock ? T('🔒 すでにロックされています（下の一覧）') : d.kind === 'file' ? T('ファイル {0} bytes（中身の控えをこの端末に取ります）', d.asset?.bytes ?? 0) : d.kind === 'code' ? T('コード（中身の控えをこの端末に取り、書き換えられたら ages check・run・export を止めます）') : d.kind === 'behave' ? T('ふるまい: {0}（その場で再生して、答えを撮ります）', String(d.value ?? '')) : T('今の値: {0}{1}', show(d.value), d.type ? T('  （{0}）', d.type) : '');
     }, 120);
   };
   pathBox.addEventListener('input', look);
   const lockIt = () => {
     const path = pathBox.value.trim();
     if (!path) return;
+    if (path.startsWith('behave:')) { void lockBehave(path.slice(7), note.value.trim() || undefined).then(() => { focus = path; }); return; }
     act(() => api('/api/lock', { body: { paths: [path], note: note.value.trim() || undefined } }), T('🔒 ロックしました: {0}', path)).then(() => { focus = path; });
   };
   pathBox.addEventListener('keydown', (e) => { if (e.key === 'Enter') lockIt(); });
@@ -143,10 +175,13 @@ function render(): void {
   const add = h('div', { class: 'card' },
     h('h2', {}, T('ロックを付ける')),
     h('div', { class: 'row' }, pathBox, note, h('button', { class: 'primary', onclick: lockIt }, T('🔒 付ける'))), cands, preview, bulk,
-    h('div', { class: 'muted', style: 'font-size:12px;margin-top:4px' }, T('ロックした値は、AI・独自のウインドウ・エディタのどこからも変えられません（この画面からだけ）。ファイルのロックは、差し替え・移動・削除を止め、書き換えられたらこの端末の控えから戻します。')));
+    h('div', { class: 'muted', style: 'font-size:12px;margin-top:4px' }, T('ロックした値は、AI・独自のウインドウ・エディタのどこからも変えられません（この画面からだけ）。ファイルのロックは、差し替え・移動・削除を止め、書き換えられたらこの端末の控えから戻します。')),
+    h('div', { class: 'muted', style: 'font-size:12px;margin-top:4px' }, T('コード（file:game/…）は、書き換えられたら ages check・run・export を止めます（受け入れる・戻すをここで選ぶ）。ふるまい（behave:名前）は、決まった操作を再生した結果を答えとして撮り、ages check・書き出しのたびに比べます。')),
+    // まだロックしていないふるまいの決まり（checks/名前.behave.json）
+    (() => { const free = (s.behaves ?? []).filter((n) => !s.items.some((i) => i.path === `behave:${n}`)); return free.length ? h('div', { class: 'row', style: 'margin-top:6px;flex-wrap:wrap;gap:4px' }, h('span', { class: 'muted' }, T('ロックしていないふるまい:')), free.map((n) => h('button', { onclick: () => lockBehave(n, note.value.trim() || undefined) }, T('🔒 {0} を撮ってロック', n)))) : null; })());
   // 一覧
   const groups = new Map<string, Item[]>();
-  for (const it of items) groups.set(groupOf(it.path), [...(groups.get(groupOf(it.path)) ?? []), it]);
+  for (const it of items) groups.set(groupOf(it), [...(groups.get(groupOf(it)) ?? []), it]);
   const filterBox = h('input', { type: 'search', placeholder: T('🔍 住所・理由で絞る'), value: filter, style: 'width:240px' }) as HTMLInputElement;
   filterBox.addEventListener('input', () => { filter = filterBox.value; render(); filterBox.focus(); });
   const rows = [...groups].map(([g2, its]) => [

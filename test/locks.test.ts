@@ -1,7 +1,7 @@
 // ロックマネージャー: ロックの操作は専用の画面（別のオリジン）からだけ。ファイルそのもののロック
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -82,8 +82,8 @@ test('ロックマネージャーの表示: 今の値・型・問題、打つと
   assert.match((await p.describe('main#player.Player.sped')).problem!, /もしかして: speed/);
   assert.match((await p.describe('main#player')).problem!, /値（フィールド・表のセル）単位/);
   assert.equal((await p.describe(`file:${HIT}`)).asset?.kind, 'sound');
-  assert.ok(p.lockCandidates('enemies.basic').includes('$enemies.basic.hp'));
-  assert.ok(p.lockCandidates('file:assets/sounds').includes(`file:${HIT}`));
+  assert.ok((await p.lockCandidates('enemies.basic')).includes('$enemies.basic.hp'));
+  assert.ok((await p.lockCandidates('file:assets/sounds')).includes(`file:${HIT}`));
   await p.lock(['$enemies.basic.hp'], keeper, '体力は決定');
   const st = await p.lockState();
   assert.deepEqual(st.items.map((i) => [i.path, i.value, i.lock?.note]), [['$enemies.basic.hp', 2, '体力は決定']]);
@@ -118,6 +118,22 @@ test('サーバー: ロックを外す・値を変えるのはロックマネー
     assert.match(await page.text(), /ロックマネージャー/);
     const state = await (await fetch(`http://127.0.0.1:${port}/api/state`)).json();
     assert.equal(state.lockManager, `http://127.0.0.1:${port + 1}`);
+    // ふるまい: ロックマネージャーで再生して撮る・確かめる。コード: 受け入れる・戻す（エディタの側には窓口がない）
+    const lm = `http://localhost:${port + 1}`;
+    await mkdir(join(dir, 'checks'), { recursive: true });
+    await writeFile(join(dir, 'checks/stay.behave.json'), JSON.stringify({ desc: '動かない', frames: 5, watch: ['player.Transform.x'] }));
+    assert.equal((await post(port, '/api/behave-lock', { name: 'stay' })).status, 403, 'エディタの側からは撮れない');
+    const shot = await post(port + 1, '/api/behave-lock', { name: 'stay' }, lm);
+    assert.equal(shot.status, 200);
+    assert.deepEqual(((await readLocks(dir))['behave:stay'].value as { result: { watch: unknown } }).result.watch, { 'player.Transform.x': 240 });
+    const checked = await (await fetch(`http://127.0.0.1:${port + 1}/api/behave-check?name=stay`)).json();
+    assert.deepEqual(checked.diff, []);
+    assert.equal((await post(port + 1, '/api/lock', { paths: ['file:game/systems.ts'] }, lm)).status, 200);
+    await appendFile(join(dir, 'game/systems.ts'), '\n// x\n');
+    assert.equal((await post(port, '/api/code-accept', { path: 'game/systems.ts' })).status, 403, 'エディタの側からは受け入れられない');
+    await new Promise((r) => setTimeout(r, 600));
+    assert.equal((await post(port + 1, '/api/code-restore', { path: 'game/systems.ts' }, lm)).status, 200);
+    assert.ok(!(await readFile(join(dir, 'game/systems.ts'), 'utf8')).includes('// x'));
   } finally {
     child.kill();
   }

@@ -450,7 +450,7 @@ async function route(req: http.IncomingMessage, res: http.ServerResponse): Promi
     broadcast({ type: 'locks' });
     return json(res, { ok: true });
   }
-  if (p === '/api/lock' || p === '/api/unlock' || p.startsWith('/api/locks/')) {
+  if (p === '/api/lock' || p === '/api/unlock' || p.startsWith('/api/locks/') || ['/api/behave-lock', '/api/code-accept', '/api/code-restore'].includes(p)) {
     return json(res, { error: `ロックを外す・ロックの記録を確かめるのは、ロックマネージャー（http://localhost:${lockPort}）でだけできます` }, 403);
   }
   if (p === '/api/file') {
@@ -676,6 +676,7 @@ async function lockRoute(req: http.IncomingMessage, res: http.ServerResponse): P
   if (m === 'GET' && p === '/api/state') return json(res, { ...(await call('lockState')), version });
   if (m === 'GET' && p === '/api/describe') return json(res, await call('describe', url.searchParams.get('path') ?? ''));
   if (m === 'GET' && p === '/api/candidates') return json(res, await call('lockCandidates', url.searchParams.get('q') ?? ''));
+  if (m === 'GET' && p === '/api/behave-check') return json(res, await call('checkBehave', url.searchParams.get('name') ?? ''));
   if (m !== 'POST') return json(res, { error: `見つかりません: ${m} ${p}` }, 404);
   if (!LOCK_ORIGINS.has(String(req.headers.origin ?? ''))) return json(res, { error: 'ロックの操作は、ロックマネージャーの画面からだけ受け付けます' }, 403);
   const who = keeper(req);
@@ -687,6 +688,10 @@ async function lockRoute(req: http.IncomingMessage, res: http.ServerResponse): P
   const b = JSON.parse((await body(req)).toString('utf8') || '{}');
   if (p === '/api/lock') { await call('lock', b.paths, who, b.note); return done(); }
   if (p === '/api/unlock') { await call('unlock', b.paths, who); return done(); }
+  // ふるまい: 再生して答えを撮り、ロックする。コード: 書き換えを受け入れる・戻す
+  if (p === '/api/behave-lock') return done(await call('lockBehave', String(b.name ?? ''), who, b.note));
+  if (p === '/api/code-accept') { await call('acceptCode', String(b.path ?? ''), who); return done(); }
+  if (p === '/api/code-restore') { await call('restoreCode', String(b.path ?? ''), who); return done(); }
   if (p === '/api/approve' || p === '/api/restore') {
     await call(p === '/api/approve' ? 'approveLocks' : 'restoreLocks', who);
     lastLockOk = true;

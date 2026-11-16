@@ -226,3 +226,13 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
 - 入れ方: `ages.project.json` に `"packages": ["3d"]` を足す（このファイルは直接直してよい設定）。入れると、地図に `## package 3d` とその機能の目次が出て、`guide:項目` で手順を引ける。ゲームのコードからは `import { … } from 'ages/3d'`
 - いまあるもの: `3d`（3D。位置・回転、モデル、光と影、カメラ、当たり判定、エディタの3Dの視点。作っている途中で、部品はこれから足す）
 - 2D か 3D かは、最初のエディタ計画（EDITOR-PLAN.md）で使用者に聞く。途中から足してもよい（外すのは、その部品を使っている物がなくなってから）
+
+## locks: ロック（値・ファイル・コード・ふるまい）
+- ロックを付ける・外すのは人だけ（エディタの 🔒 とロックマネージャー）。AI はロックを付けたほうがよいもの（壊したくない仕組み・遊びの手触り）に気づいたら、`ages talk --ask` で人に提案する
+- 値・画像の切り方・アセットのファイル: 変えられない。書き換えられたら、次に読み込んだときに元に戻る
+- コード（`file:game/shop.ts` など）: 書き換えると `ages check`・`ages run`・`ages export` が止まる。AI が書き換えてしまったら `ages lock-restore <dir> game/shop.ts` で戻す。変えたいときは、理由を添えて人にロックマネージャーで外す・受け入れるよう頼む
+- ふるまい（`behave:名前`）: 決まった操作を再生した結果を、人が答えとして撮る。`ages check` と `ages export` のたびに再生して比べるので、ロックしたファイルに触れていなくても、使っている値・部品・別のコードの変更で動きが変われば見つかる
+  - 決まりは `checks/名前.behave.json`（AI が書いてよい。人に撮ってもらう）: `{"desc":"何を確かめるか","keys":"30-31:@confirm;90:click=buy","frames":200,"watch":["main#player.Wallet.gold"],"log":["shop.buy","shop.error"]}`。scene・seed・params・save・date も `ages run` と同じ書き方。watch は終わりの値、log は出来事を出た順にフレームと中身ごと比べる（`*` で全部）
+  - `ages behave <dir> [名前]` で再生して、答えとの違いを出す（`✗ shop-buy 答えと違う: main#player.Wallet.gold: 70 → 50`）。意図した仕様の変更なら、人がロックマネージャーで撮り直す
+- Claude Code では、ロックしたファイルへの書き込みを手前で断れる。プロジェクトの `.claude/settings.json` に（シェルからの書き換えは通るので、上の検査と組み合わせる）:
+  `{"hooks":{"PreToolUse":[{"matcher":"Edit|Write|MultiEdit|NotebookEdit","hooks":[{"type":"command","command":"node \"$CLAUDE_PROJECT_DIR/ages.mjs\" guard \"$CLAUDE_PROJECT_DIR\""}]}]}}`
