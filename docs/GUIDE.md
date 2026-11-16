@@ -236,3 +236,15 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
   - `ages behave <dir> [名前]` で再生して、答えとの違いを出す（`✗ shop-buy 答えと違う: main#player.Wallet.gold: 70 → 50`）。意図した仕様の変更なら、人がロックマネージャーで撮り直す
 - Claude Code では、ロックしたファイルへの書き込みを手前で断れる。プロジェクトの `.claude/settings.json` に（シェルからの書き換えは通るので、上の検査と組み合わせる）:
   `{"hooks":{"PreToolUse":[{"matcher":"Edit|Write|MultiEdit|NotebookEdit","hooks":[{"type":"command","command":"node \"$CLAUDE_PROJECT_DIR/ages.mjs\" guard \"$CLAUDE_PROJECT_DIR\""}]}]}}`
+
+## modules: 機能ごとのモジュール（仕様から作る・境目を守る）
+- 使うかは使用者が決める（強制しない）。最初に EDITOR-PLAN.md の「0.5 コードの分け方」で聞き、`ages.project.json` の `modules` に書く: `"spec"`（使用者が機能の分け方と仕様を決め、合意してからコードを書く）/ `"auto"`（AI が分け、仕様も「AI案」として書く）/ 書かない（決まりなし。小さなゲーム・試作）。途中から選んでもよい
+- 機能（ショップ・自機・演出など）ごとに `game/名前/` のフォルダを作る。`game/` 直下（`index.ts`・共有の部品 `components.ts` など）は、全体をつなぐ場所
+  - 入口 `game/名前/index.ts`: ほかの機能・`game/index.ts` が使うもの（システム・部品・関数）だけを出す
+  - 仕様 `game/名前/SPEC.md`: 1行目に何をする機能か。続けて、読む部品と書く部品・出す出来事と受ける出来事（名前と中身）・使う表・確かめるふるまい（`checks/名前.behave.json`）。コードより先に書き、人と合意してから作る
+  - 1ファイルは1つのシステム・役目に（目安は数百行）
+- 機能どうしは、部品・出来事（`ctx.emit` と `on`）・表と、相手の入口からだけやりとりする。ほかの機能の中身（`../shop/price.ts`）を直接 import すると `ages check` が知らせる。入口・仕様のない機能も知らせる（`modules` を選んだときだけ）
+- 多くの機能にまたがる演出（ヒットストップ・揺れ・音）は、呼ぶ側が出来事を出し、演出の機能が受ける（呼ぶ側は演出の機能を知らない）。強さは表・プレハブに置き、人が調整する
+- 人は機能をフォルダごとロックできる（プロジェクトのファイル一覧でフォルダを右クリック、またはロックマネージャーで `dir:game/shop`）。中のファイル（`SPEC.md` も）の書き換え・足す・消すで `ages check`・`run`・`export` が止まり、`ages guard` も中への書き込みを断る。AI が変えてしまったら `ages lock-restore <dir> game/shop`
+- 地図の `## 機能` に機能ごとの1行（仕様の1行目・🔒）。🔒 の機能は中を読まず、`SPEC.md` と入口だけ読んで使う。変える必要があれば人に頼む（guide:locks）
+- 仕様を変えるときは、先に `SPEC.md` を直して人に確かめ、それからコードと `checks/` を直す

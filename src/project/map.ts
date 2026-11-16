@@ -54,10 +54,12 @@ export interface MapInputs {
   recentWindow?: number;
   /** コードの中の宣言の場所（codeDefs。システムの行に出す） */
   defs?: Map<string, string>;
+  /** 機能ごとのモジュールの行（moduleLines） */
+  modules?: string[];
 }
 
-export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, locks: Record<string, LockMark> = {}, code = new Map<string, string[]>(), windows: WindowInfo[] = [], gotos = new Map<string, string[]>(), budget = MAP_BUDGET, recent: MapInputs['recent'] = [], defs: MapInputs['defs'] = new Map(), recentWindow?: number): string {
-  const ins: MapInputs = { touched, locks, code, windows, gotos, recent, defs, recentWindow };
+export function renderMap(p: Project, touched: Record<string, TouchMark> = {}, locks: Record<string, LockMark> = {}, code = new Map<string, string[]>(), windows: WindowInfo[] = [], gotos = new Map<string, string[]>(), budget = MAP_BUDGET, recent: MapInputs['recent'] = [], defs: MapInputs['defs'] = new Map(), recentWindow?: number, modules: string[] = []): string {
+  const ins: MapInputs = { touched, locks, code, windows, gotos, recent, defs, recentWindow, modules };
   // どの形にするかは、節を畳む前の大きさで決める（畳んだ後の大きさで決めると、とても大きなプロジェクトが
   // 「全部の節を畳んだ1枚」になり、目次の地図の見方の説明・最近の作業の場所が出なくなる）
   const mode = mapMode(p, ins, budget);
@@ -85,7 +87,7 @@ const firstSentence = (s: string | undefined, max = 40): string => {
 };
 
 type Ins = Required<MapInputs>;
-const withDefaults = (i: MapInputs): Ins => ({ touched: i.touched ?? {}, locks: i.locks ?? {}, code: i.code ?? new Map(), windows: i.windows ?? [], gotos: i.gotos ?? new Map(), recent: i.recent ?? [], recentWindow: i.recentWindow ?? RECENT_WINDOW, defs: i.defs ?? new Map() });
+const withDefaults = (i: MapInputs): Ins => ({ touched: i.touched ?? {}, locks: i.locks ?? {}, code: i.code ?? new Map(), windows: i.windows ?? [], gotos: i.gotos ?? new Map(), recent: i.recent ?? [], recentWindow: i.recentWindow ?? RECENT_WINDOW, defs: i.defs ?? new Map(), modules: i.modules ?? [] });
 
 /** 地図の形（節を畳む前の大きさで決める）: 1枚に収まれば full、要約で収まれば compact、収まらなければ目次 */
 function mapMode(p: Project, ins: MapInputs, budget: number): MapMode {
@@ -110,7 +112,7 @@ export function buildMap(p: Project, inputs: MapInputs, mode: MapMode, collapse 
       if (line) sec[k] = [`${line}（長いので目次。中身は ages map <dir> ${k}、まとめは ages map <dir> ${k}/名前）`];
     }
   }
-  out.push(...sec.components, ...sec.shaders, ...notes(p), ...sec.systems, ...sec.tables, ...sec.prefabs, ...sec.scenes, ...sec.assets, ...sec.extensions);
+  out.push(...sec.components, ...sec.shaders, ...notes(p), ...ins.modules, ...sec.systems, ...sec.tables, ...sec.prefabs, ...sec.scenes, ...sec.assets, ...sec.extensions);
   if (mode === 'index') out.push(...markRoots(ins));
   // 最近の作業の場所（目次の地図だけ。続けて同じ辺りを触るなら探さずに済む）
   if (mode === 'index' && ins.recent.length) out.push(`最近の作業の場所（直近${ins.recentWindow}回の探す・見る・変えるで使った所。多い順。map: は ages map <dir> で引いたまとめ）: ${ins.recent.map((r) => (r.hits > 1 ? `${r.place}(${r.hits})` : r.place)).join('  ')}`);

@@ -334,7 +334,18 @@ export function projectPanel(app: App, openText: (path: string) => void): Panel 
       if (done.length) app.emit('revealAsset', done[done.length - 1]);
     });
     clear(el, drop, h('div', { class: 'list' }, [...groups.entries()].map(([dir, files]) => [
-      h('div', { class: 'folder' }, dir),
+      h('div', {
+        class: 'folder',
+        // 右クリック: game/・editor/ の下のフォルダ（機能のモジュール）をまるごとロックする（中の書き換え・足す・消すを見つける）
+        oncontextmenu: (e: MouseEvent) => {
+          if (!/^(game|editor)\/./.test(dir)) return;
+          e.preventDefault();
+          const key = `dir:${dir}`;
+          menu(e.clientX, e.clientY, [
+            app.state.locks[key] ? [T('🔒 ロック中（ロックマネージャーで外す）'), () => app.openLocks(key)] : [T('🔒 フォルダごとロックする'), () => app.lock([key], 'project')],
+          ]);
+        },
+      }, app.state.locks[`dir:${dir}`] ? h('span', { style: 'color:var(--lock)' }, '🔒 ') : '', dir),
       files.map((f) => h('div', {
         class: 'item',
         title: T('{0}（{1} bytes）', f.path, f.size) + (app.state.locks[`file:${f.path}`] ? T('\n🔒 ロック中（書き換えると ages check・run・export が止まります）') : ''),
