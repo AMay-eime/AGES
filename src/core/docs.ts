@@ -73,6 +73,11 @@ export interface ProjectConfig {
   languages?: string[];
   /** セーブ: settings='auto'（既定）なら、キーの割り当て・音量を変えたら自動で保存し、始めるときに戻す。'manual' なら自分で */
   save?: { settings?: 'auto' | 'manual' };
+  /**
+   * コードの分け方（EDITOR-PLAN.md で最初に使用者に聞く）。spec: 使用者と機能の分け方・仕様（game/名前/SPEC.md）を決めてから作る。
+   * auto: AI が機能に分け、仕様も AI 案として書く。省くと決まりなし（小さなゲーム・試作）。spec・auto では ages check が境目を確かめる（guide:modules）
+   */
+  modules?: 'spec' | 'auto';
   /** 合わせてある AGES の版（compat＝互換の番号。docs/MIGRATIONS.md）。ages init と ages version --record が書く */
   engine?: { compat: number; version: string; commit?: string; recorded?: string };
 }

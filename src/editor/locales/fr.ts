@@ -863,6 +863,8 @@ export default {
   "🔒 {0} を撮ってロック": "🔒 Enregistrer et verrouiller {0}",
   "\n🔒 ロック中（書き換えると ages check・run・export が止まります）": "\n🔒 Verrouillé (le réécrire arrête ages check, run et export)",
   "🔒 ロックマネージャーで撮ってロックする": "🔒 Enregistrer et verrouiller dans le gestionnaire de verrous",
+  "フォルダ（{0}ファイル）。中の書き換え・足す・消すで、ages check・run・export を止めます": "Dossier ({0} fichiers). Réécrire, ajouter ou supprimer des fichiers à l'intérieur arrête ages check, run et export",
+  "🔒 フォルダごとロックする": "🔒 Verrouiller tout le dossier",
   // ---- 本体の標準の部品・表・シェーダーの説明（std-descs.ts。TD で訳す） ----
   "位置・向き・大きさ（標準）": "Position, rotation, taille (standard)",
   "横位置(px。parent があれば親から見た位置)": "Position horizontale (px ; relative au parent si parent est défini)",

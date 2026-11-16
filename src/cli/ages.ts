@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { Project } from '../project/project.ts';
 import { BEHAVE_DIR, BEHAVE_NAME, behaveDiff, behaveNames, readBehave, specHash, type BehaveLock, type BehaveResult, type BehaveSpec } from '../project/behave.ts';
 import { readLocks } from '../project/oplog.ts';
+import { gameModules, moduleLines, moduleProblems } from '../project/modules.ts';
 import { indexDepth, renderAssets, renderMap, renderMapSection } from '../project/map.ts';
 import { findInProject } from '../project/find.ts';
 import { codeDefs } from '../project/codedefs.ts';
@@ -132,7 +133,8 @@ function compact(obj: Record<string, unknown>): string {
 export async function cmdMap(dir: string, section?: string): Promise<string> {
   const p = await Project.load(dir);
   const files = await p.codeFiles();
-  const ins = { touched: await readTouched(p.dir), locks: await p.effectiveLocks(), code: await p.codeRefs(), windows: await p.windows(), gotos: codeSceneRefs(files), defs: codeDefs(files) };
+  const locks = await p.effectiveLocks();
+  const ins = { touched: await readTouched(p.dir), locks, code: await p.codeRefs(), windows: await p.windows(), gotos: codeSceneRefs(files), defs: codeDefs(files), modules: moduleLines(await gameModules(p.dir, files), locks) };
   // 節を1つだけ引く（目次の地図から）。まとめ（節/まとめ）を引いたら、最近の作業の場所として覚える
   if (section) {
     const page = renderMapSection(p, section, ins);
@@ -143,7 +145,7 @@ export async function cmdMap(dir: string, section?: string): Promise<string> {
   const { show, window } = recentFor(indexDepth(p, ins));
   const recent = topRecent(await readRecent(p.dir), show, window);
   const plan = await planWarning(p.dir);
-  const map = renderMap(p, ins.touched, ins.locks, ins.code, ins.windows, ins.gotos, undefined, recent, ins.defs, window);
+  const map = renderMap(p, ins.touched, ins.locks, ins.code, ins.windows, ins.gotos, undefined, recent, ins.defs, window, ins.modules);
   // エディタで人が見ている所（開いているときだけ）を、見出しのすぐ下に
   const focus = await readFocus(p.dir);
   const fl = focus ? focusLine(p, focus) : null;
@@ -1120,7 +1122,7 @@ export async function cmdBehave(dir: string, name?: string): Promise<string> {
 /** ages lock-restore: ロックしたコードを、ロックしたときの中身に戻す（AI もできる。安全な向きなので） */
 export async function cmdLockRestore(dir: string, file: string): Promise<string> {
   const p = await Project.load(dir);
-  await p.restoreLockedCode(file.replace(/\\/g, '/').replace(/^\.\//, ''), { who: 'ai', kind: 'ai', win: 'cli' });
+  await p.restoreLockedCode(file.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, ''), { who: 'ai', kind: 'ai', win: 'cli' });
   return `🔒 ${file} を、ロックしたときの中身に戻しました${p.codeTamper.length ? `（ほかにも書き換えられているもの: ${p.codeTamper.join('・')}）` : ''}`;
 }
 
@@ -1140,6 +1142,9 @@ export async function cmdGuard(dir: string, input: string): Promise<{ code: numb
   const locks = await readLocks(root);
   if (rel === '.ages/locks.json' || rel === '.ages/locks.seal') return { code: 2, message: `🔒 ロックの記録（${rel}）は人だけがロックマネージャーで変えます。AI からは書き換えないでください` };
   if (locks[`file:${rel}`]) return { code: 2, message: `🔒 ${rel} は人がロックしています（${locks[`file:${rel}`].note ?? 'メモなし'}）。書き換えないでください。変えたいときは、人にロックマネージャーで外してもらうよう頼んでください` };
+  // フォルダ（機能のモジュール）のロック: 中のファイルの書き換え・足すも断る
+  const folder = Object.keys(locks).find((k) => k.startsWith('dir:') && rel.startsWith(k.slice(4) + '/'));
+  if (folder) return { code: 2, message: `🔒 フォルダ ${folder.slice(4)}/ は人がロックしています（${locks[folder].note ?? 'メモなし'}）。中のファイルを書き換えたり足したりしないでください。仕様（SPEC.md）と入口だけ読んで使い、変えたいときは人に頼んでください` };
   const b = /^checks\/([A-Za-z0-9_-]+)\.behave\.json$/.exec(rel);
   if (b && locks[`behave:${b[1]}`]) return { code: 2, message: `🔒 ふるまい ${b[1]} は人がロックしています。決まり（${rel}）は書き換えないでください` };
   return { code: 0, message: '' };
@@ -1149,6 +1154,9 @@ export async function cmdCheck(dir: string): Promise<string> {
   const p = await Project.load(dir);
   const sh = await shaderReport(p.dir, p.assets);
   const warns: string[] = [];
+  // 機能ごとのモジュール（game/名前/）の境目と仕様
+  // （EDITOR-PLAN.md で仕様駆動・AI におまかせを選んだときだけ。ages.project.json の modules）
+  if (p.config.modules) { const files = await p.codeFiles(); warns.push(...moduleProblems(files, await gameModules(p.dir, files))); }
   const errs = [...p.validate(), ...(await p.checkCode()), ...(await p.checkWindows(warns)), ...sh.errors,
     ...p.codeTamper.map((f) => `🔒 ロックしたコード ${f} が書き換えられています（人がロックマネージャーで「受け入れる」か「戻す」。AI は ages lock-restore <dir> ${f} で戻せる）`),
     ...(p.codeTamper.length ? [] : await lockedBehaveErrors(p))];

@@ -69,8 +69,9 @@ const main = document.getElementById('main')!;
 /** 値を変える欄（数・文字・真偽はその場で、ほかは JSON で） */
 function editor(it: Item): HTMLElement {
   if (it.kind === 'code') {
-    const rel = it.path.slice(5);
-    if (!it.tampered) return h('div', { class: 'muted' }, T('コード。書き換えられると、ages check・run・export を止めます'));
+    // ファイル（file:）かフォルダ（dir:。機能のモジュール）。受け入れる・戻すにはロックの住所を渡す
+    const rel = it.path;
+    if (!it.tampered) return h('div', { class: 'muted' }, it.path.startsWith('dir:') ? T('フォルダ（{0}ファイル）。中の書き換え・足す・消すで、ages check・run・export を止めます', Number(it.value ?? 0)) : T('コード。書き換えられると、ages check・run・export を止めます'));
     return h('div', {},
       h('div', { class: 'problem' }, T('書き換えられています。中身を確かめて選んでください')),
       h('div', { class: 'row' },
