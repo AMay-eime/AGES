@@ -861,6 +861,8 @@ export default {
   "コード（file:game/…）は、書き換えられたら ages check・run・export を止めます（受け入れる・戻すをここで選ぶ）。ふるまい（behave:名前）は、決まった操作を再生した結果を答えとして撮り、ages check・書き出しのたびに比べます。": "Le code (file:game/…) arrête ages check, run et export s'il est réécrit (acceptez ou restaurez ici). Un comportement (behave:nom) rejoue des entrées fixes, enregistre le résultat comme réponse et le compare à chaque ages check et export.",
   "ロックしていないふるまい:": "Comportements non verrouillés :",
   "🔒 {0} を撮ってロック": "🔒 Enregistrer et verrouiller {0}",
+  "\n🔒 ロック中（書き換えると ages check・run・export が止まります）": "\n🔒 Verrouillé (le réécrire arrête ages check, run et export)",
+  "🔒 ロックマネージャーで撮ってロックする": "🔒 Enregistrer et verrouiller dans le gestionnaire de verrous",
   // ---- 本体の標準の部品・表・シェーダーの説明（std-descs.ts。TD で訳す） ----
   "位置・向き・大きさ（標準）": "Position, rotation, taille (standard)",
   "横位置(px。parent があれば親から見た位置)": "Position horizontale (px ; relative au parent si parent est défini)",
