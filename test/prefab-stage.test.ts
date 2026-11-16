@@ -64,6 +64,15 @@ export const tables: GameModule['tables'] = [kinds];
     };
     await waitFor('editor page', 20_000, async () => ((await ev(`!!(window.ages?.registry && window.ages.state?.prefabs?.ship)`)) ? true : undefined));
     // 開く: 階層に親と子、ゲームの画面の世界にも子が出る
+    // プロジェクトのファイルを右クリックして、コードをロックする（外すのはロックマネージャーで）
+    await ev(`agesLayout.show('project')`);
+    await waitFor('ファイルの一覧', 10_000, async () => ((await ev(`[...document.querySelectorAll('.item')].some((x) => x.title.startsWith('game/index.ts'))`)) ? true : undefined));
+    await ev(`[...document.querySelectorAll('.item')].find((x) => x.title.startsWith('game/index.ts')).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 40 }))`);
+    assert.deepEqual(await ev(`[...document.querySelectorAll('.menu > div')].map((d) => d.textContent)`), ['🔒 ロックする', '場所をコピー']);
+    await ev(`document.querySelector('.menu > div').click()`);
+    const { readLocks } = await import('../src/project/oplog.ts');
+    await waitFor('コードのロック', 10_000, async () => ((await readLocks(dir))['file:game/index.ts'] ? true : undefined));
+    await ev(`agesLayout.show('hierarchy')`);
     // プレハブと表は階層ではなくアセットの画面に並ぶ（タグごと・名前の頭が5つそろえばまとめる）。ダブルクリックで開く
     assert.equal(await ev(`!!document.querySelector('.list .item[data-ai="@gun"]')`), false, '階層にプレハブを並べない');
     const tiles = () => ev(`[...document.querySelectorAll('.asset-grid .tile .tile-name')].map((x) => x.textContent)`);

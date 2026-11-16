@@ -1,5 +1,6 @@
 // プロジェクト（フォルダ）の読み込みと保存。Node 側専用。
 import { readFile, writeFile, readdir, mkdir, rm, rename, copyFile, cp } from 'node:fs/promises';
+import { behaveNames, readBehave, specHash, type BehaveLock } from './behave.ts';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
@@ -227,24 +228,74 @@ export class Project {
   /** 直近の読み込み時にロックの検査で見つかった問題（復元したもの・復元できないもの） */
   lockReport: string[] = [];
 
+  /** ロックしたコードのうち、書き換えられた・消されたもの（プロジェクトの中の場所） */
+  codeTamper: string[] = [];
+
+  /** ロックしたコードが書き換えられていたら止める（ages run・export・check の前に） */
+  requireCodeIntact(what: string): void {
+    if (this.codeTamper.length) throw new Error(`🔒 ロックしたコード ${this.codeTamper.join('・')} が書き換えられているので、${what}できません。人がロックマネージャーで「受け入れる」か「戻す」を選んでください（AI は ages lock-restore <dir> <場所> で、ロックしたときの中身に戻せます）`);
+  }
+
+  /** ロックしたコードを、ロックしたときの中身に戻す（だれでもできる。安全な向きの操作なので） */
+  async restoreLockedCode(rel: string, actor: Actor): Promise<void> {
+    const locks = await readLockFile(this.dir);
+    const mark = locks[`file:${rel}`];
+    const v = mark?.value as { sha256?: string; code?: boolean } | undefined;
+    if (!v?.code || !v.sha256) throw new Error(`${rel} はロックしたコードではありません`);
+    const copy = lockedCopy(this.dir, v.sha256);
+    if (!(await readFile(copy).then(() => true, () => false))) throw new Error(`${rel} の控えがこの端末にありません。人がロックマネージャーで「受け入れる」か、ロックを付け直してください`);
+    await mkdir(dirname(join(this.dir, rel)), { recursive: true });
+    await copyFile(copy, join(this.dir, rel));
+    await appendLog(this.dir, actor, 'lock-restore', [{ path: `file:${rel}`, from: '変えられた中身', to: 'ロックしたときの中身' }]);
+    await this.reload();
+  }
+
+  /** ロックしたコードの今の中身を受け入れて、ロックを付け直す（人がロックマネージャーで確かめてから） */
+  async acceptLockedCode(rel: string, actor: Actor): Promise<void> {
+    this.requireKeeper(actor, 'ロックしたコードの書き換えの受け入れ');
+    this.requireIntegrity();
+    const locks = await readLockFile(this.dir);
+    const key = `file:${rel}`;
+    if (!(locks[key]?.value as { code?: boolean } | undefined)?.code) throw new Error(`${rel} はロックしたコードではありません`);
+    const abs = join(this.dir, rel);
+    const data = await readFile(abs).catch(() => null);
+    if (!data) throw new Error(`${rel} が消されています。戻すか、ロックを外してください`);
+    const sha256 = createHash('sha256').update(data).digest('hex');
+    await mkdir(dirname(lockedCopy(this.dir, sha256)), { recursive: true });
+    await writeFile(lockedCopy(this.dir, sha256), data);
+    locks[key] = { ...locks[key], who: actor.who, t: new Date().toISOString(), value: { sha256, bytes: data.length, code: true } };
+    await writeLocks(this.dir, actor, locks);
+    await appendLog(this.dir, actor, 'lock', [{ path: key, to: 'accepted' }]);
+    await this.reload();
+  }
+
   /**
    * ロックされた値がファイル上で変わっていたら元に戻す。
    * （AIがファイルを直接書き換えた場合も、次にAGESが読み込んだ時点で必ず復元される）
    */
   async enforceLocks(): Promise<string[]> {
     this.lockFileCache = await readLockFile(this.dir);
+    this.codeTamper = [];
     const locks = await this.effectiveLocks();
     const report: string[] = [];
     const restored: Change[] = [];
     const dirty = new Set<string>();
     let filesRestored = false;
     for (const [path, mark] of Object.entries(locks)) {
+      // ふるまいのロックは、ages check・export のときに再生して比べる（読み込みのたびには動かさない）
+      if (path.startsWith('behave:')) continue;
       if (path.startsWith('file:')) {
         // ファイルそのもののロック: 中身が変わっていたら、手元の控えから戻す
         const rel = path.slice('file:'.length);
         const want = (mark.value as { sha256?: string } | null)?.sha256;
         const now = await fileHash(join(this.dir, rel));
         if (!want || now === want) continue;
+        if ((mark.value as { code?: boolean }).code) {
+          // コードのロック: 戻さずに止める（人がロックマネージャーで「受け入れる」か「戻す」を選ぶまで、ages check・run・export を止める）
+          this.codeTamper.push(rel);
+          report.push(`コード ${rel} が${now ? '書き換えられて' : '消されて'}います。人がロックマネージャーで「受け入れる」か「戻す」を選ぶまで、ages check・run・export は止まります（AI は ages lock-restore <dir> ${rel} で、ロックしたときの中身に戻せます）`);
+          continue;
+        }
         const copy = lockedCopy(this.dir, want);
         if (await readFile(copy).then(() => true, () => false)) {
           await mkdir(dirname(join(this.dir, rel)), { recursive: true });
@@ -310,12 +361,27 @@ export class Project {
   }
 
   /** 住所が指すものの今の値と型（ロックマネージャーの表示用）。ロック中なら印も */
-  async describe(path: string): Promise<{ path: string; kind: 'value' | 'sheet' | 'file'; value?: unknown; type?: string; problem?: string; lock?: LockMark; asset?: AssetInfo }> {
+  async describe(path: string): Promise<{ path: string; kind: 'value' | 'sheet' | 'file' | 'code' | 'behave'; value?: unknown; type?: string; problem?: string; lock?: LockMark; asset?: AssetInfo; tampered?: boolean }> {
     const locks = await this.effectiveLocks();
     const lock = locks[path];
+    if (path.startsWith('behave:')) {
+      const name = path.slice(7);
+      try {
+        const { spec, text } = await readBehave(this.dir, name);
+        const want = (lock?.value as BehaveLock | undefined)?.spec;
+        return { path, kind: 'behave', value: spec.desc, lock, problem: want && want !== specHash(text) ? '決まり（checks/' + name + '.behave.json）が、ロックした後に書き換えられています' : undefined };
+      } catch (e) {
+        return { path, kind: 'behave', lock, problem: (e as Error).message };
+      }
+    }
     if (path.startsWith('file:')) {
-      const asset = this.assets.find((a) => a.path === path.slice(5));
-      return { path, kind: 'file', asset, lock, problem: asset ? undefined : `ファイル ${path.slice(5)} はありません${suggest(path.slice(5), this.assets.map((a) => a.path))}` };
+      const rel = path.slice(5);
+      const asset = this.assets.find((a) => a.path === rel);
+      if (!asset && (await this.isCodeFile(rel)) || (lock?.value as { code?: boolean } | undefined)?.code) {
+        const tampered = this.codeTamper.includes(rel);
+        return { path, kind: 'code', lock, tampered, problem: tampered ? `書き換えられています（受け入れる・戻すを選ぶまで、ages check・run・export は止まります）` : undefined };
+      }
+      return { path, kind: 'file', asset, lock, problem: asset ? undefined : `ファイル ${rel} はありません${suggest(rel, this.assets.map((a) => a.path))}` };
     }
     if (path.startsWith('sheet:')) {
       const img = path.slice(6);
@@ -361,8 +427,27 @@ export class Project {
     return { ...s, entities: s.entities.map((e) => { try { return resolveEntity(this.docs.prefabs, e); } catch { return e; } }) };
   }
 
+  /** ロックできるコード（プロジェクトの .ts・.js。.ages・node_modules・dist は除く） */
+  async codeFileList(): Promise<string[]> {
+    const out: string[] = [];
+    const walk = async (rel: string) => {
+      const ents = await readdir(join(this.dir, rel), { withFileTypes: true }).catch(() => []);
+      for (const e of ents) {
+        const r = rel ? `${rel}/${e.name}` : e.name;
+        if (e.isDirectory()) { if (!['.ages', '.git', 'node_modules', 'dist', 'assets'].includes(e.name) && !e.name.startsWith('.')) await walk(r); }
+        else if (/\.(ts|js|mjs)$/.test(e.name)) out.push(r);
+      }
+    };
+    await walk('');
+    return out.sort();
+  }
+
+  async isCodeFile(rel: string): Promise<boolean> {
+    return (await this.codeFileList()).includes(rel);
+  }
+
   /** ロックできる住所の候補（ロックマネージャーで打つときの補完）。text を含むものを最大 limit 件 */
-  lockCandidates(text: string, limit = 40): string[] {
+  async lockCandidates(text: string, limit = 40): Promise<string[]> {
     const out: string[] = [];
     const q = text.trim().toLowerCase();
     const push = (a: string) => { if (out.length < limit && (!q || a.toLowerCase().includes(q))) out.push(a); };
@@ -373,6 +458,8 @@ export class Project {
     for (const pf of this.registry.allPrefabs()) holder(`@${pf.name}`, pf.components);
     for (const t of this.docs.tables.values()) for (const r of t.rows) for (const c of Object.keys(this.registry.tables.get(t.name)?.columns ?? {})) push(`$${t.name}.${r.id}.${c}`);
     for (const a of this.assets) { if (a.kind === 'image') push(`sheet:${a.path}`); push(`file:${a.path}`); }
+    for (const f of await this.codeFileList()) push(`file:${f}`);
+    for (const b of await behaveNames(this.dir)) push(`behave:${b}`);
     return out;
   }
 
@@ -380,7 +467,7 @@ export class Project {
   async lockState() {
     const locks = await this.effectiveLocks();
     const items = await Promise.all(Object.keys(locks).sort().map((k) => this.describe(k)));
-    return { items, integrity: { ok: this.integrity.ok, reason: this.integrity.reason, diff: this.lockDiff(), hasBackup: !!this.integrity.backup }, lockReport: this.lockReport, project: this.config.name };
+    return { items, integrity: { ok: this.integrity.ok, reason: this.integrity.reason, diff: this.lockDiff(), hasBackup: !!this.integrity.backup }, lockReport: this.lockReport, project: this.config.name, behaves: await behaveNames(this.dir) };
   }
 
   /** ロックマネージャー（人だけが使う専用の画面）からの操作でなければ止める */
@@ -389,22 +476,31 @@ export class Project {
   }
 
   /** 値をロックする（人だけ）。paths はフィールドまでのアドレス。 */
-  async lock(paths: string[], actor: Actor, note?: string): Promise<void> {
+  async lock(paths: string[], actor: Actor, note?: string, behaves: Record<string, BehaveLock> = {}): Promise<void> {
     // ロックを「かける」のは、人ならエディタからもできる（安全側の操作で、開発が進む操作なので軽く）。外すのはロックマネージャーからだけ
     if (actor.kind !== 'human' || actor.win?.startsWith('window:')) throw new Error('🔒 ロックをかけるのは人だけです（エディタの 🔓 か、ロックマネージャーで）。AI と独自のウインドウからはできません');
     this.requireIntegrity();
     const locks = await readLockFile(this.dir);
     const t = new Date().toISOString();
     for (const path of paths) {
+      if (path.startsWith('behave:')) {
+        // ふるまい: 結果はロックマネージャーが撮ったもの（再生はエディタ側で）
+        const b = behaves[path];
+        if (!b) throw new Error(`ふるまい ${path.slice(7)} は、ロックマネージャーの「撮ってロック」でロックします（その場で再生して答えを撮る）`);
+        locks[path] = { who: actor.who, t, value: b, ...(note ? { note } : {}) };
+        continue;
+      }
       if (path.startsWith('file:')) {
         // ファイルそのもののロック。中身の控えを、プロジェクトの外（この端末の使用者のフォルダ）に取る
         const rel = path.slice('file:'.length);
-        if (!this.assets.some((a) => a.path === rel)) throw new Error(`ファイル ${rel} はありません${suggest(rel, this.assets.map((a) => a.path))}（ロックできるのは画像・音・フォント）`);
+        // アセット（画像・音・フォント）か、プロジェクトのコード（game/・editor/ などの .ts・.js）
+        const code = !this.assets.some((a) => a.path === rel);
+        if (code && !(await this.isCodeFile(rel))) throw new Error(`ファイル ${rel} はありません${suggest(rel, [...this.assets.map((a) => a.path), ...(await this.codeFileList())])}（ロックできるのは画像・音・フォントと、コード .ts・.js）`);
         const abs = join(this.dir, rel);
         const sha256 = (await fileHash(abs))!;
         await mkdir(dirname(lockedCopy(this.dir, sha256)), { recursive: true });
         await copyFile(abs, lockedCopy(this.dir, sha256));
-        const mark: LockMark = { who: actor.who, t, value: { sha256, bytes: (await readFile(abs)).length } };
+        const mark: LockMark = { who: actor.who, t, value: { sha256, bytes: (await readFile(abs)).length, ...(code ? { code: true } : {}) } };
         if (note) mark.note = note;
         locks[path] = mark;
         continue;

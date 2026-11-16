@@ -32,7 +32,7 @@ async function codeRefsCached(): Promise<Record<string, string[]>> {
   if (refs?.key !== key) refs = { key, value: Object.fromEntries(await project.codeRefs()) };
   return refs.value;
 }
-const READ_ONLY = new Set(['state', 'lockState', 'describe', 'lockCandidates', 'undoState', 'log']);
+const READ_ONLY = new Set(['state', 'lockState', 'describe', 'lockCandidates', 'undoState', 'log', 'checkBehave']);
 
 async function state() {
   if (loadError) return { error: loadError };
@@ -87,6 +87,29 @@ const handlers: Record<string, (...args: any[]) => Promise<unknown>> = {
   },
   async lockCandidates(text: string) {
     return project.lockCandidates(text);
+  },
+  /** ふるまいを再生して、答えとしてロックする（ロックマネージャーから） */
+  async lockBehave(name: string, actor: Actor, note?: string) {
+    const { runBehave } = await import('../cli/ages.ts');
+    const { specHash } = await import('../project/behave.ts');
+    const r = await runBehave(project, name);
+    await project.lock([`behave:${name}`], actor, note, { [`behave:${name}`]: { spec: specHash(r.text), result: r.result } });
+    return r.result;
+  },
+  /** ふるまいを再生して、ロックした答えと比べる */
+  async checkBehave(name: string) {
+    const { runBehave } = await import('../cli/ages.ts');
+    const { behaveDiff, specHash } = await import('../project/behave.ts');
+    const { readLocks } = await import('../project/oplog.ts');
+    const r = await runBehave(project, name);
+    const want = (await readLocks(project.dir))[`behave:${name}`]?.value as { spec: string; result: never } | undefined;
+    return { result: r.result, diff: want ? (specHash(r.text) !== want.spec ? ['決まりがロックした後に書き換えられています'] : behaveDiff(want.result, r.result)) : null };
+  },
+  async acceptCode(rel: string, actor: Actor) {
+    await project.acceptLockedCode(rel, actor);
+  },
+  async restoreCode(rel: string, actor: Actor) {
+    await project.restoreLockedCode(rel, actor);
   },
   /** 出どころを書く（エディタの人から） */
   async origin(target: string, input: OriginInput) {

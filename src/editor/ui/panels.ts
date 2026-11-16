@@ -337,10 +337,25 @@ export function projectPanel(app: App, openText: (path: string) => void): Panel 
       h('div', { class: 'folder' }, dir),
       files.map((f) => h('div', {
         class: 'item',
-        title: T('{0}（{1} bytes）', f.path, f.size),
+        title: T('{0}（{1} bytes）', f.path, f.size) + (app.state.locks[`file:${f.path}`] ? T('\n🔒 ロック中（書き換えると ages check・run・export が止まります）') : ''),
+        oncontextmenu: (e: MouseEvent) => {
+          // 右クリック: コード・アセットはロックする（外すのはロックマネージャーで）。ふるまいの決まりは、ロックマネージャーで撮る
+          const behave = /^checks\/([A-Za-z0-9_-]+)\.behave\.json$/.exec(f.path)?.[1];
+          const lockable = /\.(ts|js|mjs)$/.test(f.path) || !!kindOf(f.path);
+          if (!behave && !lockable) return;
+          e.preventDefault();
+          const key = behave ? `behave:${behave}` : `file:${f.path}`;
+          const locked = !!app.state.locks[key];
+          menu(e.clientX, e.clientY, [
+            locked ? [T('🔒 ロック中（ロックマネージャーで外す）'), () => app.openLocks(key)]
+              : behave ? [T('🔒 ロックマネージャーで撮ってロックする'), () => app.openLocks(key)]
+              : [T('🔒 ロックする'), () => app.lock([key], 'project')],
+            [T('場所をコピー'), () => { navigator.clipboard?.writeText(f.path); toast(T('コピーしました: {0}', f.path)); }],
+          ]);
+        },
         // 画像は「切り方」で開く（コマ・基準点・動きを決められる）
         onclick: () => /^data\/.+\.table\.json$/.test(f.path) ? app.emit('openTable', { name: f.path.slice(5, -'.table.json'.length) }) : TEXT_EXT.test(f.path) ? openText(f.path) : kindOf(f.path) ? app.emit('revealAsset', f.path) : window.open(`/project@${app.state.version}/${f.path}`),
-      }, f.path.split('/').pop()!, h('span', { class: 'muted' }, kb(f.size)))),
+      }, (app.state.locks[`file:${f.path}`] || app.state.locks[`behave:${/^checks\/(.+)\.behave\.json$/.exec(f.path)?.[1]}`]) ? h('span', { style: 'color:var(--lock)' }, '🔒 ') : '', f.path.split('/').pop()!, h('span', { class: 'muted' }, kb(f.size)))),
     ])));
   };
   app.on('change', render);

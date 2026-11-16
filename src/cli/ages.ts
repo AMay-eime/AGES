@@ -7,6 +7,8 @@ import { createHash } from 'node:crypto';
 import { join, resolve, relative, basename, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Project } from '../project/project.ts';
+import { BEHAVE_DIR, BEHAVE_NAME, behaveDiff, behaveNames, readBehave, specHash, type BehaveLock, type BehaveResult, type BehaveSpec } from '../project/behave.ts';
+import { readLocks } from '../project/oplog.ts';
 import { indexDepth, renderAssets, renderMap, renderMapSection } from '../project/map.ts';
 import { findInProject } from '../project/find.ts';
 import { codeDefs } from '../project/codedefs.ts';
@@ -71,7 +73,10 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
                [--perf | --perf logic]（速さ: システムごとの1フレームの時間と、物がいちばん多いフレームを描いた量。logic は描いた量を省く）
   log    <dir> [--all] [--peek]      前回からの編集の要約（--peek は既読にしない）
   undo   <dir> [--tx id] [--force]   自分（AI）の直前の編集を元に戻す（その後で変えられた所があれば止まる）。redo <dir> でやり直す
-  check  <dir>                       全データの検証とロックの検査
+  check  <dir>                       全データの検証とロックの検査（ロックしたコードの書き換え・ロックしたふるまいの再生も）
+  behave <dir> [名前]                ふるまいの決まり（checks/名前.behave.json）を再生して、ロックした答えと比べる
+  lock-restore <dir> <場所>          ロックしたコードを、ロックしたときの中身に戻す
+  guard  <dir>                       Claude Code の hooks から: ロックしたファイルへの書き込みを断る（guide:locks）
   talk   <dir> [--task 作業 [--steps "a|b|c"] [--touch 住所,住所]] [--step 2] [--done 結果] [--ask 質問 [--choices "A|B"] [--about 住所]] [--reply 付箋ID 一言]
                エディタの人とのやり取り（何をしているかを見せる・人が決めることを聞く・付箋を読む）。引数なしで読む
   version <dir> [--record]           AGES の版（記録が古ければ直し方を出す）。--record で今の版を残す
@@ -287,6 +292,9 @@ export async function cmdExport(dir: string, flags: Record<string, string | bool
   // 型を消す Node の機能（stripTypeScriptTypes）の「試しの機能です」の知らせを出さない（エディタのサーバーと同じ）
   process.removeAllListeners('warning');
   const p = await Project.load(dir);
+  p.requireCodeIntact('書き出し');
+  const broken = await lockedBehaveErrors(p);
+  if (broken.length) throw new Error(`🔒 ロックしたふるまいが変わっているので、書き出せません:\n${broken.join('\n')}\n（意図した変更なら、人がロックマネージャーで撮り直す）`);
   const review = flags.review === true || typeof flags.replay === 'string' ? await reviewData(p, flags) : undefined;
   if (review && flags.desktop === true) throw new Error('--review は Web だけ（確認用のページ）。--desktop とは一緒にしない');
   const r = await exportProject(p, {
@@ -782,6 +790,7 @@ async function runSetup(p: Project, f: Args['flags']): Promise<RunSetup> {
 
 export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
   const p = await Project.load(dir);
+  p.requireCodeIntact('ages run で動かすことは');
   const frames = Number(f.frames ?? 600);
   const setup = await runSetup(p, f);
   let scene = setup.scene;
@@ -1044,11 +1053,105 @@ export async function cmdVersion(dir: string, record: boolean): Promise<string> 
   return lines.join('\n');
 }
 
+/** ふるまいの決まりを再生して、見る値と出来事を集める（ages run と同じ始め方） */
+export async function runBehave(p: Project, name: string): Promise<{ spec: BehaveSpec; text: string; result: BehaveResult }> {
+  const { spec, text } = await readBehave(p.dir, name);
+  const flags: Args['flags'] = { ...(spec.scene ? { scene: spec.scene } : {}), ...(spec.seed !== undefined ? { seed: String(spec.seed) } : {}), ...(spec.keys ? { keys: spec.keys } : {}), ...(spec.save ? { save: spec.save } : {}), ...(spec.date ? { date: spec.date } : {}) };
+  const setup = await runSetup(p, flags);
+  const params = spec.params ? parseParams(spec.params) : setup.recParams;
+  const game = p.newGame(setup.scene, setup.seed, new MemoryStore(setup.initialSave), undefined, undefined, params, setup.date);
+  const play = new RunInput(setup.keys);
+  const names = spec.log ?? [];
+  const log: string[] = [];
+  game.listeners.push((ev) => { if ((names.includes('*') || names.includes(ev.name)) && log.length < LOG_MAX) log.push(logLine(ev)); });
+  let error: string | undefined;
+  try {
+    for (let i = 0; i < spec.frames; i++) game.step(play.at(game, p.config.view.width, p.config.view.height).input);
+  } catch (err) {
+    if (err instanceof GameError) error = `f${game.frame} ${err.message}`;
+    else throw err;
+  }
+  const watch: Record<string, unknown> = {};
+  for (const w of spec.watch ?? []) watch[w] = readWatch(game, w);
+  return { spec, text, result: { watch, log, ...(error ? { error } : {}) } };
+}
+
+/** ロックしたふるまいを再生して、答えと違うもの（決まりの書き換えも）。ages check と書き出しで使う */
+export async function lockedBehaveErrors(p: Project): Promise<string[]> {
+  const locks = await readLocks(p.dir);
+  const out: string[] = [];
+  for (const [key, mark] of Object.entries(locks)) {
+    if (!key.startsWith('behave:')) continue;
+    const name = key.slice(7);
+    const want = mark.value as BehaveLock;
+    try {
+      const r = await runBehave(p, name);
+      if (specHash(r.text) !== want.spec) { out.push(`🔒 ふるまい ${name} の決まり（${BEHAVE_DIR}/${name}.behave.json）が、ロックした後に書き換えられています`); continue; }
+      const d = behaveDiff(want.result, r.result);
+      if (d.length) out.push(`🔒 ふるまい ${name}（${r.spec.desc}）が変わりました: ${d.join(' / ')}`);
+    } catch (e) {
+      out.push(`🔒 ふるまい ${name}: ${(e as Error).message}`);
+    }
+  }
+  return out;
+}
+
+/** ages behave: ふるまいの決まりを再生して、結果とロックした答えとの違いを出す */
+export async function cmdBehave(dir: string, name?: string): Promise<string> {
+  const p = await Project.load(dir);
+  p.requireCodeIntact('ふるまいを確かめることは');
+  const names = name ? [name] : await behaveNames(p.dir);
+  if (name && !BEHAVE_NAME.test(name)) throw new Error(`ふるまいの名前 ${name} には英数字・_・- だけが使えます`);
+  if (!names.length) return `ふるまいの決まりはまだありません（${BEHAVE_DIR}/名前.behave.json に { "desc", "keys", "frames", "watch", "log" }。guide:locks）`;
+  const locks = await readLocks(p.dir);
+  const out: string[] = [];
+  for (const n of names) {
+    const r = await runBehave(p, n);
+    const want = locks[`behave:${n}`]?.value as BehaveLock | undefined;
+    const res = `${Object.entries(r.result.watch).map(([k, v]) => `${k}=${fmt(v)}`).join(' ')}${r.result.log.length ? ` 出来事${r.result.log.length}件` : ''}${r.result.error ? ` エラー: ${r.result.error}` : ''}`;
+    if (!want) { out.push(`・${n}（${r.spec.desc}） ロックなし: ${res}`); continue; }
+    if (specHash(r.text) !== want.spec) { out.push(`✗ ${n}（${r.spec.desc}） 決まりがロックした後に書き換えられています`); continue; }
+    const d = behaveDiff(want.result, r.result);
+    out.push(d.length ? `✗ ${n}（${r.spec.desc}） 答えと違う: ${d.join(' / ')}` : `🔒✓ ${n}（${r.spec.desc}） 答えと同じ: ${res}`);
+  }
+  return withLockReport(p, out.join('\n'));
+}
+
+/** ages lock-restore: ロックしたコードを、ロックしたときの中身に戻す（AI もできる。安全な向きなので） */
+export async function cmdLockRestore(dir: string, file: string): Promise<string> {
+  const p = await Project.load(dir);
+  await p.restoreLockedCode(file.replace(/\\/g, '/').replace(/^\.\//, ''), { who: 'ai', kind: 'ai', win: 'cli' });
+  return `🔒 ${file} を、ロックしたときの中身に戻しました${p.codeTamper.length ? `（ほかにも書き換えられているもの: ${p.codeTamper.join('・')}）` : ''}`;
+}
+
+/**
+ * ages guard: Claude Code の hooks（PreToolUse）から呼ぶ。ロックしたファイル（コード・アセット）を書き換えようとしたら断る（終わりの番号 2）。
+ * 抜け道（シェルからの書き換え）はあるので、ages check・run・export の検査と組み合わせる
+ */
+export async function cmdGuard(dir: string, input: string): Promise<{ code: number; message: string }> {
+  let ev: { tool_name?: string; tool_input?: { file_path?: string; notebook_path?: string; path?: string } };
+  try { ev = JSON.parse(input || '{}'); } catch { return { code: 0, message: '' }; }
+  const target = ev.tool_input?.file_path ?? ev.tool_input?.notebook_path ?? ev.tool_input?.path;
+  if (!target) return { code: 0, message: '' };
+  const root = resolve(dir);
+  const abs = resolve(root, target);
+  if (!abs.startsWith(root + sep)) return { code: 0, message: '' };
+  const rel = abs.slice(root.length + 1).split(sep).join('/');
+  const locks = await readLocks(root);
+  if (rel === '.ages/locks.json' || rel === '.ages/locks.seal') return { code: 2, message: `🔒 ロックの記録（${rel}）は人だけがロックマネージャーで変えます。AI からは書き換えないでください` };
+  if (locks[`file:${rel}`]) return { code: 2, message: `🔒 ${rel} は人がロックしています（${locks[`file:${rel}`].note ?? 'メモなし'}）。書き換えないでください。変えたいときは、人にロックマネージャーで外してもらうよう頼んでください` };
+  const b = /^checks\/([A-Za-z0-9_-]+)\.behave\.json$/.exec(rel);
+  if (b && locks[`behave:${b[1]}`]) return { code: 2, message: `🔒 ふるまい ${b[1]} は人がロックしています。決まり（${rel}）は書き換えないでください` };
+  return { code: 0, message: '' };
+}
+
 export async function cmdCheck(dir: string): Promise<string> {
   const p = await Project.load(dir);
   const sh = await shaderReport(p.dir, p.assets);
   const warns: string[] = [];
-  const errs = [...p.validate(), ...(await p.checkCode()), ...(await p.checkWindows(warns)), ...sh.errors];
+  const errs = [...p.validate(), ...(await p.checkCode()), ...(await p.checkWindows(warns)), ...sh.errors,
+    ...p.codeTamper.map((f) => `🔒 ロックしたコード ${f} が書き換えられています（人がロックマネージャーで「受け入れる」か「戻す」。AI は ages lock-restore <dir> ${f} で戻せる）`),
+    ...(p.codeTamper.length ? [] : await lockedBehaveErrors(p))];
   const miss = languagesOf(p.config).length > 1 ? p.missingText() : new Map<string, string[]>();
   const missNote = miss.size ? `\n未訳: ${[...miss].map(([l, ks]) => `${l} ${ks.length}件`).join('・')}（ages table <dir> text --empty 言語。訳がない間は既定の言語で出る）` : '';
   // シェーダーがコンパイルできるかはブラウザでしか分からない。エディタが開いていれば、変わるたびに確かめる
@@ -1311,6 +1414,13 @@ async function main(argv: string[]): Promise<void> {
     case 'run': out = await cmdRun(dir, a.flags); break;
     case 'log': out = await cmdLog(dir, a.flags); break;
     case 'check': out = await cmdCheck(dir); break;
+    case 'behave': out = await cmdBehave(dir, a.pos[1]); break;
+    case 'lock-restore': out = await cmdLockRestore(dir, need(a.pos[1], 'ロックしたコードの場所（例 game/shop.ts）')); break;
+    case 'guard': {
+      const r = await cmdGuard(dir, await readStdin());
+      if (r.code) { process.stderr.write(r.message + '\n'); process.exit(r.code); }
+      return;
+    }
     case 'version': out = await cmdVersion(dir, a.flags.record === true); break;
     case 'export': out = await cmdExport(dir, a.flags); break;
     case 'pin': out = await cmdPin(dir, typeof a.flags.repo === 'string' ? a.flags.repo : undefined, typeof a.flags.commit === 'string' ? a.flags.commit : undefined, a.flags.force === true); break;
