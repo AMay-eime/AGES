@@ -11,6 +11,7 @@ import { ParticleSim } from './particles.ts';
 import { STD_SHADERS, codeHash, wrapShader, type ShaderDef } from '../core/shader.ts';
 import type { PackageDef } from '../core/packages.ts';
 import type { RenderLayer } from './layer.ts';
+import { sameMat } from './batch.ts';
 
 export interface RendererOptions {
   /** アセットの場所（assets/ship.png）から読み込むURLを作る */
@@ -676,7 +677,8 @@ export class Renderer {
   // ---------- まとめて描く ----------
 
   private quad(tex: Tex, blend: string, q: Corners, u0: number, v0: number, u1: number, v1: number, color: string, alpha: number, mat: Mat | null = null): void {
-    if (tex.tex !== this.curTex || blend !== this.curBlend || mat !== this.curMat || this.count >= MAX_QUADS) {
+    // 効果つきの物も、同じシェーダー・同じ値・同じコマの範囲ならまとめて描く（物ごとに Mat は別でも）
+    if (tex.tex !== this.curTex || blend !== this.curBlend || !sameMat(mat, this.curMat) || this.count >= MAX_QUADS) {
       this.flush();
       this.curTex = tex.tex;
       this.curBlend = blend;
