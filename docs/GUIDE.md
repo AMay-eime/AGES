@@ -121,6 +121,7 @@ AIが毎回読む AGENTS.md には、機能ごとに1行の目次だけを置く
 - 値は `params.名前`（patch の住所も `…Effect.params.amount`）。動かすのは `ctx.tween(id, { 'Effect.params.amount': 0 }, '名前')`
 - 後処理を UI のカメラにかけたくないときは `PostEffect.camera` にゲームのカメラの ID
 - Effect は1つの物に1つなので、重ねたい効果は1つのシェーダーにまとめて書く
+- 同じシェーダー・同じ値の Effect は、物が違ってもまとめて描かれる（弾幕の弾すべてに同じ縁取りでも軽い）。物ごとに値を変えると1つずつ描かれる
 - 新しいシェーダーは assets/ の下に `.frag` を置く。書くのは `vec4 effect(vec4 c, vec2 uv)` と、`uniform float x; // 0..1 =0 説明` の形の宣言だけ（書き方と手本は `ages schema <dir> std:flash`）
 - エディタを開いていればコンパイルの結果が `ages check` に「ファイル:行」で出るので、画面を見ずに直せる
 
