@@ -41,7 +41,7 @@ test('--watch: @プレハブ[*] は全部を ID つきで、[欄=値] は合う�
   assert.match(out, /^watch @shot\[kind=none\]\.Shot\.hits: — → —$/m);
   assert.match(out, /^watch @shot\.Shot\.nope: — → —$/m);
   // --every の行にも
-  assert.match(out, /^f12 hits=2 hits=shot~\d+=2 shot~\d+=4 shot~\d+=2 hits=4 /m);
+  assert.match(out, /^f11 hits=2 hits=shot~\d+=2 shot~\d+=4 shot~\d+=2 hits=4 /m);
   // 消えた物は出なくなる
   const later = await cmdRun(dir, { frames: '22', watch: '@shot[*].Shot.kind' });
   assert.match(later, /^watch @shot\[\*\]\.Shot\.kind: — → shot~\d+=pierce shot~\d+=normal$/m);

@@ -49,22 +49,29 @@ window.addEventListener('unhandledrejection', (e) => fail(e.reason));
 async function main(): Promise<void> {
   const b = (await (await fetch('./project.json')).json()) as ExportBundle;
   const mod = (await import(new URL(b.entry, location.href).href)) as GameModule;
-  const registry = Registry.from(mod, [], await loadPackages(b.config.packages));
-  registry.prefabs = new Map(Object.entries(b.prefabs));
-  registry.scenes = new Map(Object.entries(b.scenes));
-  registry.sheets = new Map(Object.entries(b.sheets));
-  registry.tableData = new Map(Object.entries(b.tables));
-  registry.images = new Map(b.assets.filter((a) => a.w && a.h).map((a) => [a.path, { w: a.w!, h: a.h! }]));
-  registry.shaders = shaderMap(b.assets.flatMap((a) => (a.shader ? [{ ...a.shader, path: a.path } as ShaderDef] : [])));
-  registry.models = modelsOf(b.assets);
-  registry.setLanguages(languagesOf(b.config));
+  const packages = await loadPackages(b.config.packages);
+  // 決まり（部品・プレハブ・シーン・表）。over は確認用のページの案くらべで、案の値に変えた文書
+  const makeRegistry = (over?: { prefabs: Record<string, PrefabDoc>; scenes: Record<string, SceneDoc>; tables: Record<string, TableDoc> }): Registry => {
+    const reg = Registry.from(mod, [], packages);
+    reg.prefabs = new Map(Object.entries({ ...b.prefabs, ...(over?.prefabs ?? {}) }));
+    reg.scenes = new Map(Object.entries({ ...b.scenes, ...(over?.scenes ?? {}) }));
+    reg.sheets = new Map(Object.entries(b.sheets));
+    reg.tableData = new Map(Object.entries({ ...b.tables, ...(over?.tables ?? {}) }));
+    reg.images = new Map(b.assets.filter((a) => a.w && a.h).map((a) => [a.path, { w: a.w!, h: a.h! }]));
+    reg.shaders = shaderMap(b.assets.flatMap((a) => (a.shader ? [{ ...a.shader, path: a.path } as ShaderDef] : [])));
+    reg.models = modelsOf(b.assets);
+    reg.setLanguages(languagesOf(b.config));
+    return reg;
+  };
+  const registry = makeRegistry();
   const v = b.config.view;
   document.title = b.config.name;
 
   const urlOf = (path: string) => new URL(path.split('/').map(encodeURIComponent).join('/'), location.href).href;
   const canvas = document.getElementById('game') as HTMLCanvasElement;
   canvas.style.imageRendering = v.filter === 'nearest' ? 'pixelated' : 'auto';
-  const renderer = new Renderer(canvas, { urlOf, sheets: registry.sheets, filter: v.filter, shaders: registry.shaders, packages: registry.packages });
+  const newRenderer = (c: HTMLCanvasElement) => new Renderer(c, { urlOf, sheets: registry.sheets, filter: v.filter, shaders: registry.shaders, packages: registry.packages });
+  const renderer = newRenderer(canvas);
   const audio = new AudioPlayer(urlOf);
 
   // 画面の大きさに合わせる（view.fit。エディタのゲームの画面と同じ計算）
@@ -122,6 +129,11 @@ async function main(): Promise<void> {
         },
         loading: () => status.loading,
         status, fail,
+        // 案くらべ（--variants）: 案ごとの決まりと描く場所
+        variantRegistry: (i) => makeRegistry(review.variants![i]),
+        makeRenderer: newRenderer,
+        imagePaths: b.assets.filter((a) => a.kind === 'image').map((a) => a.path),
+        gameCanvas: canvas,
       });
     };
     // 音を鳴らすには、最初に画面に触れる必要がある（スマホ）。触れなくても鳴らせるなら、すぐ始める

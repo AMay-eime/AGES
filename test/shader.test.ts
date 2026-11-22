@@ -8,6 +8,7 @@ import { Project } from '../src/project/project.ts';
 import { STD_SHADERS, codeHash, parseShader, wrapShader } from '../src/core/shader.ts';
 import { writeShaderResult } from '../src/project/shader-status.ts';
 import { cmdCheck, cmdMap, cmdRun, cmdSchema } from '../src/cli/ages.ts';
+import { findChrome } from '../src/cli/shot.ts';
 
 process.env.AGES_HOME ??= await mkdtemp(join(tmpdir(), 'ages-home-'));
 const ai = { who: 'ai', kind: 'ai' as const, win: 'cli' };
@@ -132,13 +133,31 @@ test('ages check: エディタでコンパイルした結果を、今の中身�
   const dir = await fresh();
   await mkdir(join(dir, 'assets/shaders'), { recursive: true });
   await writeFile(join(dir, 'assets/shaders/wave.frag'), WAVE);
-  assert.match(await cmdCheck(dir), /シェーダー assets\/shaders\/wave\.frag はまだコンパイルを確かめていません/);
+  // まだ確かめていなければ、headless の Chrome でその場でコンパイルする（Chrome がなければ、確かめていないと書く。issue #148）
+  assert.match(await cmdCheck(dir), findChrome() ? /^ok/ : /シェーダー assets\/shaders\/wave\.frag はまだコンパイルを確かめていません/);
   await writeShaderResult(dir, 'assets/shaders/wave.frag', codeHash(WAVE), "assets/shaders/wave.frag:10: 'pick' : no matching overloaded function found");
   const out = await cmdCheck(dir);
-  assert.match(out, /error: assets\/shaders\/wave\.frag:10: 'pick'.*（エディタでコンパイルしたときのエラー）/);
+  assert.match(out, /error: assets\/shaders\/wave\.frag:10: 'pick'.*（コンパイルしたときのエラー）/);
   // 中身が変わったら、前の結果は使わない
   await writeFile(join(dir, 'assets/shaders/wave.frag'), WAVE + '\n');
   assert.doesNotMatch(await cmdCheck(dir), /error:/);
   await writeShaderResult(dir, 'assets/shaders/wave.frag', codeHash(WAVE + '\n'), null);
   assert.match(await cmdCheck(dir), /^ok/);
+});
+
+test('ages check: エディタを開いていなくても、headless の Chrome でコンパイルして元のファイルの行で出す。uniform のコメントの書き間違いも（issue #148）', { skip: !findChrome() && 'Chrome がない' }, async () => {
+  const dir = await fresh();
+  await mkdir(join(dir, 'assets/shaders'), { recursive: true });
+  await writeFile(join(dir, 'assets/shaders/bad.frag'), `// 壊れたシェーダー
+uniform float amount; // 0..1 =0 強さ
+vec4 effect(vec4 c, vec2 uv) {
+  return c * nope;
+}
+`);
+  assert.match(await cmdCheck(dir), /error: assets\/shaders\/bad\.frag:4: .*nope.*（コンパイルしたときのエラー）/);
+  await writeFile(join(dir, 'assets/shaders/bad.frag'), `// 範囲の書き間違い
+uniform float width; // 0-40 =0 縁の太さ
+vec4 effect(vec4 c, vec2 uv) { return c; }
+`);
+  assert.match(await cmdCheck(dir), /assets\/shaders\/bad\.frag:2: コメント「0-40 =0 縁の太さ」の範囲・既定値が読めません/);
 });

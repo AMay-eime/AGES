@@ -22,7 +22,7 @@ import type { ReviewData } from '../player/review.ts';
 import { writeLaunchers } from '../project/launchers.ts';
 import { checkExport } from './export-check.ts';
 import { readCursor, readLog, readTouched, summarize, writeCursor, type Actor } from '../project/oplog.ts';
-import { OP_DOCS, getValue, parseLiteral, splitCell, type Op } from '../core/patch.ts';
+import { OP_DOCS, applyOps, getValue, parseLiteral, splitCell, type Op } from '../core/patch.ts';
 import { readGuide, readPackageGuide } from '../project/guide.ts';
 import { PACKAGE_LIST, loadPackageCommands } from '../packages/index.ts';
 import type { PackageCommand } from '../core/packages.ts';
@@ -39,6 +39,7 @@ import { baseNameOf, frameCount, listFrames, type SheetDef } from '../core/sheet
 import { autoRects, carryClips, gridRects, nameFrames, type Pixels, type Rect } from '../core/slice.ts';
 import { decodePng } from '../project/png.ts';
 import { shaderReport } from '../project/shader-status.ts';
+import { compileShadersHeadless } from './shader-check.ts';
 import { layoutUI } from '../core/ui.ts';
 import { RunInput, parseParams, parseRunKeys, type RunKeys } from '../core/runinput.ts';
 export { parseParams } from '../core/runinput.ts';
@@ -49,7 +50,7 @@ import { originReport, originSummary, readOrigins, setOrigin, writeOrigins } fro
 import type { DrawStats } from '../editor/shot.ts';
 import { MemoryStore } from '../core/save.ts';
 import { languagesOf } from '../core/i18n.ts';
-import { parseSpawns, spawnTryout, tryoutGone, tryoutScene } from '../core/tryout.ts';
+import { parseSceneSpawns, parseSpawns, spawnInScene, spawnTryout, tryoutGone, tryoutScene } from '../core/tryout.ts';
 
 const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [引数]
 
@@ -65,10 +66,11 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   patch  <dir> <ops.json | -> [--force]   操作の配列（例 [{"op":"set","path":"main#player.Player.speed","value":5}]。一覧は schema <dir> ops）
   table  <dir> <表> [--cols a,b] [--rows id1,id2] [--empty 列]   表を見る（1行1行。--empty はその列が空の行だけ。例 未訳: text --empty en）
                [--export x.csv] [--import x.csv [--force]]   表計算ソフトとの行き来（読み込みは表をまるごと置き換える）
-  run    <dir> [--frames 600] [--scene main | --spawn enemy,explosion@40,0（プレハブだけを空のシーンの真ん中に出して試す）] [--seed 1] [--keys "0-120:ArrowLeft+KeyZ;120-200:@move_x=1;30:Mouse0+ptr=240,100"]
-               [--input recordings/x.input.json] [--watch player.Health.hp,@enemy.Health.hp,...（@プレハブ名 はいる最初の1つ。@enemy[*] は全部、@enemy[kind=boss] は合う最初の1つ、@enemy[*kind=boss] は合う物全部）] [--log 出来事の名前,…（中身をフレームつきで。* で全部）] [--every 60] [--until gameOver | scene:result | click:ボタンのID] [--twice] [--dump]
+  run    <dir> [--frames 600] [--scene main [--spawn "弾@0,1:120{Bullet.kind=big};弾@player+0,2:120"（そのシーンの中に、フレームの始めに出す）] | --spawn enemy,explosion@40,0（プレハブだけを空のシーンの真ん中に出して試す）] [--seed 1] [--keys "0-120:ArrowLeft+KeyZ;120-200:@move_x=1;30:Mouse0+ptr=240,100"]
+               [--input recordings/x.input.json] [--watch player.Health.hp,@enemy.Health.hp,...（@プレハブ名 はいる最初の1つ。@enemy[*] は全部、@enemy[kind=boss] は合う最初の1つ、@enemy[*kind=boss] は合う物全部）] [--log 出来事の名前,…（中身をフレームつきで。* で全部。名前[entity.Bullet.kind] で中身の物の欄も）] [--every 60] [--until gameOver | scene:result | click:ボタンのID] [--twice] [--dump]
                [--save saves/x.save.json]（この保存データから始める。省くと空） [--save-out saves/y.save.json]（終わりの保存データを書き出す） [--lang en]（言語）
                [--params stage=s1,level=2]（始めのシーンに渡す ctx.scene.params。JSON でもよい） [--date 2026-12-25T09:00]（ctx.date の始め。省くと決まった日時）
+               フレームの番号: --keys・--log・--every の fN は N 番目のステップ（--every の値はそのステップを終えた値）。--shot の N は N ステップ進めた後の画面（= N-1 番目のステップを終えた画面）
                --keys の "title+30-32:@ui_confirm" は、シーン title に入るたびに、入ってから 30〜31 フレーム目に押す（click=ボタンのID も書ける）
                [--shot 0,600 | 361-421:4 [--shot-scale 0.5] [--shot-dir 場所] [--shot-around 物,160x160,x4] [--shot-sheet]]（そのフレームの画面を PNG で撮る。既定 .ages/shots。要 Chrome。around は物のまわりを切り抜いて拡大、sheet は並べた1枚に）
                [--perf | --perf logic]（速さ: システムごとの1フレームの時間と、物がいちばん多いフレームを描いた量。logic は描いた量を省く）
@@ -81,11 +83,11 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   talk   <dir> [--task 作業 [--steps "a|b|c"] [--touch 住所,住所]] [--step 2] [--done 結果] [--ask 質問 [--choices "A|B"] [--about 住所]] [--reply 付箋ID 一言]
                エディタの人とのやり取り（何をしているかを見せる・人が決めることを聞く・付箋を読む）。引数なしで読む
   version <dir> [--record]           AGES の版（記録が古ければ直し方を出す）。--record で今の版を残す
-  export <dir> [--out 先] [--diff 前の.ages-export] [--review [--replay "0-120:@fire;…" --frames 600 …ages run と同じ書き方]] [--check] [--serve [ポート]] [--desktop [--id com.名前.ゲーム] [--fullscreen]]  書き出す（ゲームだけ。dist/web は Web にそのまま置ける。--desktop は Tauri の元 dist/desktop。--check は headless の Chrome で動くか確かめる）
+  export <dir> [--out 先（この下に web・desktop を作る。最後が web ならそこに）] [--diff 前の.ages-export] [--review [--replay "0-120:@fire;…" --frames 600 …ages run と同じ書き方] [--variants 案.json（値を変えた1〜3案を、今の値と並べて同時に再生）]] [--check] [--serve [ポート]] [--desktop [--id com.名前.ゲーム] [--fullscreen]]  書き出す（ゲームだけ。dist/web は Web にそのまま置ける。--desktop は Tauri の元 dist/desktop。--check は headless の Chrome で動くか確かめる）
   pin    <dir> [--repo URL] [--commit SHA] [--force]  版だけ同梱の形に（ages.mjs が本体を .ages/engine に取ってくる。GitHub との連携用）。AGENTS.md は手で直されていなければ本体の版に合わせる（--force で直されていても）
   ui     <dir> [シーン]               UI の配置（四角・置き方）と、重なり・はみ出し。直すのは patch の dockUI / attachUI
   assets <dir> [フォルダ] [--kind image|sound|font|shader|model] [--unused] [--refs 場所]   アセットの一覧（使っている所の数）・使っている所
-               [--origin [ファイル | フォルダ | $text.言語 --by own|ai|stock|commission [--tool AIの名前] [--license CC0] [--from 入手元] [--note 一言]]]   出どころ（自作・AI 生成・素材・人に頼んだ）の一覧と記録
+               [--origin [ファイル | フォルダ | $text.言語 --by own|ai|stock|commission [--tool AIの名前] [--license CC0] [--from 入手元] [--note 一言] [--replace（前の記録の値を変える）]]]   出どころ（自作・AI 生成・素材・人に頼んだ）の一覧と記録
   space  <dir> [シーン] [--near id [--radius 3]] [--only id,id] [--frames n] [--keys …]   （追加パッケージ 3d を入れたプロジェクト）3D の空間を文字で確かめる
   sheet  <dir> <画像>                 画像の切り方（コマの名前・位置・基準点・動き）を見る
   slice  <dir> <画像> --grid 32x32 | --count 4x6 | --auto  画像を切る（前と同じ場所のコマは名前を引き継ぐ）
@@ -284,10 +286,35 @@ async function reviewData(p: Project, flags: Record<string, string | boolean>): 
       is3d: !!d.components.Transform3D,
     }))
     .sort((a, b) => (a.name < b.name ? -1 : 1));
+  const variants = flags.variants !== undefined ? await reviewVariants(p, flags.variants) : undefined;
   return {
     replay: { scene: s.scene, seed: s.seed, keys: s.keys, save: s.initialSave, date: formatDate(s.date), ...(params ? { params } : {}), ...(lang ? { lang } : {}), ...(end ? { end } : {}) },
     gallery: { prefabs, sounds: p.assets.filter((a) => a.kind === 'sound').map((a) => a.path).sort() },
+    ...(variants ? { variants } : {}),
   };
+}
+
+/**
+ * --variants: 値を変えた数案（今の値と並べて、同じ入力で同時に再生する。issue #152）。
+ * [{"name":"細い","set":{"@bullet.Effect.params.width":1}}, …] の JSON か、それを書いたファイル。3案まで（今の値と合わせて4つ）
+ */
+async function reviewVariants(p: Project, spec: string | boolean): Promise<NonNullable<ReviewData['variants']>> {
+  if (typeof spec !== 'string') throw new Error('--variants には案の JSON か、それを書いたファイルの場所を渡す（例 --variants checks/flash.variants.json。中身 [{"name":"細い","set":{"@bullet.Effect.params.width":1}}]）');
+  const text = /^\s*\[/.test(spec) ? spec : await readFile(resolve(p.dir, spec), 'utf8').catch(() => { throw new Error(`--variants の ${spec} が読めません（案の JSON か、それを書いたファイル）`); });
+  let list: { name?: unknown; desc?: unknown; set?: unknown }[];
+  try { list = JSON.parse(text); } catch (e) { throw new Error(`--variants: JSON として読めません: ${(e as Error).message}`); }
+  if (!Array.isArray(list) || !list.length || list.length > 3) throw new Error('--variants は 1〜3 案の並び（今の値と合わせて4つまで並べる）');
+  return list.map((v, i) => {
+    const name = typeof v.name === 'string' && v.name.trim() ? v.name.trim() : `案${i + 1}`;
+    if (!v.set || typeof v.set !== 'object' || Array.isArray(v.set) || !Object.keys(v.set).length) throw new Error(`--variants の ${name}: set に { "住所": 値 } を書く（例 {"@bullet.Effect.params.width": 1}）`);
+    // その案の値に変えた文書の写し（変わった文書だけ持つ。元のプロジェクトは変えない）
+    const docs = { scenes: new Map(p.docs.scenes), prefabs: new Map(p.docs.prefabs), sheets: new Map(p.docs.sheets), tables: new Map(p.docs.tables) };
+    let r;
+    try { r = applyOps(docs, p.registry, Object.entries(v.set as Record<string, unknown>).map(([path, value]) => ({ op: 'set', path, value }))); }
+    catch (e) { throw new Error(`--variants の ${name}: ${(e as Error).message}`); }
+    const pick = (kind: string, m: Map<string, unknown>) => Object.fromEntries([...r.dirty].filter((k) => k.startsWith(kind + ':')).map((k) => [k.slice(kind.length + 1), m.get(k.slice(kind.length + 1))]));
+    return { name, ...(typeof v.desc === 'string' ? { desc: v.desc } : {}), set: v.set as Record<string, unknown>, prefabs: pick('prefab', docs.prefabs), scenes: pick('scene', docs.scenes), tables: pick('table', docs.tables) } as NonNullable<ReviewData['variants']>[number];
+  });
 }
 
 export async function cmdExport(dir: string, flags: Record<string, string | boolean>): Promise<string> {
@@ -308,9 +335,11 @@ export async function cmdExport(dir: string, flags: Record<string, string | bool
     ...(typeof flags.diff === 'string' ? { diff: flags.diff } : {}),
   });
   const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)}MB`;
-  const lines = [`書き出しました: ${relative(process.cwd(), r.web) || r.web}（${r.files}ファイル・${mb(r.bytes)}）`,
+  // 今いるフォルダの外なら絶対パスで（../../ だらけにしない）
+  const where = (x: string) => { const r = relative(process.cwd(), x); return !r || r.startsWith('..') ? x : r; };
+  const lines = [`書き出しました: ${where(r.web)}（${r.files}ファイル・${mb(r.bytes)}）`,
     '  Web: このフォルダを丸ごと置けば遊べる（itch.io なら zip にして HTML のゲームとして上げる）。手元で試すなら --serve'];
-  if (r.desktop) lines.push(`  デスクトップ: ${relative(process.cwd(), r.desktop) || r.desktop}（exe の作り方は中の README.md。Rust と Tauri の道具が要る）`);
+  if (r.desktop) lines.push(`  デスクトップ: ${where(r.desktop)}（exe の作り方は中の README.md。Rust と Tauri の道具が要る）`);
   lines.push(...r.notes.map((n) => `  ${n}`));
   // 前の書き出しとの違い（変わったファイルだけ送るため）。一覧は書き出しの中の .ages-export（場所・大きさ・sha1）
   if (r.changes) {
@@ -321,7 +350,7 @@ export async function cmdExport(dir: string, flags: Record<string, string | bool
     if (list.length > 40) {
       const file = join(r.out, 'changes.txt');
       await writeFile(file, list.join('\n') + '\n');
-      lines.push(`    …ほか ${list.length - 40}（全部は ${relative(process.cwd(), file) || file}）`);
+      lines.push(`    …ほか ${list.length - 40}（全部は ${where(file)}）`);
     }
   } else lines.push(`  ファイルの一覧（場所・大きさ・sha1）は ${EXPORT_MARK}。次からは前の書き出しとの違いが出る（ほかの書き出しと比べるなら --diff <その ${EXPORT_MARK}>）`);
   // ストアの申告（生成 AI を使ったか）のためのまとめ。未記入があっても止めない
@@ -616,7 +645,7 @@ export async function cmdAssets(dir: string, folder: string | undefined, f: Args
     if (typeof f.origin === 'string') {
       const str = (k: string) => (typeof f[k] === 'string' ? (f[k] as string) : undefined);
       if (str('by') === undefined && ['tool', 'license', 'from', 'note'].every((k) => str(k) === undefined)) throw new Error('書く中身がありません（--by own|ai|stock|commission と、--tool・--license・--from・--note）。一覧は場所を付けずに ages assets <dir> --origin');
-      const r = setOrigin(o, p.assets, langs, f.origin, { by: str('by'), tool: str('tool'), license: str('license'), from: str('from'), note: str('note') }, AI_ACTOR.kind === 'ai' ? 'ai' : 'human', f.force === true);
+      const r = setOrigin(o, p.assets, langs, f.origin, { by: str('by'), tool: str('tool'), license: str('license'), from: str('from'), note: str('note') }, AI_ACTOR.kind === 'ai' ? 'ai' : 'human', f.force === true, f.replace === true);
       await writeOrigins(p.dir, o);
       return r.text;
     }
@@ -755,6 +784,32 @@ function readWatch(game: Game, addr: string): unknown {
 
 /** --log: 出来事の中身を、出たフレームごとに1行（多すぎるときは、始めの分だけ） */
 const LOG_MAX = 300;
+/** --log の書き方: 名前,名前[中身の名前.部品.欄;…],*（[ ] の中の , でも区切らない） */
+export function parseLogSpecs(s: string): { name: string; fields: string[] }[] {
+  const out: { name: string; fields: string[] }[] = [];
+  for (const part of s.match(/[^,\[]+(\[[^\]]*\])?/g) ?? []) {
+    const m = /^\s*([^\[\s]+)\s*(?:\[([^\]]*)\])?\s*$/.exec(part);
+    if (!m) throw new Error(`--log の ${part.trim()}: 名前 か 名前[中身の名前.部品.欄] です（例 hit[entity.Bullet.kind]）`);
+    const fields = (m[2] ?? '').split(/[,;]/).map((x) => x.trim()).filter(Boolean);
+    for (const x of fields) if (!/^[^.]+\.[A-Za-z_][\w]*\.[\w.[\]]+$/.test(x)) throw new Error(`--log の ${m[1]}[${x}]: 中身の名前.部品.欄 です（例 entity.Bullet.kind。中身の entity に入っている物の ID から読む）`);
+    out.push({ name: m[1], fields });
+  }
+  return out;
+}
+
+/** --log の名前[…]: 出来事の中身の物の ID から、欄を読んで添える */
+function logFields(game: Game, ev: GameEvent, specs: { name: string; fields: string[] }[]): string {
+  const fields = specs.filter((s) => s.name === ev.name || s.name === '*').flatMap((s) => s.fields);
+  if (!fields.length) return '';
+  const data = (ev.data ?? {}) as Record<string, unknown>;
+  return fields.map((x) => {
+    const [key, ...rest] = x.split('.');
+    const id = data[key];
+    const v = typeof id === 'string' && game.world.entities.has(id) ? readWatch(game, `${id}.${rest.join('.')}`) : undefined;
+    return ` ${x}=${fmt(v)}`;
+  }).join('');
+}
+
 function logLine(ev: GameEvent): string {
   const data = ev.data === undefined ? '' : ' ' + (typeof ev.data === 'string' ? ev.data : JSON.stringify(ev.data));
   return `f${ev.frame} ${ev.name}${data.length > 240 ? data.slice(0, 239) + '…' : data}`;
@@ -798,8 +853,9 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
   let scene = setup.scene;
   const { seed, keys, initialSave, date, recParams } = setup;
   const watch = typeof f.watch === 'string' ? f.watch.split(',').map((s) => s.trim()).filter(Boolean) : [];
-  // --log: 出来事（ctx.emit）の名前。* で全部
-  const logNames = typeof f.log === 'string' ? f.log.split(',').map((s) => s.trim()).filter(Boolean) : [];
+  // --log: 出来事（ctx.emit）の名前。* で全部。名前[entity.Bullet.kind] で、中身の物の ID から欄も添える（issue #150）
+  const logSpecs = typeof f.log === 'string' ? parseLogSpecs(f.log) : [];
+  const logNames = logSpecs.map((s) => s.name);
   const every = f.every !== undefined ? Number(f.every) : 0;
   const until = typeof f.until === 'string' ? f.until : '';
   // --params: 始めのシーンに渡すもの（ctx.scene.params）。stage=s1,level=2 か JSON
@@ -825,8 +881,12 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
   const shotSnaps = new Map<number, unknown>();
 
   // --spawn: 選んだプレハブだけを空のシーンの真ん中に出して試す（出した物がすべて消えたら止まる）
-  const spawns = typeof f.spawn === 'string' ? parseSpawns(f.spawn) : [];
-  if (f.spawn !== undefined && !spawns.length) throw new Error('--spawn にはプレハブの名前が要ります（例 --spawn enemy_fast,explosion@40,0。@ の後は画面の真ん中からのずれ）');
+  // --scene と一緒なら、そのシーンの中に、フレーム・位置・値を決めて出す（issue #149）
+  const inScene = typeof f.spawn === 'string' && typeof f.scene === 'string' ? parseSceneSpawns(f.spawn) : [];
+  for (const s of inScene) if (!p.docs.prefabs.has(s.prefab)) throw new Error(`--spawn の ${s.prefab}: プレハブはありません${suggest(s.prefab, [...p.docs.prefabs.keys()])}`);
+  if (inScene.length && shotFrames.length) throw new Error('--scene と --spawn は、まだ --shot と一緒に使えません（--watch・--log で確かめる）');
+  const spawns = typeof f.spawn === 'string' && !inScene.length ? parseSpawns(f.spawn) : [];
+  if (f.spawn !== undefined && !spawns.length && !inScene.length) throw new Error('--spawn にはプレハブの名前が要ります（例 --spawn enemy_fast,explosion@40,0。@ の後は画面の真ん中からのずれ）');
   const once = () => {
     const lang = typeof f.lang === 'string' ? f.lang : undefined;
     const game = spawns.length ? p.newGame(undefined, seed, new MemoryStore(initialSave), lang, tryoutScene(), undefined, date) : p.newGame(scene, seed, new MemoryStore(initialSave), lang, undefined, params, date);
@@ -843,18 +903,22 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
     let logged = 0;
     if (logNames.length) game.listeners.push((ev) => {
       if (!logNames.includes('*') && !logNames.includes(ev.name)) return;
-      if (logged++ < LOG_MAX) lines.push(logLine(ev));
+      // 添える欄は、出来事が出たときに読む（そのあと消える物でも読める）
+      if (logged++ < LOG_MAX) lines.push(logLine(ev) + logFields(game, ev, logSpecs));
     });
     const t0 = performance.now();
     try {
       for (let i = 0; i < frames && !stopped; i++) {
         const { input: inp, warning } = play.at(game, p.config.view.width, p.config.view.height);
         if (warning) lines.push(`⚠ f${game.frame} click=${warning}: UI の付いた物 ${warning} がありません${suggest(warning, [...game.world.entities.values()].filter((e) => e.c.UI).map((e) => e.id))}`);
+        // --scene と --spawn: このステップの始めに出す（出した物の ID を出す。--watch・--log で追える）
+        if (inScene.length) for (const r of spawnInScene(game, inScene)) lines.push(r.id ? `f${game.frame} 出した: @${r.prefab} → ${r.id}` : `⚠ f${game.frame} --spawn の @${r.prefab} を出せません: ${r.error}`);
         game.step(inp);
         if (shotFrames.includes(game.frame) && !shotHashes.has(game.frame)) { shotHashes.set(game.frame, game.hash()); shotSnaps.set(game.frame, game.snapshot()); }
         if (spawned.length && !stopped && tryoutGone(game, spawned)) stopped = `出した物がすべて消えた @f${game.frame}`;
+        // 番号はステップの始まり（--log の出来事・--keys の入力と同じ。fN は N 番目のステップを終えた値）
         if (every && game.frame % every === 0) {
-          lines.push(`f${game.frame} ` + watch.map((w) => `${w.split('.').pop()}=${fmt(readWatch(game, w))}`).join(' '));
+          lines.push(`f${game.frame - 1} ` + watch.map((w) => `${w.split('.').pop()}=${fmt(readWatch(game, w))}`).join(' '));
         }
       }
     } catch (err) {
@@ -1152,7 +1216,14 @@ export async function cmdGuard(dir: string, input: string): Promise<{ code: numb
 
 export async function cmdCheck(dir: string): Promise<string> {
   const p = await Project.load(dir);
-  const sh = await shaderReport(p.dir, p.assets);
+  let sh = await shaderReport(p.dir, p.assets);
+  // まだ確かめていないシェーダーは、headless の Chrome でその場でコンパイルする（エディタを開いていなくてもよい。issue #148）
+  let headless: 'ok' | 'none' | '' = '';
+  if (sh.unchecked.length) {
+    const defs = p.assets.filter((a) => sh.unchecked.includes(a.path) && a.shader).map((a) => a.shader!);
+    headless = (await compileShadersHeadless(p.dir, defs)) ? 'ok' : 'none';
+    if (headless === 'ok') sh = await shaderReport(p.dir, p.assets);
+  }
   const warns: string[] = [];
   // 機能ごとのモジュール（game/名前/）の境目と仕様
   // （EDITOR-PLAN.md で仕様駆動・AI におまかせを選んだときだけ。ages.project.json の modules）
@@ -1163,7 +1234,7 @@ export async function cmdCheck(dir: string): Promise<string> {
   const miss = languagesOf(p.config).length > 1 ? p.missingText() : new Map<string, string[]>();
   const missNote = miss.size ? `\n未訳: ${[...miss].map(([l, ks]) => `${l} ${ks.length}件`).join('・')}（ages table <dir> text --empty 言語。訳がない間は既定の言語で出る）` : '';
   // シェーダーがコンパイルできるかはブラウザでしか分からない。エディタが開いていれば、変わるたびに確かめる
-  const note = sh.unchecked.length ? `\nシェーダー ${sh.unchecked.join(' ')} はまだコンパイルを確かめていません（エディタを開いていると、変えるたびに確かめて ages check に出ます）` : '';
+  const note = sh.unchecked.length ? `\nシェーダー ${sh.unchecked.join(' ')} はまだコンパイルを確かめていません（${headless === 'none' ? 'Chrome が見つからないので、headless でも確かめられません。AGES_CHROME に場所を入れるか、' : ''}エディタを開いていると、変えるたびに確かめて ages check に出ます）` : '';
   // ゲーム独自の検証（defineCheck）は ⚠（編集は止めないもの）
   const own = p.projectChecks().map((m) => `\n⚠ ${m}`).join('');
   // 受けている出来事を、どこからも出していない（名前は文字なので型チェックで見えず、動かしても何も起きないだけ）

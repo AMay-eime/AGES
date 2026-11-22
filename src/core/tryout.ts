@@ -37,5 +37,60 @@ export function spawnTryout(game: Game, spawns: TryoutSpawn[], width: number, he
   });
 }
 
+// ---- シーンの中に出す（ages run --scene と --spawn。issue #149） ----
+
+/** シーンの中に出す1つ: プレハブ@位置:フレーム{部品.欄=値,…} */
+export interface SceneSpawn {
+  prefab: string;
+  /** ワールドの座標（2つか3つ）。from があれば、その物からのずれ */
+  pos?: number[];
+  from?: string;
+  /** そのステップの始めに出す */
+  frame: number;
+  values: Record<string, Record<string, unknown>>;
+}
+
+/** "弾@0,1:120{Bullet.kind=big};弾@player+0.05,1:120;敵" → 出すものの並び（; で区切る） */
+export function parseSceneSpawns(text: string): SceneSpawn[] {
+  return text.split(';').map((s) => s.trim()).filter(Boolean).map((s) => {
+    const m = /^([A-Za-z0-9_-]+)(?:@(?:([A-Za-z0-9_~$#/-]+)\+)?(-?[\d.]+(?:,-?[\d.]+){1,2}))?(?::(\d+))?(?:\{([^}]*)\})?$/.exec(s);
+    if (!m) throw new Error(`--spawn の ${s}: プレハブ@x,y:フレーム{部品.欄=値,…} です（例 弾@0,1:120{Bullet.kind=big}。@物のID+dx,dy でその物からのずれ。@・:・{} は省ける）`);
+    const values: Record<string, Record<string, unknown>> = {};
+    for (const kv of (m[5] ?? '').split(',').map((x) => x.trim()).filter(Boolean)) {
+      const e = /^([A-Za-z_]\w*)\.(\w+)=(.*)$/.exec(kv);
+      if (!e) throw new Error(`--spawn の {${kv}}: 部品.欄=値 です（例 Bullet.kind=big）`);
+      let v: unknown = e[3];
+      try { v = JSON.parse(e[3]); } catch { /* 文字のまま */ }
+      (values[e[1]] ??= {})[e[2]] = v;
+    }
+    return { prefab: m[1], ...(m[3] ? { pos: m[3].split(',').map(Number) } : {}), ...(m[2] ? { from: m[2] } : {}), frame: m[4] ? Number(m[4]) : 0, values };
+  });
+}
+
+/** そのステップの始めに出すものを出す。出した物の ID（と出せなかった理由）を返す */
+export function spawnInScene(game: Game, list: SceneSpawn[]): { prefab: string; id?: string; error?: string }[] {
+  const out: { prefab: string; id?: string; error?: string }[] = [];
+  for (const s of list.filter((x) => x.frame === game.frame)) {
+    let base = [0, 0, 0];
+    if (s.from) {
+      const f = game.world.entities.get(s.from);
+      if (!f) { out.push({ prefab: s.prefab, error: `@${s.from} がいません` }); continue; }
+      const w = (f.c.Transform3D ?? game.ctx.worldOf?.(f) ?? f.c.Transform ?? {}) as { x?: number; y?: number; z?: number };
+      base = [w.x ?? 0, w.y ?? 0, w.z ?? 0];
+    }
+    try {
+      const e = game.world.spawn(s.prefab, s.values);
+      if (s.pos) {
+        const t = (e.c.Transform3D ?? e.c.Transform) as Record<string, unknown> | undefined;
+        if (t) { t.x = base[0] + s.pos[0]; t.y = base[1] + s.pos[1]; if (e.c.Transform3D) t.z = base[2] + (s.pos[2] ?? 0); }
+      }
+      out.push({ prefab: s.prefab, id: e.id });
+    } catch (err) {
+      out.push({ prefab: s.prefab, error: (err as Error).message });
+    }
+  }
+  return out;
+}
+
 /** 出した物がすべて消えたか（消えるのはフレームの終わりなので、step の後に見る） */
 export const tryoutGone = (game: Game, ids: string[]): boolean => ids.length > 0 && ids.every((id) => !game.world.entities.has(id));

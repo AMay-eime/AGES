@@ -33,7 +33,7 @@ export async function writeOrigins(dir: string, o: Origins): Promise<void> {
  * 出どころを書く。target はファイル・フォルダ（中のファイル全部）・`$text.言語`。by が none なら記録を消す。
  * 人が書いた記録を AI が変えるには force が要る
  */
-export function setOrigin(o: Origins, assets: AssetInfo[], languages: string[], target: string, input: OriginInput, who: 'human' | 'ai', force = false): { key: string; text: string } {
+export function setOrigin(o: Origins, assets: AssetInfo[], languages: string[], target: string, input: OriginInput, who: 'human' | 'ai', force = false, replace = false): { key: string; text: string } {
   let key = target.replace(/\\/g, '/');
   if (key.startsWith('$text.')) {
     const lang = key.slice('$text.'.length);
@@ -53,10 +53,22 @@ export function setOrigin(o: Origins, assets: AssetInfo[], languages: string[], 
   if (!by || !(ORIGIN_BY as readonly string[]).includes(by)) throw new Error(`--by は ${ORIGIN_BY.map((b) => `${b}（${BY_JA[b]}）`).join(' / ')} のどれかです（消すなら none）`);
   const pick = (k: 'tool' | 'license' | 'from' | 'note') => { const v = input[k] !== undefined ? input[k]!.trim() : old?.[k]; return v ? { [k]: v } : {}; };
   const next: Origin = { by: by as OriginBy, ...pick('tool'), ...pick('license'), ...pick('from'), ...pick('note'), who };
+  // 前の記録の中身を別の値で上書きするときは --replace を求める（うっかり消さない。issue #154）
+  if (old && !replace && !force) {
+    const clash = (['by', 'tool', 'license', 'from', 'note'] as const).filter((k) => old[k] && next[k] !== old[k]);
+    if (clash.length) {
+      const folderHint = key.endsWith('/') ? `\nフォルダの中の1つのファイルのことなら、ファイルを指して書く（ages assets <dir> --origin ${key}ファイル名 …。ファイルの記録はフォルダの記録より先に使われる）。` : '';
+      throw new Error(`${key} にはもう出どころの記録があり、${clash.join('・')} が変わります。\n  前: ${describeOrigin(old)}\n  新: ${describeOrigin(next)}\n置き換えるなら --replace を付ける。${folderHint}`);
+    }
+  }
   o[key] = next;
   const inside = key.endsWith('/') ? `（中の ${assets.filter((a) => a.path.startsWith(key) && needsOrigin(a)).length} ファイル）` : '';
   const hint = next.by === 'ai' && !next.tool ? '。--tool で使った AI の名前も' : next.by === 'stock' && !next.license ? '。--license と --from（入手元）も' : '';
-  return { key, text: `${key}${inside}: ${describeOrigin(next)}${hint}` };
+  // 前の記録があれば並べる。ファイルの記録で、それを含むフォルダの記録もあれば、どちらが使われるかを案内する
+  const before = old && describeOrigin(old) !== describeOrigin(next) ? `\n  前: ${describeOrigin(old)}` : '';
+  const folder = !key.endsWith('/') && !key.startsWith('$') ? Object.keys(o).filter((k) => k.endsWith('/') && key.startsWith(k)).sort((a, b) => b.length - a.length)[0] : undefined;
+  const folderNote = folder ? `\n  このファイルは、フォルダ ${folder} の記録（${describeOrigin(o[folder])}）ではなく、この記録を使う。フォルダの記録で足りるなら、ファイルの記録は要らない（--by none で消す）` : '';
+  return { key, text: `${key}${inside}: ${describeOrigin(next)}${hint}${before}${folderNote}` };
 }
 
 /** ファイル・フォルダの場所が変わったら、記録の場所も変える（消したものの記録は残す: 元に戻したときのため） */

@@ -7,7 +7,7 @@ import { copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
-import { dirname, extname, join, normalize, relative, resolve, sep } from 'node:path';
+import { basename, dirname, extname, join, normalize, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Project } from './project.ts';
 import type { ExportBundle } from '../player/main.ts';
@@ -109,7 +109,9 @@ async function copyModules(entries: string[], root: string, outDir: string, note
 export async function exportProject(p: Project, opts: ExportOptions = {}): Promise<ExportResult> {
   const errors = [...p.validate(), ...(await p.checkCode())];
   if (errors.length) throw new Error(`ages check のエラーを直してから書き出してください（${errors.length}件。最初: ${errors[0]}）`);
-  const out = resolve(opts.out ?? join(p.dir, 'dist'));
+  // --out の下に web（と desktop）を作る。最後が web なら、その下にもう一度 web は作らない（--out dist/web で dist/web/web にしない）
+  let out = resolve(opts.out ?? join(p.dir, 'dist'));
+  if (basename(out) === 'web') out = dirname(out);
   const web = join(out, 'web');
   // 比べる相手: 渡されたファイルか、消す前の前の書き出しの一覧
   const before = opts.diff ? await readManifest(resolve(opts.diff), true) : await readManifest(join(web, EXPORT_MARK), false);

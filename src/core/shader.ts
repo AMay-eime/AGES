@@ -81,6 +81,8 @@ function fieldOf(type: string, comment: string, at: string, errors: string[]): F
   if (dm) { def = dm[1]; rest = rest.slice(dm[0].length); }
   const desc = rest.trim() || undefined;
   const bad = (why: string) => { errors.push(`${at}: ${why}`); return null; };
+  // 範囲・既定値のつもりで読めなかったもの（説明として扱われてしまう）は知らせる（issue #148）
+  if (desc && (/^-?[\d.]/.test(desc) || /(^|\s)=\S/.test(desc))) return bad(`コメント「${comment.trim()}」の範囲・既定値が読めません。「最小..最大 =既定値 説明」の順で書きます（例 // 0..40 =0 縁の太さ。範囲は .. でつなぐ）`);
   switch (type) {
     case 'float':
     case 'int': {
