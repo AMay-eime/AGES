@@ -39,7 +39,7 @@ export async function shaderReport(root: string, assets: AssetInfo[]): Promise<{
     if (!a.shader || a.shader.errors.length) continue;
     const r = results[a.path];
     if (!r || r.hash !== codeHash(a.shader.code)) { unchecked.push(a.path); continue; }
-    if (r.error) errors.push(`${r.error}（エディタでコンパイルしたときのエラー）`);
+    if (r.error) errors.push(`${r.error}（コンパイルしたときのエラー）`);
   }
   return { errors, unchecked };
 }

@@ -11,7 +11,8 @@ import { spawnTryout, tryoutGone, tryoutScene } from '../core/tryout.ts';
 import type { Renderer } from '../render/webgl.ts';
 import type { AudioPlayer } from '../audio/player.ts';
 import type { Devices } from '../input/devices.ts';
-import type { ProjectConfig, SceneDoc } from '../core/docs.ts';
+import type { PrefabDoc, ProjectConfig, SceneDoc } from '../core/docs.ts';
+import type { TableDoc } from '../core/table.ts';
 
 /** ages export --review が書く review.json */
 export interface ReviewData {
@@ -30,6 +31,8 @@ export interface ReviewData {
     prefabs: { name: string; desc: string; kind: 'fx' | 'sound' | 'thing'; is3d: boolean }[];
     sounds: string[];
   };
+  /** 案くらべ（--variants）: 値を変えた案。今の値と並べて、同じ入力で同時に再生する。変わった文書だけ持つ */
+  variants?: { name: string; desc?: string; set: Record<string, unknown>; prefabs: Record<string, PrefabDoc>; scenes: Record<string, SceneDoc>; tables: Record<string, TableDoc> }[];
 }
 
 export interface ReviewHost {
@@ -47,8 +50,15 @@ export interface ReviewHost {
   /** 全部の画像・音を読み込む（見本帳） */
   preloadAll(): Promise<void>;
   loading(): boolean;
-  /** hash は再生が止めるフレームまで来たときの状態（ages run の hash= と同じなら、同じように動いた） */
-  status: { frame: number; scene: string; error: string; hash?: string };
+  /** 案くらべ: 案の値に変えた決まり（案ごと）と、案ごとの描く場所 */
+  variantRegistry?(i: number): Registry;
+  makeRenderer?(canvas: HTMLCanvasElement): Renderer;
+  /** 案くらべの絵を先に読む（全部の画像） */
+  imagePaths?: string[];
+  /** ゲームを描く本来の canvas（案くらべの間は隠す） */
+  gameCanvas?: HTMLCanvasElement;
+  /** hash は再生が止めるフレームまで来たときの状態（ages run の hash= と同じなら、同じように動いた）。hashes は案くらべの案ごと */
+  status: { frame: number; scene: string; error: string; hash?: string; hashes?: string[] };
   fail(e: unknown): void;
 }
 
@@ -74,7 +84,7 @@ export function startReview(h: ReviewHost): void {
   const fps = config.fps;
   const SPEEDS = [0.25, 0.5, 1, 2];
 
-  let mode: 'replay' | 'gallery' = 'replay';
+  let mode: 'replay' | 'gallery' | 'compare' = 'replay';
   let game!: Game;
   let play: RunInput | null = null;
   let paused = false;
@@ -104,6 +114,58 @@ export function startReview(h: ReviewHost): void {
     play = new RunInput(r.keys);
     paused = false;
     delete h.status.hash;
+    h.hold(r.scene, true);
+    refresh();
+  };
+
+  // ---- 案くらべ（--variants）: 今の値と、値を変えた案を、同じ入力で同時に再生して並べる ----
+  type Pane = { name: string; sub: string; game: Game; play: RunInput; renderer: Renderer; canvas: HTMLCanvasElement; cell: HTMLDivElement };
+  let panes: Pane[] = [];
+  let sel = 0; // 音を鳴らす案
+  const grid = document.createElement('div');
+  grid.setAttribute('style', 'position:fixed;left:0;right:0;bottom:0;display:none;gap:4px;padding:4px;box-sizing:border-box;background:#0b0c10;z-index:4');
+  document.body.append(grid);
+  const startCompare = () => {
+    reset();
+    const r = data.replay;
+    const list = [{ name: '今の値', sub: '', reg: registry }, ...(data.variants ?? []).map((x, i) => ({ name: x.name, sub: Object.entries(x.set).map(([k, val]) => `${k.split('.').slice(-2).join('.')}=${JSON.stringify(val)}`).join(' '), reg: h.variantRegistry!(i) }))];
+    if (!panes.length) {
+      // 案ごとの描く場所（WebGL の canvas と描く道具）は最初に1回だけ作る
+      panes = list.map((x) => {
+        const cell = document.createElement('div');
+        cell.setAttribute('style', 'position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden;border:2px solid transparent;border-radius:6px;background:#000');
+        const canvas = document.createElement('canvas');
+        canvas.width = v.width; canvas.height = v.height;
+        canvas.style.imageRendering = v.filter === 'nearest' ? 'pixelated' : 'auto';
+        const tag = document.createElement('div');
+        tag.textContent = x.sub ? `${x.name}  ${x.sub}` : x.name;
+        tag.setAttribute('style', 'position:absolute;left:4px;top:4px;right:4px;padding:2px 6px;background:#000a;color:#fff;font:12px system-ui,sans-serif;border-radius:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none');
+        cell.append(canvas, tag);
+        grid.append(cell);
+        const renderer = h.makeRenderer!(canvas);
+        void renderer.preload(h.imagePaths ?? []).catch(() => {});
+        return { name: x.name, sub: x.sub, game: null as unknown as Game, play: null as unknown as RunInput, renderer, canvas, cell };
+      });
+      panes.forEach((pn, i) => pn.cell.addEventListener('click', () => { sel = i; audio.stopAll(); refresh(); }));
+    }
+    panes.forEach((pn, i) => {
+      const reg = list[i].reg;
+      const doc = reg.scenes.get(r.scene) ?? h.scenes[r.scene];
+      if (!doc) throw new Error(`シーン ${r.scene} がありません`);
+      const g = new Game(reg, config, doc, r.seed, { store: new MemoryStore(structuredClone(r.save)), lang: r.lang, params: r.params, date: parseDate(r.date) });
+      g.audioListeners.push((cmd) => { if (i === sel) audio.handle(cmd); });
+      g.particleListeners.push((cmd) => pn.renderer.particles.burst(g.world, cmd.id, cmd.count));
+      g.sceneListeners.push((_from, to) => h.hold(to, false));
+      pn.renderer.particles.clear();
+      pn.game = g;
+      pn.play = new RunInput(r.keys);
+    });
+    game = panes[0].game;
+    play = panes[0].play;
+    audio.setBuses(panes[sel].game.audioBuses());
+    paused = false;
+    delete h.status.hash;
+    delete h.status.hashes;
     h.hold(r.scene, true);
     refresh();
   };
@@ -151,13 +213,14 @@ export function startReview(h: ReviewHost): void {
 
   const tabReplay = button('再生', '決まった入力で動かす', () => { mode = 'replay'; startReplay(); });
   const tabGallery = button('見本帳', '演出・音を1つずつ', () => { mode = 'gallery'; newTryout(); showing = null; refresh(); });
-  const restart = button('⏮', '最初から', () => (mode === 'replay' ? startReplay() : showing ? show(showing.name, showing.sound) : undefined));
+  const tabCompare = button('案くらべ', '値を変えた案を、同じ入力で同時に並べて再生する（押した案の音が鳴る）', () => { mode = 'compare'; startCompare(); });
+  const restart = button('⏮', '最初から', () => (mode === 'replay' ? startReplay() : mode === 'compare' ? startCompare() : showing ? show(showing.name, showing.sound) : undefined));
   const pause = button('⏸', '一時停止 / 続ける', () => { paused = !paused; refresh(); });
   const stepBtn = button('▶|', '1フレーム進める（止まっているとき）', () => { paused = true; pendingSteps++; refresh(); });
   const speedBtn = button('×1', '速さ', () => { speed = SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length]; refresh(); });
   const self = button('自分で', 'ここから自分で操作する（キーボード・ゲームパッド・タッチ）', () => { play = null; paused = false; refresh(); });
   const again = button('くり返す', '消えたら、また出す', () => { repeat = !repeat; refresh(); });
-  bar.append(tabReplay, tabGallery, restart, pause, stepBtn, speedBtn, self, again, label);
+  bar.append(tabReplay, tabGallery, ...(data.variants?.length && h.makeRenderer && h.variantRegistry ? [tabCompare] : []), restart, pause, stepBtn, speedBtn, self, again, label);
 
   const kindLabel = { fx: '演出', sound: '音', thing: '物' } as const;
   const buildPanel = () => {
@@ -191,10 +254,29 @@ export function startReview(h: ReviewHost): void {
     panel.style.display = mode === 'gallery' ? 'block' : 'none';
     panel.style.height = `${bottom}px`;
     h.setInsets(bar.offsetHeight, bottom);
+    // 案くらべ: 本来の画面を隠し、案を格子に並べる（2つなら横か縦に、3・4つなら2×2）
+    const cmp = mode === 'compare';
+    if (h.gameCanvas) h.gameCanvas.style.visibility = cmp ? 'hidden' : 'visible';
+    grid.style.display = cmp ? 'grid' : 'none';
+    if (cmp && panes.length) {
+      grid.style.top = `${bar.offsetHeight}px`;
+      const W = window.innerWidth, H = Math.max(1, window.innerHeight - bar.offsetHeight);
+      const cols = panes.length <= 1 ? 1 : panes.length === 2 ? (W / H >= (v.width / v.height) ? 2 : 1) : 2;
+      const rows = Math.ceil(panes.length / cols);
+      grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+      grid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+      const cw = (W - 8 - (cols - 1) * 4) / cols - 4, ch = (H - 8 - (rows - 1) * 4) / rows - 4;
+      const s = Math.min(cw / v.width, ch / v.height);
+      panes.forEach((pn, i) => {
+        Object.assign(pn.canvas.style, { width: `${Math.floor(v.width * s)}px`, height: `${Math.floor(v.height * s)}px` });
+        pn.cell.style.borderColor = i === sel ? '#3d5afe' : 'transparent';
+      });
+    }
   };
   function refresh(): void {
     tabReplay.setAttribute('style', css.btn + (mode === 'replay' ? ';' + css.on : ''));
     tabGallery.setAttribute('style', css.btn + (mode === 'gallery' ? ';' + css.on : ''));
+    tabCompare.setAttribute('style', css.btn + (mode === 'compare' ? ';' + css.on : ''));
     pause.textContent = paused ? '▶' : '⏸';
     speedBtn.textContent = `×${speed}`;
     self.style.display = mode === 'replay' && play ? '' : 'none';
@@ -207,6 +289,12 @@ export function startReview(h: ReviewHost): void {
 
   // ---- 進める ----
   const stepOnce = () => {
+    // 案くらべ: どの案も同じ入力で1フレームずつ進める
+    if (mode === 'compare') {
+      for (const pn of panes) pn.game.step(pn.play.at(pn.game, v.width, v.height).input);
+      audio.setBuses(panes[sel].game.audioBuses());
+      return;
+    }
     const input = play ? play.at(game, v.width, v.height).input : devices.frame();
     game.step(input);
     audio.setBuses(game.audioBuses());
@@ -224,25 +312,32 @@ export function startReview(h: ReviewHost): void {
     last = now;
     try {
       let advanced = 0;
-      const ended = mode === 'replay' && data.replay.end !== undefined && game.frame >= data.replay.end && !!play;
-      if (ended && !paused) { paused = true; h.status.hash = game.hash(); refresh(); }
+      const replaying = mode === 'replay' || mode === 'compare';
+      const ended = replaying && data.replay.end !== undefined && game.frame >= data.replay.end && !!play;
+      if (ended && !paused) {
+        paused = true;
+        h.status.hash = game.hash();
+        if (mode === 'compare') h.status.hashes = panes.map((pn) => pn.game.hash());
+        refresh();
+      }
       if (!h.loading()) {
         if (!paused) {
           acc += dt * speed;
           let n = 0;
           // 止めるフレームを越えない（その後のコマ送り・自分での操作は越えてよい）
-          const stop = mode === 'replay' && play && data.replay.end !== undefined && game.frame < data.replay.end ? data.replay.end : Infinity;
+          const stop = replaying && play && data.replay.end !== undefined && game.frame < data.replay.end ? data.replay.end : Infinity;
           while (acc >= 1 / fps && n++ < 8 && game.frame < stop) { stepOnce(); acc -= 1 / fps; advanced++; }
         } else {
           acc = 0;
           while (pendingSteps > 0) { pendingSteps--; stepOnce(); advanced++; }
         }
       }
-      renderer.draw(game.world, { background: v.background, design: { width: v.width, height: v.height }, overlay: game.overlay(), particles: { dt: advanced / fps }, post: true });
+      if (mode === 'compare') for (const pn of panes) pn.renderer.draw(pn.game.world, { background: v.background, design: { width: v.width, height: v.height }, overlay: pn.game.overlay(), particles: { dt: advanced / fps }, post: true });
+      else renderer.draw(game.world, { background: v.background, design: { width: v.width, height: v.height }, overlay: game.overlay(), particles: { dt: advanced / fps }, post: true });
       h.status.frame = game.frame;
       h.status.scene = game.sceneName;
-      const end = mode === 'replay' && data.replay.end !== undefined ? ` / ${data.replay.end}` : '';
-      const who = mode === 'replay' ? (play ? '再生' : '自分で') : showing ? (showing.sound ?? showing.name) : '下から選ぶ';
+      const end = replaying && data.replay.end !== undefined ? ` / ${data.replay.end}` : '';
+      const who = mode === 'compare' ? `案くらべ ${panes.length}つ（音: ${panes[sel]?.name ?? ''}）` : mode === 'replay' ? (play ? '再生' : '自分で') : showing ? (showing.sound ?? showing.name) : '下から選ぶ';
       label.textContent = `f${game.frame}${end}  ${who}${paused ? '（止めています）' : ''}`;
     } catch (e) {
       h.fail(e);

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { cp, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -82,6 +82,60 @@ test('確認用のページ: 再生は止めるフレームで ages run と同�
     const [canvasBottom, panelTop] = await ev(`[document.getElementById('game').getBoundingClientRect().bottom, [...document.querySelectorAll('button')].find((b) => b.textContent === 'explosion').closest('div[style*="overflow-y"]').getBoundingClientRect().top]`);
     assert.ok(canvasBottom <= panelTop + 0.5, `${canvasBottom} <= ${panelTop}`);
     assert.equal(await ev('window.agesPlayer.error'), '');
+    await cdp.send('Browser.close').catch(() => {});
+    cdp.close();
+  } finally {
+    kill(b);
+    server.close();
+  }
+});
+
+test('案くらべ（--variants）: 値を変えた案を、今の値と並べて同じ入力で同時に再生する（issue #152）', { skip: findChrome() ? false : 'Chrome がない' }, async () => {
+  const dir = await copy();
+  await assert.rejects(cmdExport(dir, { review: true, replay: KEYS, frames: '120', variants: '[{"name":"x","set":{"main#player.Player.nope":1}}]' }), /--variants の x: /);
+  await assert.rejects(cmdExport(dir, { review: true, variants: '[]' }), /1〜3 案/);
+  await writeFile(join(dir, 'speed.variants.json'), JSON.stringify([{ name: '速い', set: { 'main#player.Player.speed': 9 } }, { name: '遅い', set: { 'main#player.Player.speed': 1 } }]));
+  await cmdExport(dir, { review: true, replay: KEYS, frames: '120', variants: 'speed.variants.json' });
+  const r = JSON.parse(await readFile(join(dir, 'dist', 'web', 'review.json'), 'utf8'));
+  assert.deepEqual(r.variants.map((x: { name: string }) => x.name), ['速い', '遅い']);
+  assert.ok(r.variants[0].scenes.main, '変わった文書だけ持つ');
+  assert.deepEqual(Object.keys(r.variants[0].prefabs), []);
+  const want = /hash=(\w+)/.exec(await cmdRun(dir, { frames: '120', keys: KEYS }))![1];
+  const port = await freePort();
+  const server = await serveStatic(join(dir, 'dist', 'web'), port);
+  const profile = await mkdtemp(join(tmpdir(), 'ages-review-chrome-'));
+  const b = spawn(findChrome()!, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--autoplay-policy=no-user-gesture-required', '--mute-audio', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--disable-background-timer-throttling', '--no-sandbox', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+  try {
+    let err = '';
+    b.stderr!.on('data', (d) => { err += d; });
+    const ws = await waitFor<string>('chrome', 20_000, async () => /DevTools listening on (ws:\/\/\S+)/.exec(err)?.[1]);
+    const cdp = await Cdp.open(ws);
+    const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' });
+    const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 844, height: 390, deviceScaleFactor: 2, mobile: true }, sessionId);
+    await cdp.send('Page.navigate', { url: `http://127.0.0.1:${port}/index.html` }, sessionId);
+    const ev = async (expression: string) => {
+      const res = await cdp.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }, sessionId);
+      if (res.exceptionDetails) throw new Error(res.exceptionDetails.exception?.description ?? res.exceptionDetails.text);
+      return res.result.value;
+    };
+    await waitFor('再生', 20_000, async () => ((await ev(`!!window.agesPlayer?.started && [...document.querySelectorAll('button')].some((b) => b.textContent === '案くらべ')`)) ? true : undefined));
+    await ev(`[...document.querySelectorAll('button')].find((b) => b.textContent === '案くらべ').click()`);
+    await ev(`[...document.querySelectorAll('button')].find((b) => b.textContent === '×1').click()`);
+    const end = await waitFor<{ frame: number; hashes?: string[]; error: string }>('案くらべの終わり', 90_000, async () => { const s = await ev('window.agesPlayer'); return s.error || s.hashes ? s : undefined; });
+    assert.equal(end.error, '');
+    assert.equal(end.frame, 120);
+    assert.equal(end.hashes!.length, 3, '今の値と2案');
+    assert.equal(end.hashes![0], want, '今の値は ages run と同じ状態');
+    assert.notEqual(end.hashes![1], end.hashes![0], '案の値で動きが変わる');
+    assert.notEqual(end.hashes![2], end.hashes![1]);
+    // 3つの画面が並び、本来の画面は隠れる
+    const shown = await ev(`[...document.querySelectorAll('canvas')].filter((c) => c.id !== 'game' && c.getBoundingClientRect().width > 50).length`);
+    assert.equal(shown, 3);
+    assert.equal(await ev(`document.getElementById('game').style.visibility`), 'hidden');
+    // 再生に戻ると、本来の画面に戻る
+    await ev(`[...document.querySelectorAll('button')].find((b) => b.textContent === '再生').click()`);
+    assert.equal(await ev(`document.getElementById('game').style.visibility`), 'visible');
     await cdp.send('Browser.close').catch(() => {});
     cdp.close();
   } finally {

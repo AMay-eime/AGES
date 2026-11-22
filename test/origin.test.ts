@@ -16,7 +16,15 @@ test('出どころの形: フォルダの記録は中のファイルに効く（
   const assets = ['assets/kit/a.png', 'assets/kit/sub/b.png', 'assets/own.png', 'assets/fx.frag'].map((path) => ({ path, kind: path.endsWith('.frag') ? 'shader' : 'image', bytes: 1 })) as any[];
   const o: Record<string, any> = {};
   assert.match(setOrigin(o, assets, ['ja'], 'assets/kit', { by: 'stock', license: 'CC0', from: 'Kenney' }, 'ai').text, /^assets\/kit\/（中の 2 ファイル）: 配布・購入の素材・CC0・Kenney$/);
-  assert.match(setOrigin(o, assets, ['ja'], 'assets/kit/sub/b.png', { by: 'ai' }, 'ai').text, /AI 生成。--tool で使った AI の名前も$/);
+  const fileRec = setOrigin(o, assets, ['ja'], 'assets/kit/sub/b.png', { by: 'ai' }, 'ai').text;
+  assert.match(fileRec, /AI 生成。--tool で使った AI の名前も\n/);
+  assert.match(fileRec, /このファイルは、フォルダ assets\/kit\/ の記録（配布・購入の素材・CC0・Kenney）ではなく、この記録を使う/, 'フォルダの記録との関係を案内（issue #154）');
+  // 前の記録の値を別の値で変えるときは --replace を求める。足すだけ・同じ値ならよい
+  const kit = structuredClone(o);
+  setOrigin(kit, assets, ['ja'], 'assets/kit', { note: '森の素材' }, 'ai'); // なかった値を足すのはよい
+  assert.throws(() => setOrigin(kit, assets, ['ja'], 'assets/kit', { note: '新しい絵' }, 'ai'), /assets\/kit\/ にはもう出どころの記録があり、note が変わります。\n {2}前: 配布・購入の素材・CC0・Kenney・森の素材\n {2}新: .*新しい絵\n置き換えるなら --replace を付ける。\nフォルダの中の1つのファイルのことなら、ファイルを指して書く/);
+  assert.match(setOrigin(kit, assets, ['ja'], 'assets/kit', { note: '新しい絵' }, 'ai', false, true).text, /\n {2}前: 配布・購入の素材・CC0・Kenney・森の素材$/);
+  assert.match(setOrigin(kit, assets, ['ja'], 'assets/kit', { license: 'CC0' }, 'ai').text, /新しい絵$/, '同じ値ならそのまま');
   assert.equal(originOf(o, 'assets/kit/a.png')!.key, 'assets/kit/');
   assert.equal(originOf(o, 'assets/kit/sub/b.png')!.origin.by, 'ai');
   // シェーダーはコードなので、未記入に数えない
