@@ -587,7 +587,7 @@ export class Game {
       // シェーダーの値は 'Effect.params.amount' のように中の名前まで書く
       let f = top;
       if (top.type === 'params') {
-        const st = this.registry.shaderParams(e.c[comp][top.of]);
+        const st = this.registry.paramsShape(e.c[comp][top.of]);
         if (!st) throw new Error(`ctx.tween: ${target} の ${comp}.${top.of} でシェーダーを選んでいません`);
         if (!sub || more.length) throw new Error(`ctx.tween: シェーダーの値は '${comp}.${field}.名前' で書きます（ある名前: ${Object.keys(st.fields).join(', ')}）`);
         if (!st.fields[sub]) throw new Error(`ctx.tween: ${comp}.${field} に ${sub} はありません${suggest(sub, Object.keys(st.fields))}（ある名前: ${Object.keys(st.fields).join(', ')}）`);

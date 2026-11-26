@@ -364,8 +364,6 @@ export default {
   "ほか {0}体も選んでいます（{1}{2}）。ここで変えるのはこの物だけ。動かす・複製・削除はまとめて": "{0} autres objets sont aussi sélectionnés ({1}{2}). Les changements ici ne visent que cet objet ; déplacer, dupliquer et supprimer s’appliquent à tous",
   "未定義のコンポーネント": "Composant non défini",
   "🔒 {0}.{1}.{2} はロックされています": "🔒 {0}.{1}.{2} est verrouillé",
-  "シェーダー {0} が見つかりません": "Shader {0} introuvable",
-  "{0} でシェーダーを選ぶと、ここに値が並びます": "Choisissez un shader dans {0} et ses valeurs apparaîtront ici",
   "🔒 ロック中（{0} {1}）{2}\nAI もエディタも変えられません。クリックでロックマネージャーを開く（外す・値を変える）": "🔒 Verrouillé ({0} {1}){2}\nNi l’IA ni l’éditeur ne peuvent le modifier. Cliquez pour ouvrir le gestionnaire de verrous (déverrouiller ou changer la valeur)",
   "ロックする（AI もエディタも変えられなくなります。外すのはロックマネージャーで）": "Verrouiller (ni l’IA ni l’éditeur ne pourront plus le modifier ; déverrouiller dans le gestionnaire de verrous)",
   "元（@{0}）の値に戻す": "Revenir à la valeur de la base (@{0})",
@@ -871,6 +869,9 @@ export default {
   "なめらか": "Lisse",
   "くっきり（ドット絵）": "Net (pixel art)",
   "表示": "Affichage",
+  "🔒 ロック中。クリックでロックマネージャーを開く（外す・値を変える）": "🔒 Verrouillé. Cliquez pour ouvrir le gestionnaire de verrous (déverrouiller ou changer la valeur)",
+  "{0} という形（シェーダーか defineParams の名前）が見つかりません": "Aucune forme nommée {0} (shader ou nom defineParams)",
+  "{0} を選ぶと、ここに値が並びます": "Choisissez {0} et ses valeurs apparaîtront ici",
   // ---- 本体の標準の部品・表・シェーダーの説明（std-descs.ts。TD で訳す） ----
   "位置・向き・大きさ（標準）": "Position, rotation, taille (standard)",
   "横位置(px。parent があれば親から見た位置)": "Position horizontale (px ; relative au parent si parent est défini)",

@@ -11,7 +11,7 @@
   "game": "game/index.ts",
   "editorWindows": [],
   "engine": {
-    "compat": 2,
+    "compat": 3,
     "version": "0.1.0",
     "commit": "0924598",
     "recorded": "2026-11-11"

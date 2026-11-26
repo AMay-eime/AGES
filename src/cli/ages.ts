@@ -60,7 +60,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   find   <dir> <語 ...>              部品・フィールド・表の列と行・システム・プレハブ・シーンの物を、名前と説明から探す（語は全部を含むもの）
   code   <dir> <名前 | 部品.欄 | $表.列 | ファイル | 日本語の語 ...> [--body] [--around 2] [--all] [--max 30]
                                      コードを引く: 宣言の場所と範囲（--body で中身）・使っている所（どの関数の中か。読/書/値/呼）・ファイルの目次・コメントから探す
-  schema <dir> [名前 ...]             詳しく引く: コンポーネント（型・範囲・説明）/ $表 / std:flash などのシェーダー
+  schema <dir> [名前 ...]             詳しく引く: コンポーネント（型・範囲・説明）/ $表 / std:flash などのシェーダー / params:名前（スクリプトの調整値の形。params で一覧）
                / ops（patch の操作の一覧と書き方）/ guide（機能ごとの手順の目次）/ guide:項目（例 guide:ui）
   get    <dir> <addr> [addr ...]     値を見る（例: main#player / main#player.Player.speed / @enemy / $enemies.basic）
   set    <dir> <addr> <value> [--force]  行列のセルは addr[行,列]（例 main#spawner.Spawner.formation[2,3] 1）
@@ -517,13 +517,15 @@ async function copyTemplate(src: string, target: string, projectName: string, t:
 
 export async function cmdSchema(dir: string, names: string[]): Promise<string> {
   const p = await Project.load(dir);
-  const field = (k: string, f: import('../core/schema.ts').Field) => `  ${k} ${brief(f)}${f.desc ? ' — ' + f.desc : ''}${nested(f, '    ')}`;
+  const field = (k: string, f: import('../core/schema.ts').Field) => `  ${k}${f.label ? `「${f.label}」` : ''} ${brief(f)}${f.desc ? ' — ' + f.desc : ''}${nested(f, '    ')}`;
   const out: string[] = [];
   const guide = await readGuide(p.registry.packages.map((x) => x.name));
   // 名前の種類: コンポーネント / $表 / シェーダー（std:… か .frag）/ ops（patch の操作）/ guide・guide:項目（機能ごとの手順）
   const isShader = (n: string) => n.startsWith('std:') || /\.(frag|glsl)$/i.test(n);
   const isDoc = (n: string) => n === 'ops' || n === 'guide' || n.startsWith('guide:');
-  const comps = names.length ? names.filter((n) => !n.startsWith('$') && !isShader(n) && !isDoc(n)) : [...p.registry.components.keys()];
+  // params:名前 はスクリプトの調整値の形（defineParams）。params だけなら一覧
+  const isParams = (n: string) => n === 'params' || n.startsWith('params:');
+  const comps = names.length ? names.filter((n) => !n.startsWith('$') && !isShader(n) && !isDoc(n) && !isParams(n)) : [...p.registry.components.keys()];
   if (names.length) await noteRecent(p.dir, names.filter((n) => !isShader(n) && !isDoc(n)));
   const tables = names.length ? names.filter((n) => n.startsWith('$')).map((n) => n.slice(1)) : [...p.registry.tables.keys()];
   const topicOf = (comp: string) => [...guide.values()].find((t) => t.parts.includes(comp))?.name;
@@ -541,6 +543,17 @@ export async function cmdSchema(dir: string, names: string[]): Promise<string> {
     out.push(SHADER_HOWTO);
     if (d.path.startsWith('std:')) out.push(`--- ${d.path} の中身（新しく書くときの手本）`, d.code.trimEnd());
     for (const e of d.errors) out.push(`⚠ ${e}`);
+  }
+  const sp = p.registry.scriptParams;
+  for (const n of names.length ? names.filter(isParams) : sp.size ? ['params'] : []) {
+    if (n === 'params') {
+      out.push(`調整値の形（defineParams。params 型の欄の of で名前を選ぶと、その形の値が並ぶ。中身は params:名前）: ${sp.size ? [...sp.values()].map((d) => `${d.name}${d.desc ? `（${d.desc}）` : ''}`).join(' / ') : 'なし'}`);
+      continue;
+    }
+    const d = sp.get(n.slice('params:'.length));
+    if (!d) throw new Error(`調整値の形 ${n.slice('params:'.length)} はありません${suggest(n.slice('params:'.length), [...sp.keys()])}`);
+    const users = [...p.registry.components.values()].flatMap((c) => Object.entries(c.fields).filter(([, f]) => f.type === 'params' && c.fields[f.of]?.type !== 'asset').map(([k, f]) => `${c.name}.${k}（${c.name}.${(f as { of: string }).of} で選ぶ）`));
+    out.push(`params:${d.name}: ${d.desc ?? ''}（調整値の形。値は 住所.部品.欄.名前 で読み書き。派生・置いた物では1つずつ上書きできる）${users.length ? ` 使う欄: ${users.join(', ')}` : ''}`, ...Object.entries(d.fields).map(([k, f]) => field(k, f)));
   }
   for (const n of names.filter(isDoc)) {
     if (n === 'ops') {
@@ -661,7 +674,7 @@ export async function cmdTable(dir: string, name: string, flags: Record<string, 
 
 /** 変更の行に出す値。長い値は件数や頭だけにする（--full で全部） */
 export function shortPair(from: unknown, to: unknown, full = false): [string, string] {
-  const show = (v: unknown) => (isMatrix(v) ? `行列${matrixSize(v)}` : fmt(v));
+  const show = (v: unknown) => (isMatrix(v) ? `行列${matrixSize(v)}` : String(fmt(v)));
   const a = show(from), b = show(to);
   if (full || (a.length <= 120 && b.length <= 120)) return [a, b];
   const sum = (v: unknown, s: string): string => {

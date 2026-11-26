@@ -1,6 +1,6 @@
 // ゲームコードから import { defineComponent, defineSystem } from 'ages' で使う公開API。
 // ブラウザでもNodeでも動く部分だけをここに置く（node: で始まる機能は使わない）。
-export { defineComponent, defaultOf, type ComponentDef, type Field } from './core/schema.ts';
+export { defineComponent, defineParams, defaultOf, type ComponentDef, type ParamsDef, type Field } from './core/schema.ts';
 export type { Op } from './core/patch.ts';
 export { defineSystem, defineCheck, type SystemDef, type GameModule, type CheckDef, type CheckView } from './core/registry.ts';
 export { definePackage, type PackageDef } from './core/packages.ts';

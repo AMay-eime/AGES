@@ -15,3 +15,7 @@ test('patch の出力: 長い配列は件数と増減、長い文字は頭だけ
   assert.deepEqual(shortPair(1, 2), ['1', '2']);
   assert.equal(shortPair(a, b, true)[1], JSON.stringify(b));
 });
+
+test('patch の出力: 無かった値（undefined）でも落ちない', () => {
+  assert.deepEqual(shortPair(undefined, 1), ['undefined', '1']);
+});

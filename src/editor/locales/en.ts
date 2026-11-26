@@ -364,8 +364,6 @@ export default {
   "ほか {0}体も選んでいます（{1}{2}）。ここで変えるのはこの物だけ。動かす・複製・削除はまとめて": "{0} other objects are also selected ({1}{2}). Changes here apply to this object only; move, duplicate, and delete apply to all",
   "未定義のコンポーネント": "Undefined component",
   "🔒 {0}.{1}.{2} はロックされています": "🔒 {0}.{1}.{2} is locked",
-  "シェーダー {0} が見つかりません": "Shader {0} not found",
-  "{0} でシェーダーを選ぶと、ここに値が並びます": "Choose a shader in {0} and its values appear here",
   "🔒 ロック中（{0} {1}）{2}\nAI もエディタも変えられません。クリックでロックマネージャーを開く（外す・値を変える）": "🔒 Locked ({0} {1}){2}\nNeither the AI nor the editor can change it. Click to open the Lock Manager (unlock or change the value)",
   "ロックする（AI もエディタも変えられなくなります。外すのはロックマネージャーで）": "Lock (neither the AI nor the editor can change it anymore; unlock in the Lock Manager)",
   "元（@{0}）の値に戻す": "Revert to the base (@{0}) value",
@@ -871,6 +869,9 @@ export default {
   "なめらか": "Smooth",
   "くっきり（ドット絵）": "Sharp (pixel art)",
   "表示": "Display",
+  "🔒 ロック中。クリックでロックマネージャーを開く（外す・値を変える）": "🔒 Locked. Click to open the lock manager (unlock or change the value)",
+  "{0} という形（シェーダーか defineParams の名前）が見つかりません": "No shape named {0} (a shader or a defineParams name) was found",
+  "{0} を選ぶと、ここに値が並びます": "Choose {0} and its values appear here",
   // ---- 本体の標準の部品・表・シェーダーの説明（std-descs.ts。TD で訳す） ----
   "位置・向き・大きさ（標準）": "Position, rotation, scale (standard)",
   "横位置(px。parent があれば親から見た位置)": "Horizontal position (px; relative to the parent if parent is set)",

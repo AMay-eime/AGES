@@ -1,5 +1,5 @@
 // コンポーネント・システム・プレハブの登録簿。
-import { checkAt, checkComponent, defaultOf, defaultsOf, suggest, type ComponentDef, type StructField } from './schema.ts';
+import { checkAt, checkComponent, defaultOf, defaultsOf, PARAMS_FIELDS, suggest, type ComponentDef, type ParamsDef, type StructField } from './schema.ts';
 import { paramDefaults, paramsField, shaderMap, type ShaderDef } from './shader.ts';
 import type { Row, TableDef, TableDoc, TableView } from './table.ts';
 import type { PrefabDoc, SceneDoc } from './docs.ts';
@@ -71,6 +71,8 @@ export interface GameModule {
   tables?: TableDef[];
   /** ゲーム独自の検証（defineCheck） */
   checks?: CheckDef[];
+  /** スクリプトの調整値の形（defineParams）。コンポーネントの params 型の欄に、選んだ名前の形で並ぶ */
+  params?: ParamsDef[];
 }
 
 export class Registry {
@@ -88,6 +90,8 @@ export class Registry {
   /** 表の中身（名前 → 行の並び） */
   tableData = new Map<string, TableDoc>();
   private views = new WeakMap<TableDoc, TableView>();
+  /** スクリプトの調整値の形（名前 → 形。defineParams） */
+  scriptParams = new Map<string, ParamsDef>();
   /** シェーダー（場所 → 宣言）。標準の std:名前 も入っている */
   shaders: Map<string, ShaderDef> = shaderMap();
   /** 画像の大きさ（場所 → 幅・高さ）。格子のシートのコマを求めるのに使う */
@@ -163,6 +167,14 @@ export class Registry {
       if (r.checks.some((x) => x.name === c.name)) throw new Error(`検証 ${c.name} が2回定義されています`);
       r.checks.push(c);
     }
+    for (const d of mod.params ?? []) {
+      if (!d?.name || !d.fields || typeof d.fields !== 'object') throw new Error('params には defineParams({ name, desc, fields }) を並べます');
+      if (r.scriptParams.has(d.name)) throw new Error(`調整値の形 ${d.name} が2回定義されています`);
+      if (d.name.startsWith('std:') || /\.(frag|glsl)$/.test(d.name)) throw new Error(`調整値の形の名前 ${d.name} は、シェーダーの名前と紛らわしいので使えません`);
+      r.scriptParams.set(d.name, d);
+    }
+    // params 型の欄（派生・置いた物で中の値を1つずつ重ねる）
+    for (const c of r.components.values()) for (const [k, f] of Object.entries(c.fields)) if (f.type === 'params') PARAMS_FIELDS.set(`${c.name}.${k}`, f.of);
     for (const p of prefabs) r.prefabs.set(p.name, p);
     return r;
   }
@@ -234,9 +246,9 @@ export class Registry {
     const errs = checkComponent(def, data);
     for (const [k, f] of Object.entries(def.fields)) {
       if (f.type !== 'params') continue;
-      const sh = this.shaders.get(String(data[f.of] ?? defaultOf(def.fields[f.of]) ?? ''));
-      if (!sh) continue;
-      const e = checkAt(`${name}.${k}`, paramsField(sh), data[k] ?? {});
+      const st = this.paramsShape(data[f.of] ?? defaultOf(def.fields[f.of]));
+      if (!st) continue;
+      const e = checkAt(`${name}.${k}`, st, data[k] ?? {});
       if (e) errs.push(e);
     }
     return errs.length ? [`${where ? where + ': ' : ''}${errs.join(' / ')}`] : [];
@@ -247,14 +259,14 @@ export class Registry {
     const def = this.component(name);
     const errs = checkComponent(def, data);
     const out = { ...defaultsOf(def), ...structuredClone(data) };
-    // シェーダーの値: 選んだシェーダーの uniform と照らし、省いたものは既定値で埋める
+    // 調整値: 選んだシェーダー・スクリプトの形と照らし、省いたものは既定値で埋める
     for (const [k, f] of Object.entries(def.fields)) {
       if (f.type !== 'params') continue;
-      const sh = this.shaders.get(String(out[f.of] ?? ''));
-      if (!sh) continue;
-      const e = checkAt(`${name}.${k}`, paramsField(sh), out[k] ?? {});
+      const st = this.paramsShape(out[f.of]);
+      if (!st) continue;
+      const e = checkAt(`${name}.${k}`, st, out[k] ?? {});
       if (e) errs.push(e);
-      out[k] = { ...paramDefaults(sh), ...(out[k] as object) };
+      out[k] = { ...defaultOf(st) as object, ...(out[k] as object) };
     }
     if (errs.length) throw new Error(`${where ? where + ': ' : ''}${errs.join(' / ')}`);
     return out;
@@ -264,6 +276,14 @@ export class Registry {
   shaderParams(path: unknown): StructField | null {
     const sh = typeof path === 'string' ? this.shaders.get(path) : undefined;
     return sh ? paramsField(sh) : null;
+  }
+
+  /** 調整値の形: シェーダーならその uniform、defineParams の名前ならその形（どちらでもなければ null） */
+  paramsShape(name: unknown): StructField | null {
+    const sh = this.shaderParams(name);
+    if (sh) return sh;
+    const d = typeof name === 'string' ? this.scriptParams.get(name) : undefined;
+    return d ? { type: 'struct', fields: d.fields, ...(d.desc ? { desc: d.desc } : {}) } : null;
   }
 }
 
