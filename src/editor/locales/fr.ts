@@ -865,6 +865,12 @@ export default {
   "🔒 ロックマネージャーで撮ってロックする": "🔒 Enregistrer et verrouiller dans le gestionnaire de verrous",
   "フォルダ（{0}ファイル）。中の書き換え・足す・消すで、ages check・run・export を止めます": "Dossier ({0} fichiers). Réécrire, ajouter ou supprimer des fichiers à l'intérieur arrête ages check, run et export",
   "🔒 フォルダごとロックする": "🔒 Verrouiller tout le dossier",
+  "この画像の拡大縮小のしかた。ドット絵はくっきり、写真や手描きはなめらかが向いています。「プロジェクトの設定」はプロジェクト全体の表示に従います": "Mode de mise à l’échelle de cette image. Net convient au pixel art, lisse aux photos et dessins. « Réglage du projet » suit l’affichage de tout le projet",
+  "プロジェクトの設定（{0}）": "Réglage du projet ({0})",
+  "くっきり": "net",
+  "なめらか": "Lisse",
+  "くっきり（ドット絵）": "Net (pixel art)",
+  "表示": "Affichage",
   // ---- 本体の標準の部品・表・シェーダーの説明（std-descs.ts。TD で訳す） ----
   "位置・向き・大きさ（標準）": "Position, rotation, taille (standard)",
   "横位置(px。parent があれば親から見た位置)": "Position horizontale (px ; relative au parent si parent est défini)",

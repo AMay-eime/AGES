@@ -865,6 +865,12 @@ export default {
   "🔒 ロックマネージャーで撮ってロックする": "🔒 Record and lock in the lock manager",
   "フォルダ（{0}ファイル）。中の書き換え・足す・消すで、ages check・run・export を止めます": "Folder ({0} files). Rewriting, adding or deleting files inside stops ages check, run and export",
   "🔒 フォルダごとロックする": "🔒 Lock the whole folder",
+  "この画像の拡大縮小のしかた。ドット絵はくっきり、写真や手描きはなめらかが向いています。「プロジェクトの設定」はプロジェクト全体の表示に従います": "How this image is scaled. Sharp suits pixel art; smooth suits photos and hand-drawn art. “Project setting” follows the project-wide display setting",
+  "プロジェクトの設定（{0}）": "Project setting ({0})",
+  "くっきり": "sharp",
+  "なめらか": "Smooth",
+  "くっきり（ドット絵）": "Sharp (pixel art)",
+  "表示": "Display",
   // ---- 本体の標準の部品・表・シェーダーの説明（std-descs.ts。TD で訳す） ----
   "位置・向き・大きさ（標準）": "Position, rotation, scale (standard)",
   "横位置(px。parent があれば親から見た位置)": "Horizontal position (px; relative to the parent if parent is set)",

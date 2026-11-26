@@ -40,6 +40,13 @@ export interface SheetDef {
   /** 自由な矩形。あれば格子の指定は使わない */
   frames?: FrameDef[];
   clips?: Record<string, ClipDef>;
+  /** この画像の拡大縮小のしかた（nearest=ドット絵向け・くっきり、linear=なめらか）。省くとプロジェクトの設定（config.view.filter） */
+  filter?: 'nearest' | 'linear';
+}
+
+/** 切り方を決めていない（filter だけなどの）シート。画像全体を1コマとして描く */
+export function isWhole(sheet: SheetDef): boolean {
+  return !sheet.frames && !sheet.frame;
 }
 
 /** 位置まで決まったコマ */
@@ -76,7 +83,7 @@ function rowsOf(sheet: SheetDef, imageH: number): number {
 
 export function frameCount(sheet: SheetDef, imageW: number, imageH: number): number {
   if (sheet.frames) return sheet.frames.length;
-  if (!sheet.frame) return 0;
+  if (!sheet.frame) return 1; // 切り方なし（filter だけ）: 画像全体で1コマ
   return columnsOf(sheet, imageW) * rowsOf(sheet, imageH);
 }
 
@@ -89,7 +96,8 @@ export function frameAt(sheet: SheetDef, imageW: number, imageH: number, index: 
     const [x, y, w, h] = f.rect;
     return { index, name: f.name, x, y, w, h, pivot: f.pivot };
   }
-  if (!sheet.frame || index >= frameCount(sheet, imageW, imageH)) return null;
+  if (!sheet.frame) return index === 0 ? { index: 0, x: 0, y: 0, w: imageW, h: imageH } : null;
+  if (index >= frameCount(sheet, imageW, imageH)) return null;
   const s = sheet.spacing ?? 0, m = sheet.margin ?? 0;
   const cols = columnsOf(sheet, imageW);
   const [fw, fh] = sheet.frame;
@@ -137,7 +145,8 @@ export function checkSheet(path: string, sheet: SheetDef): string[] {
   const errs: string[] = [];
   if (!sheet || typeof sheet !== 'object') return [`${path}: シートの定義はオブジェクトが必要です`];
   if (sheet.frames && sheet.frame) errs.push(`${path}: frame（格子）と frames（自由な矩形）は片方だけにしてください`);
-  if (!sheet.frames && !sheet.frame) errs.push(`${path}: frame（格子の1コマの大きさ）か frames（自由な矩形の並び）が必要です。例: "frame": [32, 32]`);
+  if (!sheet.frames && !sheet.frame && sheet.filter === undefined) errs.push(`${path}: frame（格子の1コマの大きさ）か frames（自由な矩形の並び）が必要です。例: "frame": [32, 32]`);
+  if (sheet.filter !== undefined && sheet.filter !== 'nearest' && sheet.filter !== 'linear') errs.push(`${path}: filter は "nearest"（ドット絵向け・くっきり）か "linear"（なめらか）です。省くとプロジェクトの設定`);
   if (sheet.frame && (!Array.isArray(sheet.frame) || sheet.frame.length !== 2 || !sheet.frame.every((n) => isInt(n) && n > 0))) {
     errs.push(`${path}: frame は [幅, 高さ] の正の整数が必要です。例: "frame": [32, 32]`);
   }

@@ -90,7 +90,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
                [--origin [ファイル | フォルダ | $text.言語 --by own|ai|stock|commission [--tool AIの名前] [--license CC0] [--from 入手元] [--note 一言] [--replace（前の記録の値を変える）]]]   出どころ（自作・AI 生成・素材・人に頼んだ）の一覧と記録
   space  <dir> [シーン] [--near id [--radius 3]] [--only id,id] [--frames n] [--keys …]   （追加パッケージ 3d を入れたプロジェクト）3D の空間を文字で確かめる
   sheet  <dir> <画像>                 画像の切り方（コマの名前・位置・基準点・動き）を見る
-  slice  <dir> <画像> --grid 32x32 | --count 4x6 | --auto  画像を切る（前と同じ場所のコマは名前を引き継ぐ）
+  slice  <dir> <画像> --grid 32x32 | --count 4x6 | --auto  画像を切る（前と同じ場所のコマは名前を引き継ぐ）。--filter nearest|linear|project でこの画像だけの表示
                [--spacing n] [--margin n] [--skip-empty] [--alpha 1] [--min 2] [--gap 0] [--pad 0] [--pivot 0.5,1] [--dry] [--force]
 
 アドレス: シーン#ID.コンポーネント.フィールド（例 main#player.Player.speed）、プレハブは @名前.コンポーネント.フィールド、表は $表.行.列
@@ -1279,11 +1279,14 @@ export function describeSheet(image: string, sheet: SheetDef | undefined, w: num
   if (!sheet) return `${image} ${w}x${h} シートなし（画像全体を1コマとして描く）。切るには ages slice${marks}`;
   const out: string[] = [];
   const n = frameCount(sheet, w, h);
-  if (sheet.frames) {
-    out.push(`${image} ${w}x${h} 自由 ${n}コマ（#番号 名前 x,y 幅x高さ 基準点）${marks}`);
+  const look = sheet.filter ? `　表示 ${sheet.filter === 'nearest' ? 'nearest（ドット絵・くっきり）' : 'linear（なめらか）'}` : '';
+  if (!sheet.frames && !sheet.frame) {
+    out.push(`${image} ${w}x${h} 切り方なし（画像全体を1コマとして描く）${look}${marks}`);
+  } else if (sheet.frames) {
+    out.push(`${image} ${w}x${h} 自由 ${n}コマ（#番号 名前 x,y 幅x高さ 基準点）${look}${marks}`);
     for (const f of listFrames(sheet, w, h)) out.push(`#${f.index} ${f.name} ${f.x},${f.y} ${f.w}x${f.h}${f.pivot ? ` pivot ${f.pivot.map(num).join(',')}` : ''}`);
   } else {
-    out.push(`${image} ${w}x${h} 格子 ${sheet.frame!.join('x')}${sheet.spacing ? ` 隙間${sheet.spacing}` : ''}${sheet.margin ? ` 余白${sheet.margin}` : ''} → ${n}コマ（番号で指定。左上から右へ0から）${marks}`);
+    out.push(`${image} ${w}x${h} 格子 ${sheet.frame!.join('x')}${sheet.spacing ? ` 隙間${sheet.spacing}` : ''}${sheet.margin ? ` 余白${sheet.margin}` : ''} → ${n}コマ（番号で指定。左上から右へ0から）${look}${marks}`);
   }
   const clips = Object.entries(sheet.clips ?? {});
   if (clips.length) out.push('動き:', ...clips.map(([k, c]) => `  ${k} ${c.frames.join(',')} ${c.fps}fps${c.loop === false ? ' 1回' : ''}`));
@@ -1311,6 +1314,16 @@ export async function cmdSlice(dir: string, image: string, flags: Record<string,
   const p = await Project.load(dir);
   const { w, h } = imageOf(p, image);
   const before = p.docs.sheets.get(image);
+  // --filter だけ: 切り方はそのままで、この画像の表示（拡大縮小のしかた）だけを変える
+  const filt = flags.filter;
+  if (filt !== undefined && filt !== 'nearest' && filt !== 'linear' && filt !== 'project') throw new Error('--filter は nearest（ドット絵・くっきり）/ linear（なめらか）/ project（プロジェクトの設定に従う）です');
+  if (filt !== undefined && !flags.grid && !flags.count && !flags.auto) {
+    const next: SheetDef = { ...(before ?? {}) };
+    if (filt === 'project') delete next.filter; else next.filter = filt as 'nearest' | 'linear';
+    const empty = !next.frame && !next.frames && !next.filter && !next.clips;
+    await p.apply([{ op: 'setSheet', image, sheet: empty ? null : next }], AI_ACTOR, { force: flags.force === true });
+    return empty ? `${image}: 表示はプロジェクトの設定に従います（シートなし）` : describeSheet(image, next, w, h);
+  }
   const spacing = numFlag(flags.spacing, 0), margin = numFlag(flags.margin, 0);
   const pivot = typeof flags.pivot === 'string' ? (flags.pivot.split(',').map(Number) as [number, number]) : undefined;
   if (pivot && (pivot.length !== 2 || pivot.some((n) => !Number.isFinite(n)))) throw new Error('--pivot は 横,縦 の数で指定します（例 0.5,1 = 下の中央）');
@@ -1338,6 +1351,7 @@ export async function cmdSlice(dir: string, image: string, flags: Record<string,
   const carried = carryClips(before, next, w, h);
   if (carried.missing.length) throw new Error(`この切り方では、動きが使っているコマが無くなります: ${carried.missing.join(', ')}。先に動きを直すか（setClip）、切り方を変えてください`);
   if (carried.clips) next.clips = carried.clips;
+  if (filt === 'nearest' || filt === 'linear') next.filter = filt; else if (filt !== 'project' && before?.filter) next.filter = before.filter;
   const summary = describeSheet(image, next, w, h);
   if (flags.dry) return `（試しに切っただけで、保存していません）\n${summary}`;
   const r = await p.apply([{ op: 'setSheet', image, sheet: next }], AI_ACTOR, { force: flags.force === true });

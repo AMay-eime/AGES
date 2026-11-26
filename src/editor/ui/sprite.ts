@@ -49,16 +49,18 @@ export function spritePanel(app: App): Panel & { open(image: string): void } {
 
   const base = () => baseNameOf(image);
   const sheetOf = (): SheetDef | null => {
-    if (!frames.length) return null;
+    if (!frames.length) return original?.filter ? { filter: original.filter } : null;
     if (grid && !frames.some((f) => f.pivot)) {
       const s: SheetDef = { frame: grid.cell };
       if (grid.spacing) s.spacing = grid.spacing;
       if (grid.margin) s.margin = grid.margin;
       if (Object.keys(clips).length) s.clips = structuredClone(clips);
+      if (original?.filter) s.filter = original.filter;
       return s;
     }
     const s: SheetDef = { frames: frames.map(({ orig: _o, ...f }) => structuredClone(f)) };
     if (Object.keys(clips).length) s.clips = structuredClone(clips);
+    if (original?.filter) s.filter = original.filter;
     return s;
   };
   const touch = (structural = false) => {

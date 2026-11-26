@@ -10,6 +10,7 @@ import { ORIGIN_BY, originOf, type OriginBy, type OriginInput } from '../../core
 import { resolvePrefab } from '../../core/variant.ts';
 import { menuItemsFor } from '../extensions.ts';
 import { TD } from '../i18n.ts';
+import type { SheetDef } from '../../core/sheet.ts';
 
 /** 出どころの名前（エディタの言語で） */
 const ORIGIN_LABEL = (by: OriginBy): string => ({ own: T('自作'), ai: T('AI 生成'), stock: T('配布・購入の素材'), commission: T('人に頼んだ') })[by];
@@ -323,12 +324,31 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
   };
 
   /** プレハブの見本（絵があれば絵、なければ名前）。クリックで選ぶ・ダブルクリックで開く・運ぶとインスタンス・右クリックでメニュー */
+  /** この画像をくっきり（ドット絵向け）に描くか。シートの filter、なければプロジェクトの設定 */
+  const pixelOf = (path: string) => (app.state.sheets[path]?.filter ?? app.state.config.view.filter) === 'nearest';
+  /** この画像だけの表示（拡大縮小のしかた）。シートの filter に書く（ロックは切り方と同じ sheet:） */
+  const filterPicker = (a: Asset): HTMLElement => {
+    const cur = app.state.sheets[a.path];
+    const sel = h('select', { title: T('この画像の拡大縮小のしかた。ドット絵はくっきり、写真や手描きはなめらかが向いています。「プロジェクトの設定」はプロジェクト全体の表示に従います') },
+      h('option', { value: '' }, T('プロジェクトの設定（{0}）', app.state.config.view.filter === 'nearest' ? T('くっきり') : T('なめらか'))),
+      h('option', { value: 'nearest' }, T('くっきり（ドット絵）')),
+      h('option', { value: 'linear' }, T('なめらか'))) as HTMLSelectElement;
+    sel.value = cur?.filter ?? '';
+    if (app.state.locks[`sheet:${a.path}`]) sel.disabled = true;
+    sel.addEventListener('change', async () => {
+      const next: SheetDef = { ...(cur ?? {}) };
+      if (sel.value) next.filter = sel.value as 'nearest' | 'linear'; else delete next.filter;
+      const empty = !next.frame && !next.frames && !next.filter && !next.clips;
+      await app.patch([{ op: 'setSheet', image: a.path, sheet: empty ? null : next }], 'assets');
+    });
+    return h('div', { class: 'row', style: 'gap:4px;margin:4px 0' }, h('span', {}, T('表示')), sel);
+  };
   const prefabTile = (n: string) => {
     const raw = app.state.prefabs[n];
     let comps = raw.components;
     try { comps = resolvePrefab(prefabMap(), n).components; } catch { /* 元がない派生: 書いてある値で */ }
     const img = comps.Sprite?.image as string | undefined;
-    const pixel = app.state.config.view.filter === 'nearest';
+    const pixel = img ? pixelOf(img) : false;
     const desc = raw.desc ? TD(raw.desc) : '';
     const locks = lockN(`@${n}`);
     const on = app.sel?.kind === 'prefab' && app.sel.name === n;
@@ -389,7 +409,7 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
 
   const tile = (a: Asset, refs: Map<string, string[]>, showDir: boolean) => {
     const n = refs.get(a.path)?.length ?? 0;
-    const pixel = app.state.config.view.filter === 'nearest';
+    const pixel = pixelOf(a.path);
     const pic = a.kind === 'image' ? h('img', { src: app.assetUrl(a.path), loading: 'lazy', alt: '', style: pixel ? 'image-rendering:pixelated' : '' })
       : a.kind === 'sound' ? h('div', { class: 'tile-icon' }, '🔊', h('button', { class: 'icon tile-play', title: T('鳴らす'), onclick: (e: Event) => { e.stopPropagation(); open(a); } }, '▶'))
       : a.kind === 'shader' ? h('div', { class: 'tile-icon', title: a.shader?.desc ?? '' }, a.shader?.errors.length ? '⚠' : '✦')
@@ -443,7 +463,7 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
     const a = app.state.assets.find((x) => x.path === selected);
     if (!a) return clear(side, h('div', { class: 'muted' }, T('アセットを選ぶと、ここに詳しく出ます。ゲームの画面へドラッグすると置けます')));
     const refs = refsOf().get(a.path) ?? [];
-    const preview = a.kind === 'image' ? h('div', { class: 'side-pic' }, h('img', { src: app.assetUrl(a.path), alt: '', style: app.state.config.view.filter === 'nearest' ? 'image-rendering:pixelated' : '' }))
+    const preview = a.kind === 'image' ? h('div', { class: 'side-pic' }, h('img', { src: app.assetUrl(a.path), alt: '', style: pixelOf(a.path) ? 'image-rendering:pixelated' : '' }))
       : a.kind === 'sound' ? h('div', { class: 'row' }, h('button', { onclick: () => open(a) }, T('▶ 鳴らす')), h('button', { onclick: () => app.audio.stopAll() }, '■'))
       : a.kind === 'shader' ? h('div', { class: 'shader-info' },
         h('div', {}, a.shader?.desc || T('（説明なし: 先頭の // コメントに書く）')),
@@ -508,6 +528,7 @@ export function assetsPanel(app: App): Panel & { reveal(path: string): void } {
         app.state.locks[`file:${a.path}`]
           ? h('button', { onclick: () => app.openLocks(`file:${a.path}`), title: T('ロックを見る・外す（ロックマネージャーで）') }, '🔒')
           : h('button', { onclick: () => app.lock([`file:${a.path}`], 'assets'), title: T('このファイルそのものをロックする（差し替え・移動・削除ができなくなります。外すのはロックマネージャーで）') }, '🔓')),
+      a.kind === 'image' ? filterPicker(a) : null,
       origin(),
       h('div', { class: 'muted' }, refs.length ? T('使っている所 {0}', refs.length) : T('使っている所はありません')),
       h('ul', { class: 'refs' }, refs.map((r) => h('li', {}, r.endsWith('（コード）') ? h('span', {}, r.replace(/（コード）$/, T('（コード）'))) : h('a', { onclick: () => go(r) }, r)))));

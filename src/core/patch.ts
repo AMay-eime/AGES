@@ -1714,6 +1714,7 @@ export function diffSheet(image: string, a: SheetDef | undefined, b: SheetDef | 
   if (!b) { out.push({ path: sheetAddress(image), from: a, to: 'removed' }); return out; }
   const grid = (s?: SheetDef) => (s?.frame ? `${s.frame.join('x')}${s.spacing ? ` 隙間${s.spacing}` : ''}${s.margin ? ` 余白${s.margin}` : ''}` : undefined);
   if (grid(a) !== grid(b)) out.push({ path: at('grid'), from: grid(a), to: grid(b) ?? 'removed' });
+  if (a?.filter !== b.filter) out.push({ path: at('filter'), from: a?.filter ?? 'project', to: b.filter ?? 'project' });
   const fa = new Map((a?.frames ?? []).map((f, i) => [f.name, { f, i }]));
   const fb = new Map((b.frames ?? []).map((f, i) => [f.name, { f, i }]));
   for (const [name, { f }] of fb) {
