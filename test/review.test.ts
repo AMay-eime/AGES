@@ -23,8 +23,13 @@ async function copy(): Promise<string> {
 
 test('ages export --review: review.json に再生（ages run と同じ書き方）と見本帳。付けなければ置かない', async () => {
   const dir = await copy();
-  const out = await cmdExport(dir, { review: true, replay: KEYS, frames: '120', seed: '3' });
-  assert.match(out, /確認用のページ（再生と見本帳）です。遊ぶ版・ストアに出す版は --review なしで書き出す/);
+  // 見本帳は付けたときだけ（#157）
+  const plain = await cmdExport(dir, { review: true, replay: KEYS, frames: '120' });
+  assert.match(plain, /確認用のページ（再生）です/);
+  assert.equal(JSON.parse(await readFile(join(dir, 'dist', 'web', 'review.json'), 'utf8')).gallery, undefined);
+  await assert.rejects(cmdExport(dir, { review: true, gallery: 'nope' }), /--gallery の nope: /);
+  const out = await cmdExport(dir, { review: true, replay: KEYS, frames: '120', seed: '3', gallery: 'all' });
+  assert.match(out, /確認用のページ（再生・見本帳）です。遊ぶ版・ストアに出す版は --review なしで書き出す/);
   const r = JSON.parse(await readFile(join(dir, 'dist', 'web', 'review.json'), 'utf8'));
   assert.deepEqual([r.replay.scene, r.replay.seed, r.replay.end], ['main', 3, 120]);
   assert.ok(r.replay.keys.events.length > 0);
@@ -42,7 +47,7 @@ test('ages export --review: review.json に再生（ages run と同じ書き方�
 
 test('確認用のページ: 再生は止めるフレームで ages run と同じ hash・見本帳で押すと空の場面に出る（スマホの大きさ）', { skip: findChrome() ? false : 'Chrome がない' }, async () => {
   const dir = await copy();
-  await cmdExport(dir, { review: true, replay: KEYS, frames: '120' });
+  await cmdExport(dir, { review: true, replay: KEYS, frames: '120', gallery: 'explosion' });
   const want = /hash=(\w+)/.exec(await cmdRun(dir, { frames: '120', keys: KEYS }))![1];
   const port = await freePort();
   const server = await serveStatic(join(dir, 'dist', 'web'), port);
@@ -141,5 +146,66 @@ test('案くらべ（--variants）: 値を変えた案を、今の値と並べ�
   } finally {
     kill(b);
     server.close();
+  }
+});
+
+/** 書き出したページを headless の Chrome で開く */
+async function openPage(dir: string, size = { width: 390, height: 844 }) {
+  const port = await freePort();
+  const server = await serveStatic(join(dir, 'dist', 'web'), port);
+  const profile = await mkdtemp(join(tmpdir(), 'ages-review-chrome-'));
+  const b = spawn(findChrome()!, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--autoplay-policy=no-user-gesture-required', '--mute-audio', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--disable-background-timer-throttling', '--no-sandbox', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+  let err = '';
+  b.stderr!.on('data', (d) => { err += d; });
+  const ws = await waitFor<string>('chrome', 20_000, async () => /DevTools listening on (ws:\/\/\S+)/.exec(err)?.[1]);
+  const cdp = await Cdp.open(ws);
+  const { targetId } = await cdp.send('Target.createTarget', { url: 'about:blank' });
+  const { sessionId } = await cdp.send('Target.attachToTarget', { targetId, flatten: true });
+  await cdp.send('Emulation.setDeviceMetricsOverride', { ...size, deviceScaleFactor: 2, mobile: true }, sessionId);
+  await cdp.send('Page.navigate', { url: `http://127.0.0.1:${port}/index.html` }, sessionId);
+  const ev = async (expression: string) => {
+    const res = await cdp.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }, sessionId);
+    if (res.exceptionDetails) throw new Error(res.exceptionDetails.exception?.description ?? res.exceptionDetails.text);
+    return res.result.value;
+  };
+  const click = (label: string) => ev(`[...document.querySelectorAll('button')].find((b) => b.textContent === ${JSON.stringify(label)}).click()`);
+  const close = async () => { await cdp.send('Browser.close').catch(() => {}); cdp.close(); kill(b); server.close(); };
+  return { ev, click, close };
+}
+
+test('区切り（--chapters）: 押すとそこから再生し、ages run と同じ状態になる。使うアセットだけ書き出し、.frag は置かない（#157 #160）', { skip: findChrome() ? false : 'Chrome がない' }, async () => {
+  const dir = await copy();
+  await assert.rejects(cmdExport(dir, { review: true, replay: KEYS, frames: '200', chapters: '[{"name":"x"}]' }), /params（場面をその値で始め直す）か frame/);
+  await assert.rejects(cmdExport(dir, { review: true, replay: KEYS, frames: '200', chapters: '[{"name":"x","frame":300}]' }), /止めるフレーム/);
+  const out = await cmdExport(dir, { review: true, replay: KEYS, frames: '200', chapters: '[{"name":"後半","frame":150},{"name":"値","params":{"level":2}}]' });
+  assert.match(out, /確認用のページ（再生・区切り）/);
+  assert.match(out, /アセットは再生で使う \d+個だけ（全部で \d+個/);
+  const r = JSON.parse(await readFile(join(dir, 'dist', 'web', 'review.json'), 'utf8'));
+  assert.ok(r.assets.includes('assets/kenney-pixel-shmup/ships.png'), JSON.stringify(r.assets));
+  for (const a of r.assets) assert.ok(existsSync(join(dir, 'dist', 'web', a)), a);
+  const all = (await cmdExport(dir, { review: true, replay: KEYS, frames: '200', assets: 'all' }));
+  assert.doesNotMatch(all, /だけ（全部で/);
+  // ゲームのシェーダーがあれば、.frag は書き出さない（中身は project.json にある）
+  await writeFile(join(dir, 'assets', 'glow.frag'), '// 光る\nvec4 effect(vec4 c, vec2 uv) { return c; }\n');
+  await cmdExport(dir, { review: true, replay: KEYS, frames: '200', chapters: '[{"name":"後半","frame":150},{"name":"値","params":{"level":2}}]' });
+  assert.ok(!existsSync(join(dir, 'dist', 'web', 'assets', 'glow.frag')));
+  assert.ok(JSON.parse(await readFile(join(dir, 'dist', 'web', 'project.json'), 'utf8')).assets.some((a: { path: string; shader?: unknown }) => a.path === 'assets/glow.frag' && a.shader));
+
+  const want = /hash=(\w+)/.exec(await cmdRun(dir, { frames: '200', keys: KEYS }))![1];
+  const wantP = /hash=(\w+)/.exec(await cmdRun(dir, { frames: '200', keys: KEYS, params: 'level=2' }))![1];
+  const pg = await openPage(dir);
+  try {
+    await waitFor('再生', 20_000, async () => ((await pg.ev(`!!window.agesPlayer?.started && [...document.querySelectorAll('button')].some((b) => b.textContent === '後半')`)) ? true : undefined));
+    assert.equal(await pg.ev(`[...document.querySelectorAll('button')].some((b) => b.textContent === '見本帳')`), false, '見本帳は付けたときだけ');
+    for (const [label, hash] of [['後半', want], ['値', wantP]] as const) {
+      await pg.click(label);
+      const end = await waitFor<{ frame: number; hash?: string; error: string }>(`${label} の終わり`, 60_000, async () => { const s = await pg.ev('window.agesPlayer'); return s.error || s.hash ? s : undefined; });
+      assert.equal(end.error, '');
+      assert.equal(end.frame, 200);
+      assert.equal(end.hash, hash, `${label}: ages run と同じ状態`);
+    }
+    assert.deepEqual(await pg.ev('window.agesPlayer.missing ?? []'), [], '再生で使うものは足りている');
+  } finally {
+    await pg.close();
   }
 });

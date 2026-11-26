@@ -51,6 +51,7 @@ import type { DrawStats } from '../editor/shot.ts';
 import { MemoryStore } from '../core/save.ts';
 import { languagesOf } from '../core/i18n.ts';
 import { parseSceneSpawns, parseSpawns, spawnInScene, spawnTryout, tryoutGone, tryoutScene } from '../core/tryout.ts';
+import { reviewAssets } from '../project/review-assets.ts';
 
 const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [引数]
 
@@ -277,7 +278,16 @@ async function reviewData(p: Project, flags: Record<string, string | boolean>): 
   const end = typeof flags.frames === 'string' ? Number(flags.frames) : undefined;
   if (end !== undefined && !(Number.isInteger(end) && end > 0)) throw new Error('--frames は止めるフレーム（1 以上の整数）');
   const lang = typeof flags.lang === 'string' ? flags.lang : undefined;
+  // 見本帳: --gallery 名前,…（プレハブか音のファイル）で指定したものだけ。all で全部。省くと見本帳なし（issue #157）
+  const want = typeof flags.gallery === 'string' ? flags.gallery.split(',').map((x) => x.trim()).filter(Boolean) : flags.gallery === true ? [] : undefined;
+  if (flags.gallery === true || (want && !want.length)) throw new Error('--gallery には見本帳に入れるもの（プレハブの名前か音のファイル。例 --gallery explosion,se_shot）か all を書く');
+  const all = want?.includes('all');
+  const soundFiles = p.assets.filter((a) => a.kind === 'sound').map((a) => a.path);
+  for (const x of all ? [] : (want ?? [])) {
+    if (!p.docs.prefabs.has(x) && !soundFiles.includes(x)) throw new Error(`--gallery の ${x}: プレハブか音のファイルの名前ではありません${suggest(x, [...p.docs.prefabs.keys(), ...soundFiles])}`);
+  }
   const prefabs = [...p.docs.prefabs.values()]
+    .filter((d) => all || want?.includes(d.name))
     .filter((d) => !d.components.AudioBus)
     .map((d) => ({
       name: d.name,
@@ -287,11 +297,46 @@ async function reviewData(p: Project, flags: Record<string, string | boolean>): 
     }))
     .sort((a, b) => (a.name < b.name ? -1 : 1));
   const variants = flags.variants !== undefined ? await reviewVariants(p, flags.variants) : undefined;
+  const gallery = want ? { prefabs, sounds: soundFiles.filter((x) => all || want.includes(x)).sort() } : undefined;
+  const chapters = flags.chapters !== undefined ? await reviewChapters(p, flags.chapters, end) : undefined;
+  // 書き出すアセット: 再生（と区切りの params）で使うもの・見本帳の物が使うものだけ。--assets all で全部
+  let assets: string[] | undefined;
+  if (flags.assets !== 'all') {
+    if (flags.assets !== undefined) throw new Error('--assets は all だけ（省くと、再生と見本帳で使うものだけを書き出す）');
+    const lastKey = Math.max(0, ...s.keys.events.map((e) => e.f), ...s.keys.clicks.map(([f]) => f));
+    const frames = Math.max(end ?? lastKey + p.config.fps * 60, ...(chapters ?? []).map((c) => c.frame ?? 0));
+    const base = { scene: s.scene, seed: s.seed, keys: s.keys, save: s.initialSave, date: s.date, lang, frames };
+    const runs = [{ ...base, params }, ...(chapters ?? []).filter((c) => c.params).map((c) => ({ ...base, params: { ...(params ?? {}), ...c.params } }))];
+    const used = reviewAssets(p, runs, { prefabs: gallery?.prefabs.map((x) => x.name) ?? [], sounds: gallery?.sounds ?? [] });
+    // 案くらべは値が変わって使うものも変わりうるので、全部
+    if (variants?.length) for (const a of p.assets) used.add(a.path);
+    assets = [...used].sort();
+  }
   return {
     replay: { scene: s.scene, seed: s.seed, keys: s.keys, save: s.initialSave, date: formatDate(s.date), ...(params ? { params } : {}), ...(lang ? { lang } : {}), ...(end ? { end } : {}) },
-    gallery: { prefabs, sounds: p.assets.filter((a) => a.kind === 'sound').map((a) => a.path).sort() },
+    ...(gallery ? { gallery } : {}),
+    ...(chapters ? { chapters } : {}),
+    ...(assets ? { assets } : {}),
     ...(variants ? { variants } : {}),
   };
+}
+
+/** --chapters: 再生の区切り（押すとそこから）。[{"name":"後半から","params":{"startAt":15}}, {"name":"ボス","frame":1800}] の JSON か、それを書いたファイル（issue #160） */
+async function reviewChapters(p: Project, spec: string | boolean, end: number | undefined): Promise<NonNullable<ReviewData['chapters']>> {
+  if (typeof spec !== 'string') throw new Error('--chapters には区切りの JSON か、それを書いたファイルの場所を渡す（例 --chapters \'[{"name":"後半から","frame":1800}]\'）');
+  const text = /^\s*\[/.test(spec) ? spec : await readFile(resolve(p.dir, spec), 'utf8').catch(() => { throw new Error(`--chapters の ${spec} が読めません（区切りの JSON か、それを書いたファイル）`); });
+  let list: unknown;
+  try { list = JSON.parse(text); } catch (e) { throw new Error(`--chapters: JSON として読めません: ${(e as Error).message}`); }
+  if (!Array.isArray(list) || !list.length || list.length > 12) throw new Error('--chapters は 1〜12 の区切りの並び');
+  return list.map((c: Record<string, unknown>, i) => {
+    const name = typeof c?.name === 'string' && c.name ? c.name : `区切り${i + 1}`;
+    const hasP = c?.params !== undefined, hasF = c?.frame !== undefined;
+    if (hasP === hasF) throw new Error(`--chapters の ${name}: params（場面をその値で始め直す）か frame（そのフレームまで速く進める）のどちらか1つを書く`);
+    if (hasP && (!c.params || typeof c.params !== 'object' || Array.isArray(c.params))) throw new Error(`--chapters の ${name}: params は { "名前": 値 }`);
+    if (hasF && !(Number.isInteger(c.frame) && (c.frame as number) >= 0)) throw new Error(`--chapters の ${name}: frame は 0 以上の整数`);
+    if (hasF && end !== undefined && (c.frame as number) >= end) throw new Error(`--chapters の ${name}: frame ${c.frame} が止めるフレーム（--frames ${end}）より後です`);
+    return { name, ...(hasP ? { params: c.params as Record<string, unknown> } : { frame: c.frame as number }) };
+  });
 }
 
 /**
