@@ -63,7 +63,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
                / ops（patch の操作の一覧と書き方）/ guide（機能ごとの手順の目次）/ guide:項目（例 guide:ui）
   get    <dir> <addr> [addr ...]     値を見る（例: main#player / main#player.Player.speed / @enemy / $enemies.basic）
   set    <dir> <addr> <value> [--force]  行列のセルは addr[行,列]（例 main#spawner.Spawner.formation[2,3] 1）
-  patch  <dir> <ops.json | -> [--force]   操作の配列（例 [{"op":"set","path":"main#player.Player.speed","value":5}]。一覧は schema <dir> ops）
+  patch  <dir> <ops.json | -> [--force] [--full]   操作の配列（例 [{"op":"set","path":"main#player.Player.speed","value":5}]。一覧は schema <dir> ops）
   table  <dir> <表> [--cols a,b] [--rows id1,id2] [--empty 列]   表を見る（1行1行。--empty はその列が空の行だけ。例 未訳: text --empty en）
                [--export x.csv] [--import x.csv [--force]]   表計算ソフトとの行き来（読み込みは表をまるごと置き換える）
   run    <dir> [--frames 600] [--scene main [--spawn "弾@0,1:120{Bullet.kind=big};弾@player+0,2:120"（そのシーンの中に、フレームの始めに出す）] | --spawn enemy,explosion@40,0（プレハブだけを空のシーンの真ん中に出して試す）] [--seed 1] [--keys "0-120:ArrowLeft+KeyZ;120-200:@move_x=1;30:Mouse0+ptr=240,100"]
@@ -614,24 +614,43 @@ export async function cmdTable(dir: string, name: string, flags: Record<string, 
   return withLockReport(p, renderTable(p, name, rows, cols, await p.effectiveLocks(), await readTouched(p.dir)));
 }
 
-export async function cmdPatch(dir: string, ops: Op[], force: boolean): Promise<string> {
+/** 変更の行に出す値。長い値は件数や頭だけにする（--full で全部） */
+export function shortPair(from: unknown, to: unknown, full = false): [string, string] {
+  const show = (v: unknown) => (isMatrix(v) ? `行列${matrixSize(v)}` : fmt(v));
+  const a = show(from), b = show(to);
+  if (full || (a.length <= 120 && b.length <= 120)) return [a, b];
+  const sum = (v: unknown, s: string): string => {
+    if (isMatrix(v)) return s;
+    if (Array.isArray(v)) return `[${v.length}件]`;
+    if (v && typeof v === 'object') return `{${Object.keys(v).length}項目}`;
+    return s.length > 60 ? `${s.slice(0, 40)}…（${s.length}字）` : s;
+  };
+  let x = sum(from, a), y = sum(to, b);
+  if (Array.isArray(from) && Array.isArray(to) && from.length !== to.length) y += `（${to.length > from.length ? '+' : ''}${to.length - from.length}）`;
+  else if (Array.isArray(from) && Array.isArray(to)) {
+    const n = to.filter((v, i) => JSON.stringify(v) !== JSON.stringify(from[i])).length;
+    y += `（${n}件が変わった）`;
+  }
+  return [x, y];
+}
+
+export async function cmdPatch(dir: string, ops: Op[], force: boolean, full = false): Promise<string> {
   const p = await Project.load(dir);
   const r = await p.apply(ops, AI_ACTOR, { force });
   await noteRecent(p.dir, r.changes.map((c) => placeOf(c.path)));
   if (!r.changes.length) return '変更なし（すでに同じ値です）';
-  const show = (v: unknown) => (isMatrix(v) ? `行列${matrixSize(v)}` : fmt(v));
   return [...r.changes.map((c) => (c.to === 'added' || c.to === 'removed' ? `ok ${c.path} ${c.to === 'added' ? '追加' : '削除'}`
     : typeof c.to === 'string' && c.to.startsWith('renamed:') && c.path.startsWith('scene:') ? `ok ${c.path} → scene:${c.to.slice('renamed:'.length)}（名前の変更）`
     : typeof c.to === 'string' && c.to.startsWith('renamed:') ? `ok ${c.path} → ${c.path.replace(/[^.]+$/, c.to.slice('renamed:'.length))}（ID の変更）`
     : c.path.startsWith('file:') ? `ok ${c.path} → ${c.to}（場所の変更）`
-    : `ok ${c.path} ${show(c.from)} → ${show(c.to)}${c.auto ? '（自動）' : ''}`)), ...(r.warnings ?? []).map((w) => `⚠ ${w}`)].join('\n');
+    : `ok ${c.path} ${shortPair(c.from, c.to, full).join(' → ')}${c.auto ? '（自動）' : ''}`)), ...(r.warnings ?? []).map((w) => `⚠ ${w}`), ...(!full && r.changes.some((c) => shortPair(c.from, c.to).join() !== shortPair(c.from, c.to, true).join()) ? ['（長い値は短くしています。全部は --full）'] : [])].join('\n');
 }
 
 /** 元に戻す（--redo でやり直す）。省くと AI 自身の直前の編集 */
 export async function cmdUndo(dir: string, f: Args['flags']): Promise<string> {
   const p = await Project.load(dir);
   const r = await p.undo(AI_ACTOR, { tx: typeof f.tx === 'string' ? f.tx : undefined, redo: !!f.redo, force: !!f.force });
-  const lines = r.changes.map((c) => `ok ${c.path} ${fmt(c.from)} → ${fmt(c.to)}${c.auto ? '（自動）' : ''}`);
+  const lines = r.changes.map((c) => `ok ${c.path} ${shortPair(c.from, c.to, !!f.full).join(' → ')}${c.auto ? '（自動）' : ''}`);
   const next = await p.undoState(AI_ACTOR);
   return withLockReport(p, [`${f.redo ? 'やり直した' : '元に戻した'}: ${r.label}`, ...lines, ...(r.warnings ?? []).map((w) => `⚠ ${w}`), `次に戻せる: ${next.undo?.label ?? 'なし'}${next.redo ? ` ／ やり直せる: ${next.redo.label}` : ''}`].join('\n'));
 }
@@ -1481,13 +1500,13 @@ async function main(argv: string[]): Promise<void> {
       const op: Op = cell
         ? { op: 'setCells', path, cells: [[cell[0], cell[1], parseLiteral(value) as number]] }
         : { op: 'set', path, value: parseLiteral(value) };
-      out = await cmdPatch(dir, [op], force);
+      out = await cmdPatch(dir, [op], force, !!a.flags.full);
       break;
     }
     case 'patch': {
       const src = a.pos[1];
       const text = !src || src === '-' ? await readStdin() : src.trim().startsWith('[') ? src : await readFile(src, 'utf8');
-      out = await cmdPatch(dir, JSON.parse(text), force);
+      out = await cmdPatch(dir, JSON.parse(text), force, !!a.flags.full);
       break;
     }
     case 'run': out = await cmdRun(dir, a.flags); break;
