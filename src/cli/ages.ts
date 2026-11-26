@@ -72,7 +72,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
                [--params stage=s1,level=2]（始めのシーンに渡す ctx.scene.params。JSON でもよい） [--date 2026-12-25T09:00]（ctx.date の始め。省くと決まった日時）
                フレームの番号: --keys・--log・--every の fN は N 番目のステップ（--every の値はそのステップを終えた値）。--shot の N は N ステップ進めた後の画面（= N-1 番目のステップを終えた画面）
                --keys の "title+30-32:@ui_confirm" は、シーン title に入るたびに、入ってから 30〜31 フレーム目に押す（click=ボタンのID も書ける）
-               [--shot 0,600 | 361-421:4 [--shot-scale 0.5] [--shot-dir 場所] [--shot-around 物,160x160,x4] [--shot-sheet]]（そのフレームの画面を PNG で撮る。既定 .ages/shots。要 Chrome。around は物のまわりを切り抜いて拡大、sheet は並べた1枚に）
+               [--shot 0,600 | 361-421:4 [--shot-scale 0.5] [--shot-dir 場所] [--shot-around 物,160x160,x4] [--shot-sheet] [--shot-timeout 秒]]（そのフレームの画面を PNG で撮る。200枚まで。既定 .ages/shots。要 Chrome。時間の上限は枚数に合わせて延び、時間切れでも撮れた分は残す。around は物のまわりを切り抜いて拡大、sheet は並べた1枚に）
                [--perf | --perf logic]（速さ: システムごとの1フレームの時間と、物がいちばん多いフレームを描いた量。logic は描いた量を省く）
   log    <dir> [--all] [--peek]      前回からの編集の要約（--peek は既読にしない）
   undo   <dir> [--tx id] [--force]   自分（AI）の直前の編集を元に戻す（その後で変えられた所があれば止まる）。redo <dir> でやり直す
@@ -894,7 +894,7 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
     if (!Number.isInteger(n) || n < 0) throw new Error(`--shot の ${x} はフレームの番号ではありません（例 --shot 0,600,1200 か 361-421:4）`);
     return [n];
   }) : [];
-  if (shotFrames.length > 64) throw new Error(`--shot が ${shotFrames.length} 枚です（64 枚まで。:4 のように間を空ける）`);
+  if (new Set(shotFrames).size > 200) throw new Error(`--shot が ${new Set(shotFrames).size} 枚です（200 枚まで。:4 のように間を空ける）`);
   const shotHashes = new Map<number, string>();
   /** 撮るフレームの状態（撮ったページの状態と比べて、違えばどこがどれだけ違うかを出す） */
   const shotSnaps = new Map<number, unknown>();
@@ -1063,7 +1063,11 @@ async function shots(p: Project, f: Args['flags'], frames: number[], hashes: Map
   const all = [...new Set([...reach, ...(o.statsAt !== undefined ? [o.statsAt] : [])])];
   if (!all.length) return out;
   try {
-    const r = await captureShots(p.dir, { scene: o.scene, seed: o.seed, frames: all, keys: o.keys, date: o.date, params: o.params, save: o.save, lang: typeof f.lang === 'string' ? f.lang : undefined, spawns: o.spawns, scale, dump: true, ...(around ? { around } : {}), ...(sheet && reach.length ? { sheet } : {}) });
+    const sec = typeof f['shot-timeout'] === 'string' ? Number(f['shot-timeout']) : undefined;
+    if (sec !== undefined && !(sec > 0)) throw new Error('--shot-timeout は秒の数です（例 300）');
+    const r = await captureShots(p.dir, { scene: o.scene, seed: o.seed, frames: all, keys: o.keys, date: o.date, params: o.params, save: o.save, lang: typeof f.lang === 'string' ? f.lang : undefined, spawns: o.spawns, scale, dump: true, ...(around ? { around } : {}), ...(sheet && reach.length ? { sheet } : {}) }, sec ? sec * 1000 : undefined);
+    // 時間切れで並べた1枚が作れなかったときは、撮れた分を1枚ずつ置く
+    const tiled = sheet && !r.timedOut;
     const dir = resolve(p.dir, typeof f['shot-dir'] === 'string' ? f['shot-dir'] : '.ages/shots');
     if (reach.length) await mkdir(dir, { recursive: true });
     const name = o.spawns.length ? 'tryout' : o.scene;
@@ -1075,7 +1079,7 @@ async function shots(p: Project, f: Args['flags'], frames: number[], hashes: Map
       const diff = same ? '' : ' ' + snapshotDiff(snaps.get(s.frame), s.snapshot);
       const where = s.at ? ` ${around!.target} のまわり（真ん中 ${s.at[0]},${s.at[1]}）${s.note ? `⚠ ${s.note}` : ''}` : '';
       // 並べるときは、1枚ずつは置かない（並べた1枚だけ）
-      if (sheet) { if (diff || s.note) out.push(`shot f${s.frame}:${where}${diff}`); continue; }
+      if (tiled) { if (diff || s.note) out.push(`shot f${s.frame}:${where}${diff}`); continue; }
       const file = join(dir, `${name}-f${s.frame}${around ? '-around' : ''}.png`);
       await writeFile(file, Buffer.from(s.png, 'base64'));
       const rel = relative(p.dir, file).split(sep).join('/');
@@ -1090,6 +1094,10 @@ async function shots(p: Project, f: Args['flags'], frames: number[], hashes: Map
       out.push(`shot ${fs.length}枚を並べた1枚: ${rel.startsWith('..') ? file : rel} ${r.sheet.w}x${r.sheet.h}（${r.sheet.cols}列×${r.sheet.rows}行。左上がフレームの番号）`);
     }
     if (r.error) out.push(`⚠ 画面のページでエラー（f${r.frame}）: ${r.error}`);
+    if (r.timedOut) {
+      const left = all.filter((n) => !r.shots.some((s) => s.frame === n)).sort((a, b) => a - b);
+      out.push(`⚠ 時間切れ（${r.timedOut.sec}秒）: ${r.timedOut.total}枚のうち ${r.timedOut.got}枚を撮りました（f${r.timedOut.frame} まで進めた）。残り ${left.length}枚: ${left.slice(0, 8).map((n) => 'f' + n).join(',')}${left.length > 8 ? ' …' : ''}。--shot-timeout 秒 で延ばすか、残りだけを撮り直す`);
+    }
   } catch (e) {
     out.push(`⚠ ${reach.length ? '画面を撮れませんでした' : '描いたときの数を取れませんでした'}: ${(e as Error).message}`);
   }

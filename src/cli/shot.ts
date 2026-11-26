@@ -100,7 +100,14 @@ export const kill = (p: ChildProcess | undefined) => { try { p?.kill(); } catch 
  * プロジェクトをエディタのサーバーで開き、headless の Chrome で /shot.html を開いて、決まったフレームの画面を撮る。
  * Chrome がなければエラー（AGES_CHROME で場所を指定できる）
  */
-export async function captureShots(dir: string, cfg: ShotConfig, timeoutMs = 120_000): Promise<ShotResult> {
+/** 撮る時間の上限の目安（枚数と進めるフレームに合わせて延ばす）。ほかと同時に走らせても足りるよう余裕を見る */
+export function shotTimeout(cfg: ShotConfig): number {
+  const n = new Set(cfg.frames).size, last = Math.max(0, ...cfg.frames);
+  const px = (cfg.scale ?? 1) ** 2;
+  return 60_000 + n * Math.round(6_000 * Math.max(0.5, px)) + last * 5;
+}
+
+export async function captureShots(dir: string, cfg: ShotConfig, timeoutMs = shotTimeout(cfg)): Promise<ShotResult & { timedOut?: { got: number; total: number; frame: number; sec: number } }> {
   const chrome = findChrome();
   if (!chrome) throw new Error('画面を撮るには Chrome（Chromium・Edge でもよい）が要ります。見つからないときは、環境変数 AGES_CHROME に場所を書いてください');
   const port = await freePort();
@@ -144,10 +151,19 @@ export async function captureShots(dir: string, cfg: ShotConfig, timeoutMs = 120
       if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text);
       return r.result.value;
     };
-    await waitFor('撮るページ', 30_000, async () => ((await evaluate(`typeof window.agesShot === 'function'`)) ? true : undefined));
-    const run = evaluate(`window.agesShot(${JSON.stringify(cfg)})`) as Promise<ShotResult>;
-    const timer = new Promise<never>((_, ng) => setTimeout(() => ng(new Error(`画面を撮るのが ${timeoutMs / 1000} 秒で終わりません`)), timeoutMs).unref());
-    return await Promise.race([run, timer]);
+    await waitFor('撮るページ', 30_000, async () => ((await evaluate(`typeof window.agesShotStart === 'function'`)) ? true : undefined));
+    // 始めて、撮れた分を少しずつ受け取る（時間切れでも、それまでの分は返す）
+    await evaluate(`window.agesShotStart(${JSON.stringify(cfg)})`);
+    const total = new Set(cfg.frames).size;
+    const shots: ShotResult['shots'] = [];
+    const end = Date.now() + timeoutMs;
+    for (;;) {
+      const t = (await evaluate('window.agesShotTake()')) as { shots: ShotResult['shots']; frame: number; done: boolean; error?: string; sheet?: ShotResult['sheet'] };
+      shots.push(...t.shots);
+      if (t.done) return { shots, frame: t.frame, ...(t.error ? { error: t.error } : {}), ...(t.sheet ? { sheet: t.sheet } : {}) };
+      if (Date.now() > end) return { shots, frame: t.frame, timedOut: { got: shots.length, total, frame: t.frame, sec: Math.round(timeoutMs / 1000) } };
+      await new Promise((r) => setTimeout(r, 150));
+    }
   } finally {
     try { await cdp?.send('Browser.close'); } catch { /* 閉じている */ }
     cdp?.close();

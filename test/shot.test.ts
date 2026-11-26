@@ -5,7 +5,7 @@ import { cp, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cmdRun } from '../src/cli/ages.ts';
-import { findChrome } from '../src/cli/shot.ts';
+import { findChrome, shotTimeout } from '../src/cli/shot.ts';
 import { decodePng } from '../src/project/png.ts';
 
 process.env.AGES_HOME ??= await mkdtemp(join(tmpdir(), 'ages-home-'));
@@ -26,5 +26,17 @@ test('ages run --shot: ages run と同じ入力で、そのフレームの画面
   // 届かないフレームは撮らずに知らせる
   assert.match(await cmdRun(dir, { frames: '10', shot: '50' }), /⚠ shot f50: そのフレームまで進んでいません/);
   await assert.rejects(cmdRun(dir, { frames: '10', shot: 'x' }), /--shot の x はフレームの番号ではありません/);
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('ages run --shot: 時間の上限は枚数に合わせて延びる。時間切れでも撮れた分は残し、どこで止まったかを出す（#158）', { skip: findChrome() ? false : 'Chrome がない' }, async () => {
+  assert.ok(shotTimeout({ frames: Array.from({ length: 30 }, (_, i) => i * 60) } as never) > shotTimeout({ frames: [0] } as never) + 150_000);
+  const dir = await mkdtemp(join(tmpdir(), 'ages-'));
+  await cp(new URL('../examples/shooter', import.meta.url), dir, { recursive: true });
+  const out = await cmdRun(dir, { frames: '400', shot: '0-390:2', 'shot-timeout': '0.5' });
+  const m = /⚠ 時間切れ（1秒）: 196枚のうち (\d+)枚を撮りました（f(\d+) まで進めた）。残り (\d+)枚/.exec(out);
+  assert.ok(m, out.slice(-400));
+  assert.equal(Number(m[1]) + Number(m[3]), 196);
+  assert.equal((out.match(/^shot f\d+: /gm) ?? []).length, Number(m[1]), '撮れた分はファイルに置いた');
   await rm(dir, { recursive: true, force: true });
 });
