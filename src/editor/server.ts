@@ -107,6 +107,10 @@ function startWatch(): void {
     setTimeout(startWatch, 300);
   });
 }
+// 起動したときのファイルの大きさ・時刻。中身の変わらない知らせ（Windows を起動した直後に、ウイルス対策・検索の索引などが
+// ファイルに触れると、すべてのファイルの知らせが来ることがある）を「変わった」と取らない
+const sigs = new Map<string, string>();
+for (const f of await listFiles().catch(() => [])) sigs.set(f.path, `${f.size}:${f.mtime}`);
 startWatch();
 function onFileEvent(_ev: string, name: string | null): void {
   if (!name) return;
@@ -123,7 +127,7 @@ function onFileEvent(_ev: string, name: string | null): void {
     talkTimer = setTimeout(() => broadcast({ type: 'talk' }), 100);
     return;
   }
-  if (rel.startsWith('.git/') || rel.startsWith('.ages/') || rel.startsWith('dist/') || rel.includes('node_modules/')) return;
+  if (rel === '.git' || rel === '.ages' || rel === 'dist' || rel.startsWith('.git/') || rel.startsWith('.ages/') || rel.startsWith('dist/') || rel.includes('node_modules')) return;
   changed.add(rel);
   clearTimeout(timer);
   timer = setTimeout(flushChanges, 120);
@@ -157,7 +161,17 @@ async function handleChanges(paths: string[]): Promise<void> {
   const fresh: string[] = [];
   for (const rel of paths) {
     const abs = join(projectDir, rel);
+    // フォルダの知らせは中のファイルで分かる。大きさも時刻も同じなら、中身は変わっていない
+    const s = await stat(abs).catch(() => null);
+    if (s?.isDirectory()) continue;
+    if (!s) { if (!sigs.delete(rel)) continue; } // 知らないファイルが消えた（作ってすぐ消した一時ファイルなど）
+    else {
+      const sig = `${s.size}:${Math.round(s.mtimeMs)}`;
+      if (sigs.get(rel) === sig) continue;
+      sigs.set(rel, sig);
+    }
     const text = await readFile(abs, 'utf8').catch(() => null);
+    if (text !== null && isCode(rel) && codeText.get(rel) === text) continue; // 時刻だけ変わった（中身は同じ）
     if (text !== null && known.get(abs) === text) continue; // 自分で書いたもの
     if (text !== null) known.set(abs, text);
     fresh.push(rel);

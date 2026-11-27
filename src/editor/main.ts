@@ -18,7 +18,26 @@ import { EDITOR_LANGS, LANG_NAMES, T, lang, setLang, type EditorLang } from './i
 const app = new App();
 (window as unknown as { ages: App }).ages = app; // デバッグ・AIのブラウザ操作用
 
-await app.refresh();
+// 開くときに読めなかったら（サーバーがコードを読み直している途中など）、少し待って読み直す。
+// それでも開けなければ、空の画面のままにせず、何が起きたかと読み直しのボタンを出す
+const bootFailed = (e: unknown) => {
+  const work = document.getElementById('work');
+  if (!work || work.childElementCount) return;
+  console.error(e);
+  const tries = Number(sessionStorage.getItem('ages.bootRetry') ?? 0);
+  if (tries < 3) { sessionStorage.setItem('ages.bootRetry', String(tries + 1)); setTimeout(() => location.reload(), 1000); }
+  work.replaceChildren(h('div', { class: 'pad' },
+    h('p', {}, T('エディタを開けませんでした: {0}', (e as Error)?.message ?? String(e))),
+    h('button', { onclick: () => { sessionStorage.removeItem('ages.bootRetry'); location.reload(); } }, T('読み直す'))));
+};
+addEventListener('unhandledrejection', (ev) => bootFailed(ev.reason));
+addEventListener('error', (ev) => bootFailed(ev.error ?? ev.message));
+for (let i = 0; ; i++) {
+  try { await app.refresh(); break; } catch (e) {
+    if (i >= 20) throw e;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+}
 
 // 別ウインドウで1つのパネルだけを開く（例: /?solo=matrix&path=main%23spawner.Spawner.formation）
 const params = new URLSearchParams(location.search);
@@ -389,6 +408,7 @@ events.onerror = () => toast(T('サーバーとの接続が切れました。サ
 await mountWindows();
 layout.build();
 renderTop();
+sessionStorage.removeItem('ages.bootRetry');
 if (app.state.lockReport?.length) toast(app.state.lockReport.map((l) => '🔒 ' + l).join('\n'), 'lock', 8000);
 }
 
