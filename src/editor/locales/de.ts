@@ -872,6 +872,8 @@ export default {
   "🔒 ロック中。クリックでロックマネージャーを開く（外す・値を変える）": "🔒 Gesperrt. Klicken, um die Sperrverwaltung zu öffnen (entsperren oder Wert ändern)",
   "{0} という形（シェーダーか defineParams の名前）が見つかりません": "Keine Form namens {0} gefunden (ein Shader oder ein defineParams-Name)",
   "{0} を選ぶと、ここに値が並びます": "Wähle {0}, dann erscheinen hier die Werte",
+  "エディタを開けませんでした: {0}": "Der Editor konnte nicht geöffnet werden: {0}",
+  "読み直す": "Neu laden",
   // ---- 本体の標準の部品・表・シェーダーの説明（std-descs.ts。TD で訳す） ----
   "位置・向き・大きさ（標準）": "Position, Drehung, Größe (Standard)",
   "横位置(px。parent があれば親から見た位置)": "Horizontale Position (px; relativ zum Elternteil, falls parent gesetzt)",

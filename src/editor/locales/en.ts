@@ -872,6 +872,8 @@ export default {
   "🔒 ロック中。クリックでロックマネージャーを開く（外す・値を変える）": "🔒 Locked. Click to open the lock manager (unlock or change the value)",
   "{0} という形（シェーダーか defineParams の名前）が見つかりません": "No shape named {0} (a shader or a defineParams name) was found",
   "{0} を選ぶと、ここに値が並びます": "Choose {0} and its values appear here",
+  "エディタを開けませんでした: {0}": "Could not open the editor: {0}",
+  "読み直す": "Reload",
   // ---- 本体の標準の部品・表・シェーダーの説明（std-descs.ts。TD で訳す） ----
   "位置・向き・大きさ（標準）": "Position, rotation, scale (standard)",
   "横位置(px。parent があれば親から見た位置)": "Horizontal position (px; relative to the parent if parent is set)",
