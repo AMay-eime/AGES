@@ -865,6 +865,8 @@ export default {
   "🔒 ロックマネージャーで撮ってロックする": "🔒 Record and lock in the lock manager",
   "フォルダ（{0}ファイル）。中の書き換え・足す・消すで、ages check・run・export を止めます": "Folder ({0} files). Rewriting, adding or deleting files inside stops ages check, run and export",
   "🔒 フォルダごとロックする": "🔒 Lock the whole folder",
+  "エディタを開けませんでした: {0}": "Could not open the editor: {0}",
+  "読み直す": "Reload",
   // ---- 本体の標準の部品・表・シェーダーの説明（std-descs.ts。TD で訳す） ----
   "位置・向き・大きさ（標準）": "Position, rotation, scale (standard)",
   "横位置(px。parent があれば親から見た位置)": "Horizontal position (px; relative to the parent if parent is set)",
