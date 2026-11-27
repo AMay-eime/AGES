@@ -2,7 +2,10 @@
 // インスペクタの自動生成と、AI・人の入力値の検証の両方がここを使う。
 import { EASE_NAMES } from './ease.ts';
 
-export type Field =
+/** 欄ごとに足せるもの: label はインスペクタに出す名前（省くと欄の名前そのまま。説明 desc はマウスを置くと出る） */
+export type Field = FieldKind & { label?: string };
+
+type FieldKind =
   | { type: 'number'; default: number; min?: number; max?: number; step?: number; desc?: string }
   | { type: 'int'; default: number; min?: number; max?: number; desc?: string }
   | { type: 'bool'; default: boolean; desc?: string }
@@ -27,7 +30,10 @@ export type Field =
   | { type: 'ease'; default: string; desc?: string }
   /** 入力のボタンの名前（KeyZ, Pad.A, Mouse0 …）。analog なら軸の名前（Pad.LX …）。エディタでは押して決められる */
   | { type: 'input'; default: string; analog?: boolean; desc?: string }
-  /** シェーダーの調整できる値（同じコンポーネントの of の欄で選んだシェーダーの uniform）。中は 住所.params.名前 で指す */
+  /**
+   * 調整値（同じコンポーネントの of の欄の値で形が決まる）。of がシェーダーならその uniform、
+   * defineParams で登録した名前ならその形。中は 住所.params.名前 で指す（派生・置いた物では1つずつ上書きできる）
+   */
   | { type: 'params'; of: string; default?: Record<string, unknown>; desc?: string }
   | MatrixField
   | ListField
@@ -147,6 +153,23 @@ export interface ComponentDef {
 export function defineComponent<T extends ComponentDef>(def: T): T {
   return def;
 }
+
+/**
+ * スクリプトの調整値の形（名前 → 欄）。コンポーネントの params 型の欄（of で選ぶ欄の値がこの名前）に、この形の値が並ぶ。
+ * 欄の書き方はコンポーネントの fields と同じ（label で見せる名前、desc はマウスを置くと出る説明）
+ */
+export interface ParamsDef {
+  name: string;
+  desc?: string;
+  fields: Record<string, Field>;
+}
+
+export function defineParams<T extends ParamsDef>(def: T): T {
+  return def;
+}
+
+/** params 型の欄（部品.欄 → of の欄）。派生・置いた物で、中の値を1つずつ重ねるのに使う（Registry が登録する） */
+export const PARAMS_FIELDS = new Map<string, string>();
 
 export function defaultsOf(def: ComponentDef): Record<string, unknown> {
   const out: Record<string, unknown> = {};

@@ -149,11 +149,36 @@ export function inspectorPanel(app: App): Panel {
           if (playing) { if (!sub.length) commit(v, final); else if (final) nestedEmit({ kind: 'set', sub, value: v }); } else if (final) void api.patch([{ op: 'set', path: p, value: v }]);
         };
         const wctx: Ctx = { comp: cname, field: fname, holder: holder!.components, ext: { playing, cleanups, set: extSet } };
-        // シェーダーの値: 選んだシェーダーの uniform を並べる
-        const pf = f.type === 'params' ? app.registry.shaderParams(values[f.of]) : null;
+        // 調整値: 選んだシェーダーの uniform・スクリプトの形（defineParams）を、1つずつロック・上書きできる欄で並べる
+        const pf = f.type === 'params' ? app.registry.paramsShape(values[f.of] ?? defaultOf(def.fields[f.of])) : null;
+        const ownParams = new Set(Object.keys((raw?.components[cname]?.[fname] ?? {}) as object));
+        const paramRows = (st: StructField): HTMLElement => {
+          const obj = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
+          return h('div', { class: 'nest' }, Object.entries(st.fields).filter(([k]) => app.showLocked || !app.state.locks[`${path}.${k}`]).map(([k, sf]) => {
+            const p2 = `${path}.${k}`, lk = app.state.locks[p2] ?? lock;
+            const v = k in obj ? obj[k] : defaultOf(sf);
+            const el = isNested(sf) ? nestedWidget(app, sf, v, path, [k], nestedEmit, wctx) : widget(app, sf, v, (x, final) => { if (final) nestedEmit({ kind: 'set', sub: [k], value: x }); }, wctx).el;
+            if (lk) { el.setAttribute('inert', ''); el.classList.add('locked-value'); }
+            const ov = !!variantOf && ownParams.has(k);
+            return h('div', { class: `nest-row ${ov ? 'override' : ''} ${lk ? 'locked' : ''}`, 'data-path': p2 },
+              h('span', { class: 'nest-label', title: `${k}: ${typeOf(sf)}${sf.desc ? '\n' + TD(sf.desc) : ''}${ov ? T('\n{0}で変えた値（元 @{1} から）', what, variantOf) : ''}` },
+                ov && !lk ? h('button', { class: 'icon tiny', title: T('元（@{0}）の値に戻す', variantOf), onclick: () => app.patch([{ op: 'revert', path: p2 }]) }, '↺') : null,
+                sf.label ? TD(sf.label) : k),
+              h('div', { class: 'nest-val' }, el),
+              h('button', {
+                class: `icon tiny lockbtn ${app.state.locks[p2] ? 'on' : ''}`, disabled: !savable || playing || (!!lock && !app.state.locks[p2]),
+                title: app.state.locks[p2] ? T('🔒 ロック中。クリックでロックマネージャーを開く（外す・値を変える）') : T('ロックする（AI もエディタも変えられなくなります。外すのはロックマネージャーで）'),
+                onclick: () => (app.state.locks[p2] ? app.openLocks(p2) : app.lock([p2])),
+              }, app.state.locks[p2] ? '🔒' : '🔓'));
+          }));
+        };
+        const ofVal = values[f.type === 'params' ? f.of : ''] ?? (f.type === 'params' ? defaultOf(def.fields[f.of]) : undefined);
         const standard = () => f.type === 'matrix'
           ? matrixWidget(app, path, value, f.cell ?? 'number')
-          : f.type === 'params' ? { el: pf ? nestedWidget(app, pf, value, path, [], nestedEmit, wctx) : h('span', { class: 'muted' }, values[f.of] ? T('シェーダー {0} が見つかりません', values[f.of]) : T('{0} でシェーダーを選ぶと、ここに値が並びます', f.of)), set: () => {} }
+          : f.type === 'params' ? { el: pf ? paramRows(pf) : h('span', { class: 'muted' }, ofVal ? T('{0} という形（シェーダーか defineParams の名前）が見つかりません', ofVal) : T('{0} を選ぶと、ここに値が並びます', f.of)), set: () => {} }
+          // 調整値の形を選ぶ欄（文字の欄）: 登録した形（defineParams）から選ぶ
+          : f.type === 'string' && Object.values(def.fields).some((x) => x.type === 'params' && x.of === fname) && app.registry.scriptParams.size
+            ? widget(app, { type: 'enum', default: '', options: [...new Set(['', ...app.registry.scriptParams.keys(), ...(typeof value === 'string' ? [value] : [])])], ...(f.desc ? { desc: f.desc } : {}) }, value, commit, wctx)
           : isNested(f) ? { el: nestedWidget(app, f, value, path, [], nestedEmit, wctx), set: () => {} }
           : widget(app, f, value, commit, wctx);
         // 欄の見せ方（拡張）があれば、それで作る
@@ -173,7 +198,7 @@ export function inspectorPanel(app: App): Panel {
         const row = h('div', {
           class: `field ${isWide(f) ? 'wide' : ''} ${has ? '' : 'default'} ${touched ? 'touched' : ''} ${lock ? 'locked' : ''} ${over ? 'override' : ''}`,
           'data-ai': path, 'data-path': path,
-        }, h('label', { oncontextmenu: (e: MouseEvent) => { e.preventDefault(); menu(e.clientX, e.clientY, [[T('📌 AI への付箋…'), () => void noteFor(app, path)]]); }, title: T('{0}: {1}{2}{3}{4}', fname, brief(f), f.desc ? '\n' + TD(f.desc) : '', touched ? T('\n★ {0} が {1} に調整', touched.who, time(touched.t)) : '', variantOf ? (over ? T('\n{0}で変えた値（元 @{1} から）', what, variantOf) : T('\n元 @{0} から受け継いだ値', variantOf)) : has ? '' : T('\n（省略中: 既定値）')) }, revert, fname), w.el, lockBtn);
+        }, h('label', { oncontextmenu: (e: MouseEvent) => { e.preventDefault(); menu(e.clientX, e.clientY, [[T('📌 AI への付箋…'), () => void noteFor(app, path)]]); }, title: T('{0}: {1}{2}{3}{4}', fname, brief(f), f.desc ? '\n' + TD(f.desc) : '', touched ? T('\n★ {0} が {1} に調整', touched.who, time(touched.t)) : '', variantOf ? (over ? T('\n{0}で変えた値（元 @{1} から）', what, variantOf) : T('\n元 @{0} から受け継いだ値', variantOf)) : has ? '' : T('\n（省略中: 既定値）')) }, revert, f.label ? TD(f.label) : fname), w.el, lockBtn);
         live.push({ path, comp: cname, field: fname, set: w.set, el: row });
         return row;
       });
@@ -808,7 +833,7 @@ export function nestedWidget(app: App, f: Field, value: unknown, path: string, s
   }
   if (f.type === 'struct') {
     const obj = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
-    return h('div', { class: 'nest' }, Object.entries(f.fields).map(([k, sf]) => row(k, `${k}: ${typeOf(sf)}${sf.desc ? '\n' + TD(sf.desc) : ''}`, leaf(sf, k in obj ? obj[k] : defaultOf(sf), [...sub, k], !(k in obj), obj))));
+    return h('div', { class: 'nest' }, Object.entries(f.fields).map(([k, sf]) => row(sf.label ? TD(sf.label) : k, `${k}: ${typeOf(sf)}${sf.desc ? '\n' + TD(sf.desc) : ''}`, leaf(sf, k in obj ? obj[k] : defaultOf(sf), [...sub, k], !(k in obj), obj))));
   }
   // どれか1つ: 種類を選ぶと、その種類の既定値に入れ替わる（同じ名前・同じ型の欄は今の値を引き継ぐ）
   const o = f as OneOfField;
@@ -825,7 +850,7 @@ export function nestedWidget(app: App, f: Field, value: unknown, path: string, s
   });
   const fields = o.variants[kind]?.fields ?? {};
   return h('div', { class: 'nest' }, row('kind', TD(o.variants[kind]?.desc) || T('種類'), pick),
-    Object.entries(fields).map(([k, sf]) => row(k, `${k}: ${typeOf(sf)}${sf.desc ? '\n' + TD(sf.desc) : ''}`, leaf(sf, k in obj ? obj[k] : defaultOf(sf), [...sub, k], !(k in obj), obj))));
+    Object.entries(fields).map(([k, sf]) => row(sf.label ? TD(sf.label) : k, `${k}: ${typeOf(sf)}${sf.desc ? '\n' + TD(sf.desc) : ''}`, leaf(sf, k in obj ? obj[k] : defaultOf(sf), [...sub, k], !(k in obj), obj))));
 }
 
 /** 「押して決める」の画面。次に押されたボタン（analog なら大きく倒した軸）を返す */

@@ -1,6 +1,7 @@
 // 確認用のページ（ages export --review）。書き出したゲームに、2つの見方を足す（スマホのブラウザでも使える）:
 // - 再生: ages run と同じ入力（--replay）で、同じように動かす。最初から・一時停止・コマ送り・速さ・フレームの番号。途中から自分で操作もできる
-// - 見本帳: プレハブ（演出・音・物）と音のファイルを一覧にし、押すと空の場面に1つだけ出して見る・聞く（くり返す）
+// - 区切り（--chapters）: 押すとその区切りから再生する（params で始め直す・frame まで見せずに速く進める）
+// - 見本帳（--gallery で指定したものだけ）: プレハブ（演出・音・物）と音のファイルを並べ、押すと空の場面に1つだけ出して見る・聞く（くり返す）
 // ゲームの決まりは書き出したゲームと同じ（同じ Game・同じ描画・同じ音）。保存データはこのページだけのもの（遊ぶ版のセーブに触れない）
 import { Game } from '../core/game.ts';
 import type { Registry } from '../core/registry.ts';
@@ -27,10 +28,15 @@ export interface ReviewData {
     /** ここで止める（省くと、止めずに進める） */
     end?: number;
   };
-  gallery: {
+  /** 見本帳（--gallery で指定したものだけ。省くと見本帳なし） */
+  gallery?: {
     prefabs: { name: string; desc: string; kind: 'fx' | 'sound' | 'thing'; is3d: boolean }[];
     sounds: string[];
   };
+  /** 区切り（--chapters）: 押すとそこから再生する。params は場面をその値で始め直す、frame は見せずに速く進めてそこから見せる */
+  chapters?: { name: string; params?: Record<string, unknown>; frame?: number }[];
+  /** 書き出したアセット（再生と見本帳で使うものだけにしたとき。省くと全部） */
+  assets?: string[];
   /** 案くらべ（--variants）: 値を変えた案。今の値と並べて、同じ入力で同時に再生する。変わった文書だけ持つ */
   variants?: { name: string; desc?: string; set: Record<string, unknown>; prefabs: Record<string, PrefabDoc>; scenes: Record<string, SceneDoc>; tables: Record<string, TableDoc> }[];
 }
@@ -94,10 +100,18 @@ export function startReview(h: ReviewHost): void {
   // 見本帳: 出している物・くり返しの待ち
   let showing: { name: string; sound?: string; ids: string[]; wait: number } | null = null;
   let repeat = true;
+  // 区切り: いまの区切り（-1 = 最初から）と、見せずに速く進める先
+  let chapter = -1;
+  let skipTo = 0;
+  const chapterOf = () => (chapter >= 0 ? data.chapters?.[chapter] : undefined);
+  /** 区切りの params は、再生の params に重ねる */
+  const paramsOf = () => { const c = chapterOf(); return c?.params ? { ...(data.replay.params ?? {}), ...c.params } : data.replay.params; };
 
+  /** 区切りまで見せずに速く進めている間（音・粒は出さない） */
+  const skipping = () => (mode === 'replay' || mode === 'compare') && !!play && game && game.frame < skipTo;
   const listen = (g: Game) => {
-    g.audioListeners.push((cmd) => audio.handle(cmd));
-    g.particleListeners.push((cmd) => renderer.particles.burst(g.world, cmd.id, cmd.count));
+    g.audioListeners.push((cmd) => { if (!skipping()) audio.handle(cmd); });
+    g.particleListeners.push((cmd) => { if (!skipping()) renderer.particles.burst(g.world, cmd.id, cmd.count); });
     g.sceneListeners.push((_from, to) => h.hold(to, false));
   };
   const reset = () => { audio.stopAll(); renderer.particles.clear(); acc = 0; pendingSteps = 0; };
@@ -108,8 +122,9 @@ export function startReview(h: ReviewHost): void {
     const r = data.replay;
     const doc = h.scenes[r.scene];
     if (!doc) throw new Error(`シーン ${r.scene} がありません`);
-    game = new Game(registry, config, doc, r.seed, { store: new MemoryStore(structuredClone(r.save)), lang: r.lang, params: r.params, date: parseDate(r.date) });
+    game = new Game(registry, config, doc, r.seed, { store: new MemoryStore(structuredClone(r.save)), lang: r.lang, params: paramsOf(), date: parseDate(r.date) });
     listen(game);
+    skipTo = chapterOf()?.frame ?? 0;
     audio.setBuses(game.audioBuses());
     play = new RunInput(r.keys);
     paused = false;
@@ -152,9 +167,9 @@ export function startReview(h: ReviewHost): void {
       const reg = list[i].reg;
       const doc = reg.scenes.get(r.scene) ?? h.scenes[r.scene];
       if (!doc) throw new Error(`シーン ${r.scene} がありません`);
-      const g = new Game(reg, config, doc, r.seed, { store: new MemoryStore(structuredClone(r.save)), lang: r.lang, params: r.params, date: parseDate(r.date) });
-      g.audioListeners.push((cmd) => { if (i === sel) audio.handle(cmd); });
-      g.particleListeners.push((cmd) => pn.renderer.particles.burst(g.world, cmd.id, cmd.count));
+      const g = new Game(reg, config, doc, r.seed, { store: new MemoryStore(structuredClone(r.save)), lang: r.lang, params: paramsOf(), date: parseDate(r.date) });
+      g.audioListeners.push((cmd) => { if (i === sel && !skipping()) audio.handle(cmd); });
+      g.particleListeners.push((cmd) => { if (!skipping()) pn.renderer.particles.burst(g.world, cmd.id, cmd.count); });
       g.sceneListeners.push((_from, to) => h.hold(to, false));
       pn.renderer.particles.clear();
       pn.game = g;
@@ -162,6 +177,7 @@ export function startReview(h: ReviewHost): void {
     });
     game = panes[0].game;
     play = panes[0].play;
+    skipTo = chapterOf()?.frame ?? 0;
     audio.setBuses(panes[sel].game.audioBuses());
     paused = false;
     delete h.status.hash;
@@ -181,7 +197,7 @@ export function startReview(h: ReviewHost): void {
   };
   const spawnShowing = () => {
     if (!showing) return;
-    const p = data.gallery.prefabs.find((x) => x.name === showing!.name);
+    const p = data.gallery?.prefabs.find((x) => x.name === showing!.name);
     if (showing.sound) { game.ctx.sound.play(showing.sound); showing.ids = []; return; }
     if (p?.is3d) {
       // 3D の物は、空の場面にカメラと光を置いて、真ん中に出す
@@ -220,17 +236,30 @@ export function startReview(h: ReviewHost): void {
   const speedBtn = button('×1', '速さ', () => { speed = SPEEDS[(SPEEDS.indexOf(speed) + 1) % SPEEDS.length]; refresh(); });
   const self = button('自分で', 'ここから自分で操作する（キーボード・ゲームパッド・タッチ）', () => { play = null; paused = false; refresh(); });
   const again = button('くり返す', '消えたら、また出す', () => { repeat = !repeat; refresh(); });
-  bar.append(tabReplay, tabGallery, ...(data.variants?.length && h.makeRenderer && h.variantRegistry ? [tabCompare] : []), restart, pause, stepBtn, speedBtn, self, again, label);
+  // 区切りのボタン（押すとその区切りから。再生・案くらべのとき）
+  const chapterBtns = data.chapters?.length ? [{ name: '最初から', i: -1 }, ...data.chapters.map((c, i) => ({ name: c.name, i }))].map((c) => {
+    const ch = c.i >= 0 ? data.chapters![c.i] : undefined;
+    const tip = !ch ? '最初から再生する' : ch.frame !== undefined ? `f${ch.frame} まで見せずに進めて、そこから見せる` : `場面を ${JSON.stringify(ch.params)} で始め直す`;
+    const b = button(c.name, tip, () => { chapter = c.i; if (mode === 'gallery') mode = 'replay'; if (mode === 'compare') startCompare(); else startReplay(); });
+    b.dataset.chapter = String(c.i);
+    return b;
+  }) : [];
+  const chapterRow = document.createElement('span');
+  chapterRow.setAttribute('style', 'display:contents');
+  chapterRow.append(...chapterBtns);
+  bar.append(tabReplay, ...(data.gallery ? [tabGallery] : []), ...(data.variants?.length && h.makeRenderer && h.variantRegistry ? [tabCompare] : []), restart, pause, stepBtn, speedBtn, self, again, chapterRow, label);
 
   const kindLabel = { fx: '演出', sound: '音', thing: '物' } as const;
   const buildPanel = () => {
     panel.textContent = '';
+    if (!data.gallery) return;
+    const gallery = data.gallery;
     const groups: [string, { label: string; sub: string; act: () => void; key: string }[]][] = [];
     for (const kind of ['fx', 'sound', 'thing'] as const) {
-      const list = data.gallery.prefabs.filter((p) => p.kind === kind).map((p) => ({ label: p.name, sub: p.desc, act: () => show(p.name), key: p.name }));
+      const list = gallery.prefabs.filter((p) => p.kind === kind).map((p) => ({ label: p.name, sub: p.desc, act: () => show(p.name), key: p.name }));
       if (list.length) groups.push([`${kindLabel[kind]}（プレハブ）`, list]);
     }
-    if (data.gallery.sounds.length) groups.push(['音のファイル', data.gallery.sounds.map((s) => ({ label: s.split('/').pop()!, sub: s, act: () => show(s, s), key: s }))]);
+    if (gallery.sounds.length) groups.push(['音のファイル', gallery.sounds.map((s) => ({ label: s.split('/').pop()!, sub: s, act: () => show(s, s), key: s }))]);
     if (!groups.length) panel.textContent = 'プレハブも音もありません';
     for (const [title, items] of groups) {
       const head = document.createElement('div');
@@ -282,6 +311,7 @@ export function startReview(h: ReviewHost): void {
     self.style.display = mode === 'replay' && play ? '' : 'none';
     again.style.display = mode === 'gallery' ? '' : 'none';
     if (mode === 'gallery') again.setAttribute('style', css.btn + (repeat ? ';' + css.on : ''));
+    for (const b of chapterBtns) b.setAttribute('style', css.btn + (mode !== 'gallery' && Number(b.dataset.chapter) === chapter ? ';' + css.on : ''));
     for (const b of panel.querySelectorAll('button')) (b as HTMLElement).style.outline = showing && (b as HTMLElement).dataset.key === (showing.sound ?? showing.name) ? '2px solid #3d5afe' : '';
     layout();
   }
@@ -320,7 +350,13 @@ export function startReview(h: ReviewHost): void {
         if (mode === 'compare') h.status.hashes = panes.map((pn) => pn.game.hash());
         refresh();
       }
-      if (!h.loading()) {
+      if (!h.loading() && skipping()) {
+        // 区切り: 見せずに速く進める（1回の描画のあいだに、時間で区切って進める）
+        const t0 = performance.now();
+        while (skipping() && performance.now() - t0 < 30 && !h.loading()) stepOnce();
+        acc = 0;
+        if (!skipping()) { renderer.particles.clear(); for (const pn of panes) pn.renderer.particles.clear(); }
+      } else if (!h.loading()) {
         if (!paused) {
           acc += dt * speed;
           let n = 0;
@@ -337,7 +373,9 @@ export function startReview(h: ReviewHost): void {
       h.status.frame = game.frame;
       h.status.scene = game.sceneName;
       const end = replaying && data.replay.end !== undefined ? ` / ${data.replay.end}` : '';
-      const who = mode === 'compare' ? `案くらべ ${panes.length}つ（音: ${panes[sel]?.name ?? ''}）` : mode === 'replay' ? (play ? '再生' : '自分で') : showing ? (showing.sound ?? showing.name) : '下から選ぶ';
+      const ff = skipping() ? `早送り中（区切り f${skipTo} まで）` : '';
+      const cname = chapterOf() && mode !== 'gallery' ? `［${chapterOf()!.name}］` : '';
+      const who = ff ? ff : cname + (mode === 'compare' ? `案くらべ ${panes.length}つ（音: ${panes[sel]?.name ?? ''}）` : mode === 'replay' ? (play ? '再生' : '自分で') : showing ? (showing.sound ?? showing.name) : '下から選ぶ');
       label.textContent = `f${game.frame}${end}  ${who}${paused ? '（止めています）' : ''}`;
     } catch (e) {
       h.fail(e);
@@ -345,7 +383,7 @@ export function startReview(h: ReviewHost): void {
   };
 
   // 見本帳の画像・音は、先に全部読んでおく（押したらすぐ出るように）
-  void h.preloadAll();
+  if (data.gallery) void h.preloadAll();
   startReplay();
   requestAnimationFrame(loop);
 }

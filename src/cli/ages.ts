@@ -51,6 +51,7 @@ import type { DrawStats } from '../editor/shot.ts';
 import { MemoryStore } from '../core/save.ts';
 import { languagesOf } from '../core/i18n.ts';
 import { parseSceneSpawns, parseSpawns, spawnInScene, spawnTryout, tryoutGone, tryoutScene } from '../core/tryout.ts';
+import { reviewAssets } from '../project/review-assets.ts';
 
 const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [引数]
 
@@ -59,11 +60,11 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
   find   <dir> <語 ...>              部品・フィールド・表の列と行・システム・プレハブ・シーンの物を、名前と説明から探す（語は全部を含むもの）
   code   <dir> <名前 | 部品.欄 | $表.列 | ファイル | 日本語の語 ...> [--body] [--around 2] [--all] [--max 30]
                                      コードを引く: 宣言の場所と範囲（--body で中身）・使っている所（どの関数の中か。読/書/値/呼）・ファイルの目次・コメントから探す
-  schema <dir> [名前 ...]             詳しく引く: コンポーネント（型・範囲・説明）/ $表 / std:flash などのシェーダー
+  schema <dir> [名前 ...]             詳しく引く: コンポーネント（型・範囲・説明）/ $表 / std:flash などのシェーダー / params:名前（スクリプトの調整値の形。params で一覧）
                / ops（patch の操作の一覧と書き方）/ guide（機能ごとの手順の目次）/ guide:項目（例 guide:ui）
   get    <dir> <addr> [addr ...]     値を見る（例: main#player / main#player.Player.speed / @enemy / $enemies.basic）
   set    <dir> <addr> <value> [--force]  行列のセルは addr[行,列]（例 main#spawner.Spawner.formation[2,3] 1）
-  patch  <dir> <ops.json | -> [--force]   操作の配列（例 [{"op":"set","path":"main#player.Player.speed","value":5}]。一覧は schema <dir> ops）
+  patch  <dir> <ops.json | -> [--force] [--full]   操作の配列（例 [{"op":"set","path":"main#player.Player.speed","value":5}]。一覧は schema <dir> ops）
   table  <dir> <表> [--cols a,b] [--rows id1,id2] [--empty 列]   表を見る（1行1行。--empty はその列が空の行だけ。例 未訳: text --empty en）
                [--export x.csv] [--import x.csv [--force]]   表計算ソフトとの行き来（読み込みは表をまるごと置き換える）
   run    <dir> [--frames 600] [--scene main [--spawn "弾@0,1:120{Bullet.kind=big};弾@player+0,2:120"（そのシーンの中に、フレームの始めに出す）] | --spawn enemy,explosion@40,0（プレハブだけを空のシーンの真ん中に出して試す）] [--seed 1] [--keys "0-120:ArrowLeft+KeyZ;120-200:@move_x=1;30:Mouse0+ptr=240,100"]
@@ -72,7 +73,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
                [--params stage=s1,level=2]（始めのシーンに渡す ctx.scene.params。JSON でもよい） [--date 2026-12-25T09:00]（ctx.date の始め。省くと決まった日時）
                フレームの番号: --keys・--log・--every の fN は N 番目のステップ（--every の値はそのステップを終えた値）。--shot の N は N ステップ進めた後の画面（= N-1 番目のステップを終えた画面）
                --keys の "title+30-32:@ui_confirm" は、シーン title に入るたびに、入ってから 30〜31 フレーム目に押す（click=ボタンのID も書ける）
-               [--shot 0,600 | 361-421:4 [--shot-scale 0.5] [--shot-dir 場所] [--shot-around 物,160x160,x4] [--shot-sheet]]（そのフレームの画面を PNG で撮る。既定 .ages/shots。要 Chrome。around は物のまわりを切り抜いて拡大、sheet は並べた1枚に）
+               [--shot 0,600 | 361-421:4 [--shot-scale 0.5] [--shot-dir 場所] [--shot-around 物,160x160,x4] [--shot-sheet] [--shot-timeout 秒]]（そのフレームの画面を PNG で撮る。200枚まで。既定 .ages/shots。要 Chrome。時間の上限は枚数に合わせて延び、時間切れでも撮れた分は残す。around は物のまわりを切り抜いて拡大、sheet は並べた1枚に）
                [--perf | --perf logic]（速さ: システムごとの1フレームの時間と、物がいちばん多いフレームを描いた量。logic は描いた量を省く）
   log    <dir> [--all] [--peek]      前回からの編集の要約（--peek は既読にしない）
   undo   <dir> [--tx id] [--force]   自分（AI）の直前の編集を元に戻す（その後で変えられた所があれば止まる）。redo <dir> でやり直す
@@ -90,7 +91,7 @@ const HELP = `AGES CLI — 使い方: ages <コマンド> <プロジェクト> [
                [--origin [ファイル | フォルダ | $text.言語 --by own|ai|stock|commission [--tool AIの名前] [--license CC0] [--from 入手元] [--note 一言] [--replace（前の記録の値を変える）]]]   出どころ（自作・AI 生成・素材・人に頼んだ）の一覧と記録
   space  <dir> [シーン] [--near id [--radius 3]] [--only id,id] [--frames n] [--keys …]   （追加パッケージ 3d を入れたプロジェクト）3D の空間を文字で確かめる
   sheet  <dir> <画像>                 画像の切り方（コマの名前・位置・基準点・動き）を見る
-  slice  <dir> <画像> --grid 32x32 | --count 4x6 | --auto  画像を切る（前と同じ場所のコマは名前を引き継ぐ）
+  slice  <dir> <画像> --grid 32x32 | --count 4x6 | --auto  画像を切る（前と同じ場所のコマは名前を引き継ぐ）。--filter nearest|linear|project でこの画像だけの表示
                [--spacing n] [--margin n] [--skip-empty] [--alpha 1] [--min 2] [--gap 0] [--pad 0] [--pivot 0.5,1] [--dry] [--force]
 
 アドレス: シーン#ID.コンポーネント.フィールド（例 main#player.Player.speed）、プレハブは @名前.コンポーネント.フィールド、表は $表.行.列
@@ -277,7 +278,16 @@ async function reviewData(p: Project, flags: Record<string, string | boolean>): 
   const end = typeof flags.frames === 'string' ? Number(flags.frames) : undefined;
   if (end !== undefined && !(Number.isInteger(end) && end > 0)) throw new Error('--frames は止めるフレーム（1 以上の整数）');
   const lang = typeof flags.lang === 'string' ? flags.lang : undefined;
+  // 見本帳: --gallery 名前,…（プレハブか音のファイル）で指定したものだけ。all で全部。省くと見本帳なし（issue #157）
+  const want = typeof flags.gallery === 'string' ? flags.gallery.split(',').map((x) => x.trim()).filter(Boolean) : flags.gallery === true ? [] : undefined;
+  if (flags.gallery === true || (want && !want.length)) throw new Error('--gallery には見本帳に入れるもの（プレハブの名前か音のファイル。例 --gallery explosion,se_shot）か all を書く');
+  const all = want?.includes('all');
+  const soundFiles = p.assets.filter((a) => a.kind === 'sound').map((a) => a.path);
+  for (const x of all ? [] : (want ?? [])) {
+    if (!p.docs.prefabs.has(x) && !soundFiles.includes(x)) throw new Error(`--gallery の ${x}: プレハブか音のファイルの名前ではありません${suggest(x, [...p.docs.prefabs.keys(), ...soundFiles])}`);
+  }
   const prefabs = [...p.docs.prefabs.values()]
+    .filter((d) => all || want?.includes(d.name))
     .filter((d) => !d.components.AudioBus)
     .map((d) => ({
       name: d.name,
@@ -287,11 +297,46 @@ async function reviewData(p: Project, flags: Record<string, string | boolean>): 
     }))
     .sort((a, b) => (a.name < b.name ? -1 : 1));
   const variants = flags.variants !== undefined ? await reviewVariants(p, flags.variants) : undefined;
+  const gallery = want ? { prefabs, sounds: soundFiles.filter((x) => all || want.includes(x)).sort() } : undefined;
+  const chapters = flags.chapters !== undefined ? await reviewChapters(p, flags.chapters, end) : undefined;
+  // 書き出すアセット: 再生（と区切りの params）で使うもの・見本帳の物が使うものだけ。--assets all で全部
+  let assets: string[] | undefined;
+  if (flags.assets !== 'all') {
+    if (flags.assets !== undefined) throw new Error('--assets は all だけ（省くと、再生と見本帳で使うものだけを書き出す）');
+    const lastKey = Math.max(0, ...s.keys.events.map((e) => e.f), ...s.keys.clicks.map(([f]) => f));
+    const frames = Math.max(end ?? lastKey + p.config.fps * 60, ...(chapters ?? []).map((c) => c.frame ?? 0));
+    const base = { scene: s.scene, seed: s.seed, keys: s.keys, save: s.initialSave, date: s.date, lang, frames };
+    const runs = [{ ...base, params }, ...(chapters ?? []).filter((c) => c.params).map((c) => ({ ...base, params: { ...(params ?? {}), ...c.params } }))];
+    const used = reviewAssets(p, runs, { prefabs: gallery?.prefabs.map((x) => x.name) ?? [], sounds: gallery?.sounds ?? [] });
+    // 案くらべは値が変わって使うものも変わりうるので、全部
+    if (variants?.length) for (const a of p.assets) used.add(a.path);
+    assets = [...used].sort();
+  }
   return {
     replay: { scene: s.scene, seed: s.seed, keys: s.keys, save: s.initialSave, date: formatDate(s.date), ...(params ? { params } : {}), ...(lang ? { lang } : {}), ...(end ? { end } : {}) },
-    gallery: { prefabs, sounds: p.assets.filter((a) => a.kind === 'sound').map((a) => a.path).sort() },
+    ...(gallery ? { gallery } : {}),
+    ...(chapters ? { chapters } : {}),
+    ...(assets ? { assets } : {}),
     ...(variants ? { variants } : {}),
   };
+}
+
+/** --chapters: 再生の区切り（押すとそこから）。[{"name":"後半から","params":{"startAt":15}}, {"name":"ボス","frame":1800}] の JSON か、それを書いたファイル（issue #160） */
+async function reviewChapters(p: Project, spec: string | boolean, end: number | undefined): Promise<NonNullable<ReviewData['chapters']>> {
+  if (typeof spec !== 'string') throw new Error('--chapters には区切りの JSON か、それを書いたファイルの場所を渡す（例 --chapters \'[{"name":"後半から","frame":1800}]\'）');
+  const text = /^\s*\[/.test(spec) ? spec : await readFile(resolve(p.dir, spec), 'utf8').catch(() => { throw new Error(`--chapters の ${spec} が読めません（区切りの JSON か、それを書いたファイル）`); });
+  let list: unknown;
+  try { list = JSON.parse(text); } catch (e) { throw new Error(`--chapters: JSON として読めません: ${(e as Error).message}`); }
+  if (!Array.isArray(list) || !list.length || list.length > 12) throw new Error('--chapters は 1〜12 の区切りの並び');
+  return list.map((c: Record<string, unknown>, i) => {
+    const name = typeof c?.name === 'string' && c.name ? c.name : `区切り${i + 1}`;
+    const hasP = c?.params !== undefined, hasF = c?.frame !== undefined;
+    if (hasP === hasF) throw new Error(`--chapters の ${name}: params（場面をその値で始め直す）か frame（そのフレームまで速く進める）のどちらか1つを書く`);
+    if (hasP && (!c.params || typeof c.params !== 'object' || Array.isArray(c.params))) throw new Error(`--chapters の ${name}: params は { "名前": 値 }`);
+    if (hasF && !(Number.isInteger(c.frame) && (c.frame as number) >= 0)) throw new Error(`--chapters の ${name}: frame は 0 以上の整数`);
+    if (hasF && end !== undefined && (c.frame as number) >= end) throw new Error(`--chapters の ${name}: frame ${c.frame} が止めるフレーム（--frames ${end}）より後です`);
+    return { name, ...(hasP ? { params: c.params as Record<string, unknown> } : { frame: c.frame as number }) };
+  });
 }
 
 /**
@@ -472,13 +517,15 @@ async function copyTemplate(src: string, target: string, projectName: string, t:
 
 export async function cmdSchema(dir: string, names: string[]): Promise<string> {
   const p = await Project.load(dir);
-  const field = (k: string, f: import('../core/schema.ts').Field) => `  ${k} ${brief(f)}${f.desc ? ' — ' + f.desc : ''}${nested(f, '    ')}`;
+  const field = (k: string, f: import('../core/schema.ts').Field) => `  ${k}${f.label ? `「${f.label}」` : ''} ${brief(f)}${f.desc ? ' — ' + f.desc : ''}${nested(f, '    ')}`;
   const out: string[] = [];
   const guide = await readGuide(p.registry.packages.map((x) => x.name));
   // 名前の種類: コンポーネント / $表 / シェーダー（std:… か .frag）/ ops（patch の操作）/ guide・guide:項目（機能ごとの手順）
   const isShader = (n: string) => n.startsWith('std:') || /\.(frag|glsl)$/i.test(n);
   const isDoc = (n: string) => n === 'ops' || n === 'guide' || n.startsWith('guide:');
-  const comps = names.length ? names.filter((n) => !n.startsWith('$') && !isShader(n) && !isDoc(n)) : [...p.registry.components.keys()];
+  // params:名前 はスクリプトの調整値の形（defineParams）。params だけなら一覧
+  const isParams = (n: string) => n === 'params' || n.startsWith('params:');
+  const comps = names.length ? names.filter((n) => !n.startsWith('$') && !isShader(n) && !isDoc(n) && !isParams(n)) : [...p.registry.components.keys()];
   if (names.length) await noteRecent(p.dir, names.filter((n) => !isShader(n) && !isDoc(n)));
   const tables = names.length ? names.filter((n) => n.startsWith('$')).map((n) => n.slice(1)) : [...p.registry.tables.keys()];
   const topicOf = (comp: string) => [...guide.values()].find((t) => t.parts.includes(comp))?.name;
@@ -496,6 +543,17 @@ export async function cmdSchema(dir: string, names: string[]): Promise<string> {
     out.push(SHADER_HOWTO);
     if (d.path.startsWith('std:')) out.push(`--- ${d.path} の中身（新しく書くときの手本）`, d.code.trimEnd());
     for (const e of d.errors) out.push(`⚠ ${e}`);
+  }
+  const sp = p.registry.scriptParams;
+  for (const n of names.length ? names.filter(isParams) : sp.size ? ['params'] : []) {
+    if (n === 'params') {
+      out.push(`調整値の形（defineParams。params 型の欄の of で名前を選ぶと、その形の値が並ぶ。中身は params:名前）: ${sp.size ? [...sp.values()].map((d) => `${d.name}${d.desc ? `（${d.desc}）` : ''}`).join(' / ') : 'なし'}`);
+      continue;
+    }
+    const d = sp.get(n.slice('params:'.length));
+    if (!d) throw new Error(`調整値の形 ${n.slice('params:'.length)} はありません${suggest(n.slice('params:'.length), [...sp.keys()])}`);
+    const users = [...p.registry.components.values()].flatMap((c) => Object.entries(c.fields).filter(([, f]) => f.type === 'params' && c.fields[f.of]?.type !== 'asset').map(([k, f]) => `${c.name}.${k}（${c.name}.${(f as { of: string }).of} で選ぶ）`));
+    out.push(`params:${d.name}: ${d.desc ?? ''}（調整値の形。値は 住所.部品.欄.名前 で読み書き。派生・置いた物では1つずつ上書きできる）${users.length ? ` 使う欄: ${users.join(', ')}` : ''}`, ...Object.entries(d.fields).map(([k, f]) => field(k, f)));
   }
   for (const n of names.filter(isDoc)) {
     if (n === 'ops') {
@@ -614,24 +672,43 @@ export async function cmdTable(dir: string, name: string, flags: Record<string, 
   return withLockReport(p, renderTable(p, name, rows, cols, await p.effectiveLocks(), await readTouched(p.dir)));
 }
 
-export async function cmdPatch(dir: string, ops: Op[], force: boolean): Promise<string> {
+/** 変更の行に出す値。長い値は件数や頭だけにする（--full で全部） */
+export function shortPair(from: unknown, to: unknown, full = false): [string, string] {
+  const show = (v: unknown) => (isMatrix(v) ? `行列${matrixSize(v)}` : String(fmt(v)));
+  const a = show(from), b = show(to);
+  if (full || (a.length <= 120 && b.length <= 120)) return [a, b];
+  const sum = (v: unknown, s: string): string => {
+    if (isMatrix(v)) return s;
+    if (Array.isArray(v)) return `[${v.length}件]`;
+    if (v && typeof v === 'object') return `{${Object.keys(v).length}項目}`;
+    return s.length > 60 ? `${s.slice(0, 40)}…（${s.length}字）` : s;
+  };
+  let x = sum(from, a), y = sum(to, b);
+  if (Array.isArray(from) && Array.isArray(to) && from.length !== to.length) y += `（${to.length > from.length ? '+' : ''}${to.length - from.length}）`;
+  else if (Array.isArray(from) && Array.isArray(to)) {
+    const n = to.filter((v, i) => JSON.stringify(v) !== JSON.stringify(from[i])).length;
+    y += `（${n}件が変わった）`;
+  }
+  return [x, y];
+}
+
+export async function cmdPatch(dir: string, ops: Op[], force: boolean, full = false): Promise<string> {
   const p = await Project.load(dir);
   const r = await p.apply(ops, AI_ACTOR, { force });
   await noteRecent(p.dir, r.changes.map((c) => placeOf(c.path)));
   if (!r.changes.length) return '変更なし（すでに同じ値です）';
-  const show = (v: unknown) => (isMatrix(v) ? `行列${matrixSize(v)}` : fmt(v));
   return [...r.changes.map((c) => (c.to === 'added' || c.to === 'removed' ? `ok ${c.path} ${c.to === 'added' ? '追加' : '削除'}`
     : typeof c.to === 'string' && c.to.startsWith('renamed:') && c.path.startsWith('scene:') ? `ok ${c.path} → scene:${c.to.slice('renamed:'.length)}（名前の変更）`
     : typeof c.to === 'string' && c.to.startsWith('renamed:') ? `ok ${c.path} → ${c.path.replace(/[^.]+$/, c.to.slice('renamed:'.length))}（ID の変更）`
     : c.path.startsWith('file:') ? `ok ${c.path} → ${c.to}（場所の変更）`
-    : `ok ${c.path} ${show(c.from)} → ${show(c.to)}${c.auto ? '（自動）' : ''}`)), ...(r.warnings ?? []).map((w) => `⚠ ${w}`)].join('\n');
+    : `ok ${c.path} ${shortPair(c.from, c.to, full).join(' → ')}${c.auto ? '（自動）' : ''}`)), ...(r.warnings ?? []).map((w) => `⚠ ${w}`), ...(!full && r.changes.some((c) => shortPair(c.from, c.to).join() !== shortPair(c.from, c.to, true).join()) ? ['（長い値は短くしています。全部は --full）'] : [])].join('\n');
 }
 
 /** 元に戻す（--redo でやり直す）。省くと AI 自身の直前の編集 */
 export async function cmdUndo(dir: string, f: Args['flags']): Promise<string> {
   const p = await Project.load(dir);
   const r = await p.undo(AI_ACTOR, { tx: typeof f.tx === 'string' ? f.tx : undefined, redo: !!f.redo, force: !!f.force });
-  const lines = r.changes.map((c) => `ok ${c.path} ${fmt(c.from)} → ${fmt(c.to)}${c.auto ? '（自動）' : ''}`);
+  const lines = r.changes.map((c) => `ok ${c.path} ${shortPair(c.from, c.to, !!f.full).join(' → ')}${c.auto ? '（自動）' : ''}`);
   const next = await p.undoState(AI_ACTOR);
   return withLockReport(p, [`${f.redo ? 'やり直した' : '元に戻した'}: ${r.label}`, ...lines, ...(r.warnings ?? []).map((w) => `⚠ ${w}`), `次に戻せる: ${next.undo?.label ?? 'なし'}${next.redo ? ` ／ やり直せる: ${next.redo.label}` : ''}`].join('\n'));
 }
@@ -875,7 +952,7 @@ export async function cmdRun(dir: string, f: Args['flags']): Promise<string> {
     if (!Number.isInteger(n) || n < 0) throw new Error(`--shot の ${x} はフレームの番号ではありません（例 --shot 0,600,1200 か 361-421:4）`);
     return [n];
   }) : [];
-  if (shotFrames.length > 64) throw new Error(`--shot が ${shotFrames.length} 枚です（64 枚まで。:4 のように間を空ける）`);
+  if (new Set(shotFrames).size > 200) throw new Error(`--shot が ${new Set(shotFrames).size} 枚です（200 枚まで。:4 のように間を空ける）`);
   const shotHashes = new Map<number, string>();
   /** 撮るフレームの状態（撮ったページの状態と比べて、違えばどこがどれだけ違うかを出す） */
   const shotSnaps = new Map<number, unknown>();
@@ -1044,7 +1121,11 @@ async function shots(p: Project, f: Args['flags'], frames: number[], hashes: Map
   const all = [...new Set([...reach, ...(o.statsAt !== undefined ? [o.statsAt] : [])])];
   if (!all.length) return out;
   try {
-    const r = await captureShots(p.dir, { scene: o.scene, seed: o.seed, frames: all, keys: o.keys, date: o.date, params: o.params, save: o.save, lang: typeof f.lang === 'string' ? f.lang : undefined, spawns: o.spawns, scale, dump: true, ...(around ? { around } : {}), ...(sheet && reach.length ? { sheet } : {}) });
+    const sec = typeof f['shot-timeout'] === 'string' ? Number(f['shot-timeout']) : undefined;
+    if (sec !== undefined && !(sec > 0)) throw new Error('--shot-timeout は秒の数です（例 300）');
+    const r = await captureShots(p.dir, { scene: o.scene, seed: o.seed, frames: all, keys: o.keys, date: o.date, params: o.params, save: o.save, lang: typeof f.lang === 'string' ? f.lang : undefined, spawns: o.spawns, scale, dump: true, ...(around ? { around } : {}), ...(sheet && reach.length ? { sheet } : {}) }, sec ? sec * 1000 : undefined);
+    // 時間切れで並べた1枚が作れなかったときは、撮れた分を1枚ずつ置く
+    const tiled = sheet && !r.timedOut;
     const dir = resolve(p.dir, typeof f['shot-dir'] === 'string' ? f['shot-dir'] : '.ages/shots');
     if (reach.length) await mkdir(dir, { recursive: true });
     const name = o.spawns.length ? 'tryout' : o.scene;
@@ -1056,7 +1137,7 @@ async function shots(p: Project, f: Args['flags'], frames: number[], hashes: Map
       const diff = same ? '' : ' ' + snapshotDiff(snaps.get(s.frame), s.snapshot);
       const where = s.at ? ` ${around!.target} のまわり（真ん中 ${s.at[0]},${s.at[1]}）${s.note ? `⚠ ${s.note}` : ''}` : '';
       // 並べるときは、1枚ずつは置かない（並べた1枚だけ）
-      if (sheet) { if (diff || s.note) out.push(`shot f${s.frame}:${where}${diff}`); continue; }
+      if (tiled) { if (diff || s.note) out.push(`shot f${s.frame}:${where}${diff}`); continue; }
       const file = join(dir, `${name}-f${s.frame}${around ? '-around' : ''}.png`);
       await writeFile(file, Buffer.from(s.png, 'base64'));
       const rel = relative(p.dir, file).split(sep).join('/');
@@ -1071,6 +1152,10 @@ async function shots(p: Project, f: Args['flags'], frames: number[], hashes: Map
       out.push(`shot ${fs.length}枚を並べた1枚: ${rel.startsWith('..') ? file : rel} ${r.sheet.w}x${r.sheet.h}（${r.sheet.cols}列×${r.sheet.rows}行。左上がフレームの番号）`);
     }
     if (r.error) out.push(`⚠ 画面のページでエラー（f${r.frame}）: ${r.error}`);
+    if (r.timedOut) {
+      const left = all.filter((n) => !r.shots.some((s) => s.frame === n)).sort((a, b) => a - b);
+      out.push(`⚠ 時間切れ（${r.timedOut.sec}秒）: ${r.timedOut.total}枚のうち ${r.timedOut.got}枚を撮りました（f${r.timedOut.frame} まで進めた）。残り ${left.length}枚: ${left.slice(0, 8).map((n) => 'f' + n).join(',')}${left.length > 8 ? ' …' : ''}。--shot-timeout 秒 で延ばすか、残りだけを撮り直す`);
+    }
   } catch (e) {
     out.push(`⚠ ${reach.length ? '画面を撮れませんでした' : '描いたときの数を取れませんでした'}: ${(e as Error).message}`);
   }
@@ -1260,11 +1345,14 @@ export function describeSheet(image: string, sheet: SheetDef | undefined, w: num
   if (!sheet) return `${image} ${w}x${h} シートなし（画像全体を1コマとして描く）。切るには ages slice${marks}`;
   const out: string[] = [];
   const n = frameCount(sheet, w, h);
-  if (sheet.frames) {
-    out.push(`${image} ${w}x${h} 自由 ${n}コマ（#番号 名前 x,y 幅x高さ 基準点）${marks}`);
+  const look = sheet.filter ? `　表示 ${sheet.filter === 'nearest' ? 'nearest（ドット絵・くっきり）' : 'linear（なめらか）'}` : '';
+  if (!sheet.frames && !sheet.frame) {
+    out.push(`${image} ${w}x${h} 切り方なし（画像全体を1コマとして描く）${look}${marks}`);
+  } else if (sheet.frames) {
+    out.push(`${image} ${w}x${h} 自由 ${n}コマ（#番号 名前 x,y 幅x高さ 基準点）${look}${marks}`);
     for (const f of listFrames(sheet, w, h)) out.push(`#${f.index} ${f.name} ${f.x},${f.y} ${f.w}x${f.h}${f.pivot ? ` pivot ${f.pivot.map(num).join(',')}` : ''}`);
   } else {
-    out.push(`${image} ${w}x${h} 格子 ${sheet.frame!.join('x')}${sheet.spacing ? ` 隙間${sheet.spacing}` : ''}${sheet.margin ? ` 余白${sheet.margin}` : ''} → ${n}コマ（番号で指定。左上から右へ0から）${marks}`);
+    out.push(`${image} ${w}x${h} 格子 ${sheet.frame!.join('x')}${sheet.spacing ? ` 隙間${sheet.spacing}` : ''}${sheet.margin ? ` 余白${sheet.margin}` : ''} → ${n}コマ（番号で指定。左上から右へ0から）${look}${marks}`);
   }
   const clips = Object.entries(sheet.clips ?? {});
   if (clips.length) out.push('動き:', ...clips.map(([k, c]) => `  ${k} ${c.frames.join(',')} ${c.fps}fps${c.loop === false ? ' 1回' : ''}`));
@@ -1292,6 +1380,16 @@ export async function cmdSlice(dir: string, image: string, flags: Record<string,
   const p = await Project.load(dir);
   const { w, h } = imageOf(p, image);
   const before = p.docs.sheets.get(image);
+  // --filter だけ: 切り方はそのままで、この画像の表示（拡大縮小のしかた）だけを変える
+  const filt = flags.filter;
+  if (filt !== undefined && filt !== 'nearest' && filt !== 'linear' && filt !== 'project') throw new Error('--filter は nearest（ドット絵・くっきり）/ linear（なめらか）/ project（プロジェクトの設定に従う）です');
+  if (filt !== undefined && !flags.grid && !flags.count && !flags.auto) {
+    const next: SheetDef = { ...(before ?? {}) };
+    if (filt === 'project') delete next.filter; else next.filter = filt as 'nearest' | 'linear';
+    const empty = !next.frame && !next.frames && !next.filter && !next.clips;
+    await p.apply([{ op: 'setSheet', image, sheet: empty ? null : next }], AI_ACTOR, { force: flags.force === true });
+    return empty ? `${image}: 表示はプロジェクトの設定に従います（シートなし）` : describeSheet(image, next, w, h);
+  }
   const spacing = numFlag(flags.spacing, 0), margin = numFlag(flags.margin, 0);
   const pivot = typeof flags.pivot === 'string' ? (flags.pivot.split(',').map(Number) as [number, number]) : undefined;
   if (pivot && (pivot.length !== 2 || pivot.some((n) => !Number.isFinite(n)))) throw new Error('--pivot は 横,縦 の数で指定します（例 0.5,1 = 下の中央）');
@@ -1319,6 +1417,7 @@ export async function cmdSlice(dir: string, image: string, flags: Record<string,
   const carried = carryClips(before, next, w, h);
   if (carried.missing.length) throw new Error(`この切り方では、動きが使っているコマが無くなります: ${carried.missing.join(', ')}。先に動きを直すか（setClip）、切り方を変えてください`);
   if (carried.clips) next.clips = carried.clips;
+  if (filt === 'nearest' || filt === 'linear') next.filter = filt; else if (filt !== 'project' && before?.filter) next.filter = before.filter;
   const summary = describeSheet(image, next, w, h);
   if (flags.dry) return `（試しに切っただけで、保存していません）\n${summary}`;
   const r = await p.apply([{ op: 'setSheet', image, sheet: next }], AI_ACTOR, { force: flags.force === true });
@@ -1481,13 +1580,13 @@ async function main(argv: string[]): Promise<void> {
       const op: Op = cell
         ? { op: 'setCells', path, cells: [[cell[0], cell[1], parseLiteral(value) as number]] }
         : { op: 'set', path, value: parseLiteral(value) };
-      out = await cmdPatch(dir, [op], force);
+      out = await cmdPatch(dir, [op], force, !!a.flags.full);
       break;
     }
     case 'patch': {
       const src = a.pos[1];
       const text = !src || src === '-' ? await readStdin() : src.trim().startsWith('[') ? src : await readFile(src, 'utf8');
-      out = await cmdPatch(dir, JSON.parse(text), force);
+      out = await cmdPatch(dir, JSON.parse(text), force, !!a.flags.full);
       break;
     }
     case 'run': out = await cmdRun(dir, a.flags); break;

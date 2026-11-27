@@ -2,7 +2,25 @@
 // ファイル（と編集の正本）には「元の名前（base）・変えた値・外した部品（remove）」だけを書き、使うときに元と重ねる。
 // 重ね方はフィールドごと: 派生が書いたフィールドはその値、書いていないフィールドは元の値（リスト・構造体は丸ごと）。
 import type { EntityData, PrefabChild, PrefabDoc, SceneDoc } from './docs.ts';
-import { suggest } from './schema.ts';
+import { PARAMS_FIELDS, suggest } from './schema.ts';
+
+const plain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/**
+ * 部品の値を重ねる（フィールドごと）。調整値（params 型）は、選んでいる形（of の欄）が同じなら中の値ごとに重ねる
+ * （派生・置いた物で調整値の1つだけを変えられる）
+ */
+export function mergeComp(comp: string, base: Record<string, unknown> | undefined, over: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...(base ?? {}), ...over };
+  if (!base) return out;
+  for (const k of Object.keys(over)) {
+    const of = PARAMS_FIELDS.get(`${comp}.${k}`);
+    if (of === undefined || !plain(over[k]) || !plain(base[k])) continue;
+    if (of in over && over[of] !== base[of]) continue; // 形を変えた: 丸ごと
+    out[k] = { ...base[k], ...over[k] };
+  }
+  return out;
+}
 
 export const isVariant = (p: PrefabDoc | undefined): boolean => !!p?.base;
 
@@ -34,7 +52,7 @@ export function resolvePrefab(prefabs: Map<string, PrefabDoc>, name: string): Pr
   for (const d of chain) {
     const next: Record<string, Record<string, unknown>> = {};
     for (const [c, v] of Object.entries(comps)) if (!d.remove?.includes(c)) next[c] = v;
-    for (const [c, v] of Object.entries(d.components ?? {})) next[c] = { ...(next[c] ?? {}), ...v };
+    for (const [c, v] of Object.entries(d.components ?? {})) next[c] = mergeComp(c, next[c], v);
     comps = next;
     if (d.tags) tags = d.tags;
     if (d.desc) desc = d.desc;
@@ -68,7 +86,7 @@ export function resolveEntity(prefabs: Map<string, PrefabDoc>, e: EntityData): E
   try { p = resolvePrefab(prefabs, e.prefab); } catch (err) { throw new Error(`#${e.id} のプレハブ: ${(err as Error).message}`); }
   const comps: Record<string, Record<string, unknown>> = {};
   for (const [c, v] of Object.entries(p.components)) if (!e.remove?.includes(c)) comps[c] = structuredClone(v);
-  for (const [c, v] of Object.entries(e.components ?? {})) comps[c] = { ...(comps[c] ?? {}), ...structuredClone(v) };
+  for (const [c, v] of Object.entries(e.components ?? {})) comps[c] = mergeComp(c, comps[c], structuredClone(v));
   const tags = e.tags ?? p.tags;
   return { id: e.id, name: e.name, prefab: e.prefab, ...(tags ? { tags: [...tags] } : {}), components: comps };
 }
@@ -139,7 +157,7 @@ function overlayChildren(base: ResolvedChild[], over: PrefabChild[] | undefined,
     if (o.prefab && o.prefab !== out[i].prefab) throw new Error(`${where}/${o.name}: 子にするプレハブは変えられません（元は ${out[i].prefab ? '@' + out[i].prefab : 'プレハブなし'}）`);
     const comps: Record<string, Record<string, unknown>> = {};
     for (const [c, v] of Object.entries(out[i].components)) if (!o.remove?.includes(c)) comps[c] = v;
-    for (const [c, v] of Object.entries(o.components ?? {})) comps[c] = { ...(comps[c] ?? {}), ...structuredClone(v) };
+    for (const [c, v] of Object.entries(o.components ?? {})) comps[c] = mergeComp(c, comps[c], structuredClone(v));
     out[i] = { ...out[i], components: comps, children: overlayChildren(out[i].children, o.children, `${where}/${o.name}`) };
   }
   return out;
@@ -155,7 +173,7 @@ function resolveChild(prefabs: Map<string, PrefabDoc>, node: PrefabChild, where:
   try { ref = resolvePrefab(prefabs, node.prefab); } catch (e) { throw new Error(`${at}: ${(e as Error).message}`); }
   const comps: Record<string, Record<string, unknown>> = {};
   for (const [c, v] of Object.entries(ref.components)) if (!node.remove?.includes(c)) comps[c] = structuredClone(v);
-  for (const [c, v] of Object.entries(node.components ?? {})) comps[c] = { ...(comps[c] ?? {}), ...structuredClone(v) };
+  for (const [c, v] of Object.entries(node.components ?? {})) comps[c] = mergeComp(c, comps[c], structuredClone(v));
   const kids = overlayChildren(prefabChildren(prefabs, node.prefab, stack), node.children, at);
   return { name: node.name, prefab: node.prefab, ...(ref.tags ? { tags: [...ref.tags] } : {}), components: comps, children: kids };
 }

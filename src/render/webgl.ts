@@ -48,6 +48,8 @@ interface Tex {
   w: number;
   h: number;
   ready: boolean;
+  /** いまの拡大縮小のしかた */
+  filter?: 'nearest' | 'linear';
   /** 読み込みが終わった（読めなかったときも） */
   loaded?: Promise<void>;
 }
@@ -467,7 +469,7 @@ export class Renderer {
       if (g) {
         tex = tx;
         // なめらか表示のときは隣のコマがにじまないよう半ピクセル内側を使う
-        const inset = this.opts.filter === 'nearest' ? 0 : 0.5;
+        const inset = this.filterOf(s.image) === 'nearest' ? 0 : 0.5;
         u0 = (g.src.x + inset) / tx.w; v0 = (g.src.y + inset) / tx.h;
         u1 = (g.src.x + g.src.w - inset) / tx.w; v1 = (g.src.y + g.src.h - inset) / tx.h;
         ({ w, h, ax, ay } = g);
@@ -861,9 +863,26 @@ export class Renderer {
 
   // ---------- テクスチャ ----------
 
+  /** 画像ごとの拡大縮小のしかた（シートの filter。なければ全体の設定） */
+  private filterOf(path: string): 'nearest' | 'linear' {
+    return this.opts.sheets.get(path)?.filter ?? this.opts.filter ?? 'linear';
+  }
+
   private texture(path: string): Tex {
     let t = this.textures.get(path);
-    if (t) return t;
+    if (t) {
+      // シートの filter を変えたら、読み直さずに設定だけ替える
+      const want = this.filterOf(path);
+      if (t.ready && t.filter !== want) {
+        this.flush(); // 描きかけの物は前の設定で描いてから
+        const gl = this.gl, f = want === 'nearest' ? gl.NEAREST : gl.LINEAR;
+        gl.bindTexture(gl.TEXTURE_2D, t.tex);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, f);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, f);
+        t.filter = want;
+      }
+      return t;
+    }
     const gl = this.gl;
     t = { tex: gl.createTexture()!, w: 1, h: 1, ready: false };
     this.textures.set(path, t);
@@ -871,7 +890,7 @@ export class Renderer {
     const target = t;
     target.loaded = new Promise<void>((done) => {
       img.onload = () => {
-        this.upload(target, img, this.opts.filter ?? 'linear');
+        this.upload(target, img, this.filterOf(path));
         target.w = img.naturalWidth;
         target.h = img.naturalHeight;
         target.ready = true;
@@ -891,6 +910,7 @@ export class Renderer {
     const f = filter === 'nearest' ? gl.NEAREST : gl.LINEAR;
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, f);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, f);
+    t.filter = filter;
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     this.curTex = null;

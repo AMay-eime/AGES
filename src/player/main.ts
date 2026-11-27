@@ -33,7 +33,7 @@ export interface ExportBundle {
 }
 
 /** 外から様子を見る（ages export --check が headless の Chrome で読む） */
-const status: { ready: boolean; frame: number; scene: string; loading: boolean; error: string; started: boolean; hash?: string } = { ready: false, frame: 0, scene: '', loading: false, error: '', started: false };
+const status: { ready: boolean; frame: number; scene: string; loading: boolean; error: string; started: boolean; hash?: string; missing?: string[] } = { ready: false, frame: 0, scene: '', loading: false, error: '', started: false };
 (window as unknown as { agesPlayer: typeof status }).agesPlayer = status;
 
 const msg = document.getElementById('msg') as HTMLDivElement;
@@ -67,7 +67,19 @@ async function main(): Promise<void> {
   const v = b.config.view;
   document.title = b.config.name;
 
-  const urlOf = (path: string) => new URL(path.split('/').map(encodeURIComponent).join('/'), location.href).href;
+  // 確認用のページで、使うものだけを書き出したとき: 入っていないものを開こうとしたら知らせる（issue #157）
+  let included: Set<string> | null = null;
+  const notice = document.createElement('div');
+  notice.setAttribute('style', 'position:fixed;left:6px;right:6px;bottom:6px;display:none;padding:6px 10px;border-radius:6px;background:#5a3a00e6;color:#fff;font:12px system-ui,"Hiragino Sans","Noto Sans JP",sans-serif;z-index:9;pointer-events:none');
+  document.body.append(notice);
+  const urlOf = (path: string) => {
+    if (included && !included.has(path) && !(status.missing ??= []).includes(path)) {
+      status.missing.push(path);
+      notice.textContent = `このページに入っていない素材: ${status.missing.slice(-3).join(', ')}${status.missing.length > 3 ? ` ほか${status.missing.length - 3}` : ''}（再生で使うものだけを入れています。全部入れるには ages export --review --assets all）`;
+      notice.style.display = 'block';
+    }
+    return new URL(path.split('/').map(encodeURIComponent).join('/'), location.href).href;
+  };
   const canvas = document.getElementById('game') as HTMLCanvasElement;
   canvas.style.imageRendering = v.filter === 'nearest' ? 'pixelated' : 'auto';
   const newRenderer = (c: HTMLCanvasElement) => new Renderer(c, { urlOf, sheets: registry.sheets, filter: v.filter, shaders: registry.shaders, packages: registry.packages });
@@ -106,6 +118,8 @@ async function main(): Promise<void> {
   // 確認用のページ（ages export --review）: review.json があれば、再生と見本帳を出す
   const review = await fetch('./review.json').then((r) => (r.ok ? (r.json() as Promise<ReviewData>) : null)).catch(() => null);
   if (review) {
+    if (review.assets) included = new Set(review.assets);
+    const has = (p: string) => !included || included.has(p);
     const docs = { scenes: registry.scenes, prefabs: registry.prefabs, tables: new Map(Object.entries(b.tables)) };
     const refs = assetRefs(docs, registry);
     let loads = 0;
@@ -121,18 +135,18 @@ async function main(): Promise<void> {
         data: review, registry, config: b.config, scenes: b.scenes, renderer, audio, devices,
         setInsets: (top, bottom) => { insets.top = top; insets.bottom = bottom; layout(); },
         hold: (scene, first) => {
-          const paths = preloadSet(refs, scene, first, b.codeRefs);
+          const paths = preloadSet(refs, scene, first, b.codeRefs).filter(has);
           if (paths.length) load(Promise.all([renderer.preload(paths.filter((p) => kindOf(p) === 'image')), audio.preload(paths.filter((p) => kindOf(p) === 'sound'))]));
         },
         preloadAll: async () => {
-          await Promise.all([renderer.preload(b.assets.filter((a) => a.kind === 'image').map((a) => a.path)).catch(() => {}), audio.preload(b.assets.filter((a) => a.kind === 'sound').map((a) => a.path)).catch(() => {})]);
+          await Promise.all([renderer.preload(b.assets.filter((a) => a.kind === 'image' && has(a.path)).map((a) => a.path)).catch(() => {}), audio.preload(b.assets.filter((a) => a.kind === 'sound' && has(a.path)).map((a) => a.path)).catch(() => {})]);
         },
         loading: () => status.loading,
         status, fail,
         // 案くらべ（--variants）: 案ごとの決まりと描く場所
         variantRegistry: (i) => makeRegistry(review.variants![i]),
         makeRenderer: newRenderer,
-        imagePaths: b.assets.filter((a) => a.kind === 'image').map((a) => a.path),
+        imagePaths: b.assets.filter((a) => a.kind === 'image' && has(a.path)).map((a) => a.path),
         gameCanvas: canvas,
       });
     };

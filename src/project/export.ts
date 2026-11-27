@@ -150,8 +150,13 @@ export async function exportProject(p: Project, opts: ExportOptions = {}): Promi
   await writeFile(join(web, 'project.json'), JSON.stringify(bundle));
 
   // アセット（画像・音・フォント・シェーダー）
+  // シェーダーの中身は project.json に入っているので、ファイル（.frag）は置かない。
+  // 確認用のページで使うものを数えたときは、それだけ（足りないものを開こうとしたら、ページが知らせる）
+  const only = opts.review?.assets ? new Set(opts.review.assets) : null;
+  const copied = p.assets.filter((a) => !a.shader && (!only || only.has(a.path)));
+  if (only) notes.push(`アセットは再生${opts.review!.gallery ? 'と見本帳' : ''}で使う ${copied.length}個だけ（全部で ${p.assets.filter((a) => !a.shader).length}個。全部入れるなら --assets all）`);
   let assetBytes = 0;
-  for (const a of p.assets) {
+  for (const a of copied) {
     const dst = join(web, a.path);
     await mkdir(dirname(dst), { recursive: true });
     await copyFile(join(p.dir, a.path), dst);
@@ -160,14 +165,14 @@ export async function exportProject(p: Project, opts: ExportOptions = {}): Promi
   await writeFile(join(web, 'index.html'), indexHtml(p.config.name, pkgs));
   if (opts.review) {
     await writeFile(join(web, 'review.json'), JSON.stringify(opts.review));
-    notes.push('確認用のページ（再生と見本帳）です。遊ぶ版・ストアに出す版は --review なしで書き出す');
+    notes.push(`確認用のページ（再生${opts.review.chapters ? '・区切り' : ''}${opts.review.gallery ? '・見本帳' : ''}${opts.review.variants ? '・案くらべ' : ''}）です。遊ぶ版・ストアに出す版は --review なしで書き出す`);
   }
   // 一覧: ファイルごとの大きさと sha1（変わったファイルだけ送る・送った後に照らし合わせるため）
   const manifest = await manifestOf(web);
   await writeFile(join(web, EXPORT_MARK), JSON.stringify({ engine: 'AGES', at: new Date().toISOString(), files: manifest }, null, 1) + '\n');
   const changes = before ? diffManifest(before.files, manifest, opts.diff ? relative(process.cwd(), resolve(opts.diff)) || opts.diff : `前の書き出し（${before.at}）`) : undefined;
 
-  const files = engineFiles.length + gameFiles.length + p.assets.length + 3;
+  const files = engineFiles.length + gameFiles.length + copied.length + 3;
   let bytes = assetBytes;
   for (const f of [...engineFiles, ...gameFiles, join(web, 'project.json'), join(web, 'index.html')]) bytes += (await stat(f)).size;
 

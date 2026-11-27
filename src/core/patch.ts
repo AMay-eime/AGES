@@ -1,13 +1,13 @@
 // 差分編集。AIも人（エディタ）も、ファイルの変更はすべてここを通る。
 // 返り値は「何がいくつからいくつに変わったか」だけ。
 import { formatSub, getIn, parseAddress, setIn, type Address, type EntityData, type PrefabChild, type PrefabDoc, type ProjectConfig, type SceneDoc } from './docs.ts';
-import { checkAt, checkCell, defaultOf, filled, mapLeaves, suggest, type CellValue, type Field } from './schema.ts';
+import { checkAt, checkCell, defaultOf, filled, mapLeaves, PARAMS_FIELDS, suggest, type CellValue, type Field } from './schema.ts';
 import { ROW_ID, type Row, type TableDoc } from './table.ts';
 import type { Registry } from './registry.ts';
 import { baseNameOf, checkSheet, findFrame, sheetPathOf, toExplicit, type FrameDef, type FrameRef, type SheetDef } from './sheet.ts';
 import { frameMapper, remapRef } from './slice.ts';
 import { assetRefs, checkAssetPath, extOf, isUnder, kindOf, leafRefs } from './assets.ts';
-import { overlayLists, overrideValues, rootOf, baseChain, childPrefabRefs, entityHolders, hasChildren, flatChildren, instanceChildren, prefabChildren, prefabHolders, resolveEntity, resolvePrefab, childAt, CHILD_NAME } from './variant.ts';
+import { overlayLists, overrideValues, rootOf, baseChain, childPrefabRefs, entityHolders, hasChildren, flatChildren, instanceChildren, prefabChildren, prefabHolders, resolveEntity, resolvePrefab, childAt, CHILD_NAME, mergeComp } from './variant.ts';
 import { same } from './revert.ts';
 
 export type Op =
@@ -350,10 +350,12 @@ function childSlot(docs: Docs, reg: Registry, a: Address, path: string): Slot {
 function resolveParams(reg: Registry, f: Field, parent: Record<string, unknown>, at: string, sub: (string | number)[]): Field {
   if (f.type !== 'params') return f;
   const path = parent[f.of];
-  const st = reg.shaderParams(path);
+  const st = reg.paramsShape(path);
   if (st) return st;
   if (!sub.length) return f;
-  throw new Error(path ? `${at}: ${f.of} のシェーダー ${path} がありません${suggest(String(path), [...reg.shaders.keys()])}` : `${at}: 先に ${f.of} でシェーダーを選んでください（例 std:flash）`);
+  // 調整値の形（defineParams）を使っていないプロジェクトでは、シェーダーの言い方のまま
+  if (!reg.scriptParams.size) throw new Error(path ? `${at}: ${f.of} のシェーダー ${path} がありません${suggest(String(path), [...reg.shaders.keys()])}` : `${at}: 先に ${f.of} でシェーダーを選んでください（例 std:flash）`);
+  throw new Error(path ? `${at}: ${f.of} の ${path} というシェーダー・調整値の形（defineParams）はありません${suggest(String(path), [...reg.shaders.keys(), ...reg.scriptParams.keys()])}` : `${at}: 先に ${f.of} を選んでください（シェーダーか、defineParams の名前）`);
 }
 
 /** シェーダーを変えたら、新しいシェーダーにない値は外す（意味を保つ自動の直し） */
@@ -1001,7 +1003,7 @@ class VariantTrack {
 
   /** 元の変更で変わった、派生が受け継いでいる値を、変更の一覧に足す（ロックの検査と記録のため） */
   inherited(changes: Change[]): void {
-    const covered = (path: string) => changes.some((c) => c.path === path || path.startsWith(c.path + '.') || path.startsWith(c.path + '['));
+    const covered = (path: string) => changes.some((c) => c.path === path || path.startsWith(c.path + '.') || path.startsWith(c.path + '[') || (!c.auto && c.path.startsWith(path + '.')));
     for (const [n, t] of this.items) {
       const raw = this.docs.prefabs.get(n);
       if (t.isNew || !raw?.base) continue;
@@ -1014,12 +1016,28 @@ class VariantTrack {
           if (a !== b && !covered(at) && !changes.some((x) => x.path.startsWith(at + '.'))) changes.push({ path: at, ...(b ? { from: b } : {}), to: a ? 'added' : 'removed', auto: true, via });
           continue;
         }
-        for (const k of new Set([...Object.keys(b), ...Object.keys(a)])) {
-          if (!same(b[k], a[k]) && !covered(`${at}.${k}`)) changes.push({ path: `${at}.${k}`, from: b[k], to: a[k], auto: true, via });
-        }
+        for (const k of new Set([...Object.keys(b), ...Object.keys(a)])) pushInherited(changes, covered, c, `${at}.${k}`, k, b[k], a[k], via);
       }
     }
   }
+}
+
+/** 受け継いだ値の変更を足す。調整値（params 型）は中の名前ごとに（1つだけロックした値を正しく守るため） */
+function pushInherited(changes: Change[], covered: (p: string) => boolean, c: string, path: string, k: string, from: unknown, to: unknown, via: string): void {
+  if (same(from, to)) return;
+  const obj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+  if (PARAMS_FIELDS.has(`${c}.${k}`) && obj(from) && obj(to)) {
+    for (const n of new Set([...Object.keys(from), ...Object.keys(to)])) if (!same(from[n], to[n]) && !covered(`${path}.${n}`)) changes.push({ path: `${path}.${n}`, from: from[n], to: to[n], auto: true, via });
+    return;
+  }
+  if (!covered(path)) changes.push({ path, from, to, auto: true, via });
+}
+
+/** 調整値（params 型）の欄で、元と同じ形を選んでいるか（なら中の値ごとに差を書く） */
+function paramsKeys(c: string, k: string, a: Record<string, unknown>, bc: Record<string, unknown>): boolean {
+  const of = PARAMS_FIELDS.get(`${c}.${k}`);
+  const obj = (v: unknown) => !!v && typeof v === 'object' && !Array.isArray(v);
+  return of !== undefined && obj(a[k]) && obj(bc[k]) && same(a[of], bc[of]);
 }
 
 /** 元と重ねた写し（after）を、元（base）からの差に戻す。操作の前と比べて変わったフィールドだけを書き換える */
@@ -1044,7 +1062,12 @@ function diffBack(t: Tracked, after: PrefabDoc, base: PrefabDoc): PrefabDoc {
       if (b && same(b[k], a[k])) continue;
       // 元と同じ値になったものは「受け継ぐ」に戻す
       if (!(k in a) || same(a[k], bc[k])) delete own[k];
-      else own[k] = structuredClone(a[k]);
+      else if (paramsKeys(c, k, a, bc)) {
+        // 調整値（形が同じ）: 元と違う中の値だけを書く（1つずつ上書き）
+        const av = a[k] as Record<string, unknown>, bv = bc[k] as Record<string, unknown>;
+        const diff = Object.fromEntries(Object.entries(av).filter(([n, x]) => !same(x, bv[n])));
+        if (Object.keys(diff).length) own[k] = structuredClone(diff); else delete own[k];
+      } else own[k] = structuredClone(a[k]);
     }
     if (Object.keys(own).length) comps[c] = own;
     else delete comps[c];
@@ -1126,7 +1149,7 @@ class InstanceTrack {
 
   /** プレハブの変更で変わった、インスタンスが受け継いでいる値を、変更の一覧に足す（ロックの検査と記録のため） */
   inherited(changes: Change[]): void {
-    const covered = (path: string) => changes.some((c) => c.path === path || path.startsWith(c.path + '.') || path.startsWith(c.path + '['));
+    const covered = (path: string) => changes.some((c) => c.path === path || path.startsWith(c.path + '.') || path.startsWith(c.path + '[') || (!c.auto && c.path.startsWith(path + '.')));
     for (const t of this.items.values()) {
       if (t.isNew) continue;
       const raw = this.docs.scenes.get(t.scene)?.entities.find((e) => e.id === t.id);
@@ -1140,9 +1163,7 @@ class InstanceTrack {
           if (a !== b && !covered(at) && !changes.some((x) => x.path.startsWith(at + '.'))) changes.push({ path: at, ...(b ? { from: b } : {}), to: a ? 'added' : 'removed', auto: true, via });
           continue;
         }
-        for (const k of new Set([...Object.keys(b), ...Object.keys(a)])) {
-          if (!same(b[k], a[k]) && !covered(`${at}.${k}`)) changes.push({ path: `${at}.${k}`, from: b[k], to: a[k], auto: true, via });
-        }
+        for (const k of new Set([...Object.keys(b), ...Object.keys(a)])) pushInherited(changes, covered, c, `${at}.${k}`, k, b[k], a[k], via);
       }
     }
   }
@@ -1438,7 +1459,7 @@ function prefabOp(docs: Docs, reg: Registry, op: Extract<Op, { op: 'addPrefab' |
         docs.prefabs.set(op.name, order({ name: op.name, base: op.base, components: {} }));
         track.add(op.name, true);
         const copy = docs.prefabs.get(op.name)!;
-        for (const [c, v] of Object.entries(comps)) copy.components[c] = { ...(copy.components[c] ?? {}), ...v };
+        for (const [c, v] of Object.entries(comps)) copy.components[c] = mergeComp(c, copy.components[c], v);
         if (op.desc) copy.desc = op.desc;
         if (op.tags) copy.tags = op.tags;
         if (kids) copy.children = kids;
@@ -1577,8 +1598,10 @@ function prefabOp(docs: Docs, reg: Registry, op: Extract<Op, { op: 'addPrefab' |
       const a = parseAddress(op.path);
       if (a.kind === 'table') throw new Error('revert は、シーン・プレハブの値に使います（表の値は set で）');
       if (!a.component) throw new Error(`revert には部品か値までの住所が要ります（例 @enemy_fast.Health.hp）。受け取った値: ${op.path}`);
-      if (a.sub.length) throw new Error(`revert はフィールドごとです（リストや構造体の中ではなく ${op.path.replace(/[[.][^.[]*$/, '')} まで）`);
       const { holder, key } = holderOf(docs, a);
+      // 調整値（params 型）は中の値1つずつ戻せる（@派生.部品.params.名前）
+      const pf = a.field ? reg.components.get(a.component)?.fields[a.field] : undefined;
+      if (a.sub.length && !(pf?.type === 'params' && a.sub.length === 1 && typeof a.sub[0] === 'string')) throw new Error(`revert はフィールドごとです（リストや構造体の中ではなく ${op.path.replace(/[[.][^.[]*$/, '')} まで。調整値は中の名前1つまで）`);
       const variant = a.kind === 'prefab' ? (holder as PrefabDoc).base : (holder as EntityData).prefab;
       const base = variant ? resolvePrefab(docs.prefabs, variant) : undefined;
       const bc = base?.components[a.component];
@@ -1595,6 +1618,20 @@ function prefabOp(docs: Docs, reg: Registry, op: Extract<Op, { op: 'addPrefab' |
       if (!comp) throw new Error(`${op.path}: 部品 ${a.component} が付いていません${suggest(a.component, Object.keys(holder.components))}`);
       const top = reg.component(a.component).fields[a.field];
       if (!top) throw new Error(`${a.component} に ${a.field} はありません${suggest(a.field, Object.keys(reg.component(a.component).fields))}`);
+      if (a.sub.length) {
+        const n = a.sub[0] as string;
+        const cur = (comp[a.field] && typeof comp[a.field] === 'object' ? comp[a.field] : {}) as Record<string, unknown>;
+        const inh = (bc?.[a.field] ?? {}) as Record<string, unknown>;
+        const st = reg.paramsShape(comp[(top as { of: string }).of]);
+        const to = n in inh ? inh[n] : st?.fields[n] ? defaultOf(st.fields[n]) : undefined;
+        if (same(cur[n], to)) return;
+        const next = { ...cur };
+        if (n in inh) next[n] = structuredClone(inh[n]); else delete next[n];
+        changes.push({ path: op.path, from: cur[n], to });
+        comp[a.field] = next;
+        dirty.add(key);
+        return;
+      }
       const from = a.field in comp ? comp[a.field] : defaultOf(top);
       const inherit = bc && a.field in bc;
       const to = inherit ? bc[a.field] : defaultOf(top);
@@ -1714,6 +1751,7 @@ export function diffSheet(image: string, a: SheetDef | undefined, b: SheetDef | 
   if (!b) { out.push({ path: sheetAddress(image), from: a, to: 'removed' }); return out; }
   const grid = (s?: SheetDef) => (s?.frame ? `${s.frame.join('x')}${s.spacing ? ` 隙間${s.spacing}` : ''}${s.margin ? ` 余白${s.margin}` : ''}` : undefined);
   if (grid(a) !== grid(b)) out.push({ path: at('grid'), from: grid(a), to: grid(b) ?? 'removed' });
+  if (a?.filter !== b.filter) out.push({ path: at('filter'), from: a?.filter ?? 'project', to: b.filter ?? 'project' });
   const fa = new Map((a?.frames ?? []).map((f, i) => [f.name, { f, i }]));
   const fb = new Map((b.frames ?? []).map((f, i) => [f.name, { f, i }]));
   for (const [name, { f }] of fb) {

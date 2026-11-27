@@ -12,7 +12,7 @@ import { applyOps, diffDocs, getValue, setValue, sheetRoot, splitItem, type Chan
 import { formatAddress, parseAddress } from '../core/docs.ts';
 import { Game } from '../core/game.ts';
 import { RUN_DATE, parseDate, type DateStart } from '../core/clock.ts';
-import { FIELD_TYPES, brief, checkAt, fieldAt, suggest, visit, type Field } from '../core/schema.ts';
+import { FIELD_TYPES, brief, checkAt, defaultOf, fieldAt, suggest, visit, type Field } from '../core/schema.ts';
 import { ROW_ID, type TableDoc } from '../core/table.ts';
 import { editingNow, readFocus } from './focus.ts';
 import { PACKAGE_LIST, loadPackages } from '../packages/index.ts';
@@ -670,7 +670,15 @@ export class Project {
         const def = this.registry.components.get(name);
         if (!def) continue;
         for (const [k, f] of Object.entries(def.fields)) {
-          if (k in values) this.checkNested(`${where}.${name}.${k}`, f.type === 'params' ? (this.registry.shaderParams(values[f.of]) ?? f) : f, values[k], errs);
+          if (k in values) this.checkNested(`${where}.${name}.${k}`, f.type === 'params' ? (this.registry.paramsShape(values[f.of]) ?? f) : f, values[k], errs);
+          // スクリプトの調整値: 選んだ名前の形がない（名前を変えた・消した）。書いてある値は消さずに残すので、知らせる
+          if (f.type === 'params' && def.fields[f.of]?.type !== 'asset') {
+            const sel = values[f.of] ?? defaultOf(def.fields[f.of]);
+            const own = values[k] && typeof values[k] === 'object' ? Object.keys(values[k] as object) : [];
+            if (typeof sel === 'string' && sel && !this.registry.paramsShape(sel)) {
+              errs.push(`${where}.${name}.${f.of}="${sel}": 調整値の形（defineParams）がありません${suggest(sel, [...this.registry.scriptParams.keys()])}${own.length ? `。${k} に書いてある ${own.join(', ')} は残してあります（名前を変えたなら、${f.of} を新しい名前に）` : ''}`);
+            }
+          }
           if (f.type === 'prefab' && k in values && values[k] !== '' && !this.docs.prefabs.has(values[k] as string)) {
             errs.push(`${where}.${name}.${k}: プレハブ ${values[k]} はありません${suggest(String(values[k]), [...this.docs.prefabs.keys()])}`);
           }
@@ -756,7 +764,7 @@ export class Project {
           if (k === 'id') continue;
           const f = def.columns[k];
           if (!f) { errs.push(`$${name}.${r.id}: 列 ${k} はありません${suggest(k, Object.keys(def.columns))}`); continue; }
-          const rf = f.type === 'params' ? (this.registry.shaderParams(r[f.of]) ?? f) : f;
+          const rf = f.type === 'params' ? (this.registry.paramsShape(r[f.of]) ?? f) : f;
           const e = checkAt(`$${name}.${r.id}.${k}`, rf, v);
           if (e) errs.push(e);
           else this.checkNested(`$${name}.${r.id}.${k}`, rf, v, errs);

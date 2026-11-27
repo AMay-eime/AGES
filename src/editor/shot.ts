@@ -49,7 +49,14 @@ export interface ShotResult {
   error?: string;
 }
 
-async function shoot(cfg: ShotConfig): Promise<ShotResult> {
+/** 撮りながら1枚ずつ渡す口（CLI が少しずつ受け取る。時間切れでも撮れた分は残る） */
+export interface ShotHooks {
+  shot(s: ShotResult['shots'][number]): void;
+  /** いま進めたフレーム */
+  at(frame: number): void;
+}
+
+async function shoot(cfg: ShotConfig, hooks?: ShotHooks): Promise<ShotResult> {
   const state = (await (await fetch('/api/state')).json()) as EditorState;
   if (state.error) throw new Error(state.error);
   const mod = (await import(`/project@${state.version}/${state.config.game}`)) as GameModule;
@@ -84,12 +91,15 @@ async function shoot(cfg: ShotConfig): Promise<ShotResult> {
 
   const draw = () => renderer.draw(game.world, { background: v.background, design: { width: canvas.width, height: canvas.height }, overlay: game.overlay(), particles: { dt: 0 }, post: true });
   const capture = async (): Promise<string> => {
-    // 画像・フォントが読み込み終わるまで描き直す（描いて初めて読み込みが始まるものもある）
-    for (let i = 0; i < 6; i++) {
-      draw();
-      await renderer.settled();
-    }
+    // 画像・フォントが読み込み終わるまで描き直す（描いて初めて読み込みが始まるものもある）。
+    // 読み込むものがもう無ければ1回で済ませる（何枚も撮るときに速く）
     draw();
+    for (let i = 0; i < 6; i++) {
+      const idle = await Promise.race([renderer.settled().then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 0))]);
+      if (idle) break;
+      await renderer.settled();
+      draw();
+    }
     return canvas.toDataURL('image/png').split(',')[1];
   };
 
@@ -135,6 +145,7 @@ async function shoot(cfg: ShotConfig): Promise<ShotResult> {
         game.step(input);
         renderer.particles.update(game.world, dt);
         for (const l of renderer.layers) l.update?.(game.world, dt);
+        hooks?.at(game.frame);
       }
       const hash = game.hash();
       const snapshot = cfg.dump ? game.snapshot() : undefined;
@@ -146,7 +157,10 @@ async function shoot(cfg: ShotConfig): Promise<ShotResult> {
         if (cfg.sheet) { const copy = document.createElement('canvas'); copy.width = img.width; copy.height = img.height; copy.getContext('2d')!.drawImage(img, 0, 0); tiles.push({ frame: game.frame, img: copy }); }
       }
       const stats: DrawStats = { ...renderer.stats, particles: renderer.particles.count(), layers: Object.fromEntries(renderer.layers.filter((l) => l.stats).map((l) => [l.name, { ...l.stats } as Record<string, number>])) };
-      shots.push({ frame: game.frame, hash, png, stats, ...(snapshot ? { snapshot } : {}), ...(at ? { at: [Math.round(at[0]), Math.round(at[1])] as [number, number] } : {}), ...(note ? { note } : {}) });
+      const one = { frame: game.frame, hash, png, stats, ...(snapshot ? { snapshot } : {}), ...(at ? { at: [Math.round(at[0]), Math.round(at[1])] as [number, number] } : {}), ...(note ? { note } : {}) };
+      if (hooks) hooks.shot(one); else shots.push(one);
+      // 1枚撮るたびに、ほかの仕事（CLI の受け取り）に順番を回す
+      await new Promise((r) => setTimeout(r, 0));
     }
   } catch (e) {
     return { shots, frame: game.frame, error: (e as Error).message };
@@ -177,3 +191,17 @@ async function shoot(cfg: ShotConfig): Promise<ShotResult> {
 }
 
 (window as unknown as { agesShot: typeof shoot }).agesShot = shoot;
+
+// 少しずつ受け取る形: agesShotStart(設定) で始め、agesShotTake() で撮れた分を受け取る（受け取った分は消える）
+let job: { shots: ShotResult['shots']; frame: number; done: boolean; result?: ShotResult; error?: string } | null = null;
+(window as unknown as { agesShotStart: (cfg: ShotConfig) => boolean }).agesShotStart = (cfg) => {
+  const j: NonNullable<typeof job> = { shots: [], frame: 0, done: false };
+  job = j;
+  shoot(cfg, { shot: (s) => j.shots.push(s), at: (f) => { j.frame = f; } })
+    .then((r) => { j.result = r; j.frame = r.frame; j.done = true; }, (e) => { j.error = (e as Error).message; j.done = true; });
+  return true;
+};
+(window as unknown as { agesShotTake: () => unknown }).agesShotTake = () => {
+  if (!job) return null;
+  return { shots: job.shots.splice(0), frame: job.frame, done: job.done, error: job.error ?? job.result?.error, sheet: job.result?.sheet };
+};

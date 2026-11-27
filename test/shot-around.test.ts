@@ -22,7 +22,7 @@ test('書き方の誤りは、撮る前に分かる', async () => {
   await assert.rejects(cmdRun(dir, { frames: '10', shot: '5', 'shot-around': 'player' }), /--shot-around は 物,幅x高さ,x倍率/);
   await assert.rejects(cmdRun(dir, { frames: '10', shot: '5', 'shot-around': 'player,64x64,x9' }), /倍率は x1〜x8/);
   await assert.rejects(cmdRun(dir, { frames: '10', shot: '9-3' }), /--shot の 9-3: 始め-終わり:何フレームごと/);
-  await assert.rejects(cmdRun(dir, { frames: '10', shot: '0-200' }), /--shot が 201 枚です（64 枚まで/);
+  await assert.rejects(cmdRun(dir, { frames: '10', shot: '0-200' }), /--shot が 201 枚です（200 枚まで/);
 });
 
 test('切り抜いて整数倍に（にじまない）・並べた1枚にフレームの番号', { skip: findChrome() ? false : 'Chrome がない' }, async () => {

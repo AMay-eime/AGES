@@ -174,3 +174,32 @@ test('描き方: コマの基準点は Sprite.anchor より優先。大きさの
   assert.equal(spriteGeometry({ frame: 'zz' }, sheet, 64, 64), null);
   assert.deepEqual(spriteGeometry({}, undefined, 30, 20)?.src, { x: 0, y: 0, w: 30, h: 20 });
 });
+
+test('画像ごとの表示（filter）: 切り方を残したまま変えられる。filter だけのシートは画像全体で1コマ。切り直しても残る（#156）', async () => {
+  const dir = await fresh();
+  const out = await cmdSlice(dir, SHIPS, { filter: 'linear' });
+  assert.match(out, /表示 linear/);
+  let p = await Project.load(dir);
+  const s = p.docs.sheets.get(SHIPS)!;
+  assert.equal(s.filter, 'linear');
+  assert.deepEqual(s.frame, [32, 32]); // 切り方はそのまま
+  assert.deepEqual(p.validate(), []);
+  // 切り直しても filter は残る
+  await cmdSlice(dir, SHIPS, { grid: '16x16' });
+  p = await Project.load(dir);
+  assert.equal(p.docs.sheets.get(SHIPS)!.filter, 'linear');
+  // 切っていない画像に filter だけ: 画像全体が1コマ
+  const TILES = 'assets/plain.png';
+  await cp(join(dir, SHIPS), join(dir, TILES));
+  await cmdSlice(dir, TILES, { filter: 'nearest' });
+  p = await Project.load(dir);
+  const t = p.docs.sheets.get(TILES)!;
+  assert.deepEqual(t, { filter: 'nearest' });
+  assert.deepEqual(checkSheet('x', t), []);
+  assert.equal(frameCount(t, 100, 50), 1);
+  assert.deepEqual(spriteGeometry({}, t, 100, 50)!.src, { x: 0, y: 0, w: 100, h: 50 });
+  assert.match(await cmdSheet(dir, TILES), /切り方なし.*表示 nearest/);
+  // project に戻すと、ほかに何もないシートは消える
+  assert.match(await cmdSlice(dir, TILES, { filter: 'project' }), /シートなし/);
+  assert.match(checkSheet('x', { filter: 'blur' as 'linear' }).join(), /filter は/);
+});

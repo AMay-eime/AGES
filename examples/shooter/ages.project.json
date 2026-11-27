@@ -19,7 +19,7 @@
     "editor/hp-hearts.ext.ts"
   ],
   "engine": {
-    "compat": 2,
+    "compat": 3,
     "version": "0.1.0",
     "commit": "b644dc8",
     "recorded": "2026-11-10"
